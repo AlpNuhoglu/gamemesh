@@ -41,9 +41,9 @@ func main() {
 	tokenB := mustToken(*apiURL, "wsdemob"+suffix)
 
 	connA := mustDial(*wsURL, tokenA)
-	defer connA.Close()
+	defer func() { _ = connA.Close() }()
 	connB := mustDial(*wsURL, tokenB)
-	defer connB.Close()
+	defer func() { _ = connB.Close() }()
 	log.Println("both websocket clients connected")
 
 	// Queue both players within the rank window.
@@ -65,14 +65,14 @@ func mustToken(apiURL, username string) string {
 	if err != nil || resp.StatusCode != http.StatusCreated {
 		log.Fatalf("register %s failed: %v (status %v)", username, err, statusOf(resp))
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	loginBody := fmt.Sprintf(`{"identifier":%q,"password":"password123"}`, username)
 	resp, err = http.Post(apiURL+"/api/v1/auth/login", "application/json", bytes.NewBufferString(loginBody))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		log.Fatalf("login %s failed: %v (status %v)", username, err, statusOf(resp))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var out struct {
 		Token string `json:"token"`
 	}
@@ -98,7 +98,7 @@ func mustPost(url, token, body string) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		log.Fatalf("POST %s failed: %v (status %v)", url, err, statusOf(resp))
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func waitForMatch(conn *websocket.Conn, name string) string {

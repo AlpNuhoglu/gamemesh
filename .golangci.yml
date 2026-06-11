@@ -1,25 +1,25 @@
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
+  default: none
   enable:
     - govet
-    - staticcheck
+    - staticcheck # includes the former gosimple
     - errcheck
-    - gosimple
     - ineffassign
     - unused
     - misspell
     - gosec
     - revive
-
-linters-settings:
-  gosec:
-    excludes:
-      - G104 # handled by errcheck
-
-issues:
-  exclude-rules:
-    # Test files may ignore some strictness.
-    - path: _test\.go
-      linters: [gosec, errcheck]
+  settings:
+    gosec:
+      excludes:
+        - G104 # handled by errcheck
+  exclusions:
+    rules:
+      # Test files may ignore some strictness.
+      - path: _test\.go
+        linters: [gosec, errcheck]

@@ -86,7 +86,7 @@ Full discussion: [docs/architecture.md](docs/architecture.md)
 
 ## Tech stack
 
-Go 1.23 · Gin · GORM · PostgreSQL 16 · Redis 7 · Gorilla WebSocket ·
+Go 1.25 · Gin · GORM · PostgreSQL 16 · Redis 7 · Gorilla WebSocket ·
 golang-jwt v5 · zap · Prometheus · Grafana · Docker Compose · Kubernetes
 (Minikube) · Testcontainers · k6 · GitHub Actions
 

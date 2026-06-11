@@ -2,7 +2,7 @@
 # Multi-stage build: full Go toolchain to compile, minimal Alpine to run.
 # CGO disabled → static binary; final image is ~15 MB and has wget for
 # container healthchecks.
-FROM golang:1.23-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

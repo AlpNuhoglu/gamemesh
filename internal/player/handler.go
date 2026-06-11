@@ -48,11 +48,7 @@ func (h *Handler) register(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	p, err := h.svc.Register(c.Request.Context(), RegisterInput{
-		Username: req.Username,
-		Email:    req.Email,
-		Password: req.Password,
-	})
+	p, err := h.svc.Register(c.Request.Context(), RegisterInput(req))
 	if err != nil {
 		if errors.Is(err, ErrDuplicate) {
 			httpx.Error(c, http.StatusConflict, ErrDuplicate.Error())
@@ -158,10 +154,7 @@ func (h *Handler) updateProfile(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	p, err := h.svc.UpdateProfile(c.Request.Context(), id, UpdateInput{
-		Username: req.Username,
-		Email:    req.Email,
-	})
+	p, err := h.svc.UpdateProfile(c.Request.Context(), id, UpdateInput(req))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
