@@ -1,0 +1,23 @@
+# Prometheus scrape config for the docker-compose stack.
+# In Kubernetes, scraping is driven by pod annotations instead
+# (see deployments/k8s/30-monitoring.yaml).
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
+  - job_name: player
+    static_configs:
+      - targets: ["player:8081"]
+  - job_name: matchmaking
+    static_configs:
+      - targets: ["matchmaking:8082"]
+  - job_name: leaderboard
+    static_configs:
+      - targets: ["leaderboard:8083"]
+  - job_name: websocket
+    static_configs:
+      - targets: ["websocket:8084"]

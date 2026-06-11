@@ -1,0 +1,59 @@
+# NOTE: single replica by design — the match loop has no leader election yet.
+# Scaling this horizontally requires a distributed lock around MatchOnce
+# (e.g. Redis SET NX EX) or partitioning the queue by rank band.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matchmaking
+  namespace: gamemesh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matchmaking
+  template:
+    metadata:
+      labels:
+        app: matchmaking
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: matchmaking
+          image: gamemesh/matchmaking:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+          env:
+            - name: HTTP_PORT
+              value: "8082"
+          envFrom:
+            - configMapRef:
+                name: gamemesh-config
+            - secretRef:
+                name: gamemesh-secrets
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: matchmaking
+  namespace: gamemesh
+spec:
+  selector:
+    app: matchmaking
+  ports:
+    - port: 8082
+      targetPort: 8082

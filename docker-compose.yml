@@ -1,0 +1,166 @@
+# GameMesh full local stack: `docker compose up --build` starts everything.
+# Secrets come from .env (copy .env.example); every variable has a dev
+# default so the stack also boots with no .env present.
+
+x-service-env: &service-env
+  APP_ENV: ${APP_ENV:-development}
+  JWT_SECRET: ${JWT_SECRET:-insecure-dev-secret-do-not-use-in-prod}
+  JWT_EXPIRY: ${JWT_EXPIRY:-24h}
+  JWT_ISSUER: ${JWT_ISSUER:-gamemesh}
+  REDIS_ADDR: redis:6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gamemesh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gamemesh-dev-password}
+      POSTGRES_DB: ${POSTGRES_DB:-gamemesh}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Schema + seed run automatically on first boot.
+      - ./scripts/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./scripts/db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gamemesh}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.gateway
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8080"
+      PLAYER_SERVICE_URL: http://player:8081
+      MATCHMAKING_SERVICE_URL: http://matchmaking:8082
+      LEADERBOARD_SERVICE_URL: http://leaderboard:8083
+      WEBSOCKET_SERVICE_URL: http://websocket:8084
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-50}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-100}
+    ports:
+      - "8080:8080"
+    depends_on:
+      player:
+        condition: service_healthy
+      matchmaking:
+        condition: service_healthy
+      leaderboard:
+        condition: service_healthy
+      websocket:
+        condition: service_healthy
+    healthcheck: &svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  player:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.player
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8081"
+      POSTGRES_DSN: host=postgres user=${POSTGRES_USER:-gamemesh} password=${POSTGRES_PASSWORD:-gamemesh-dev-password} dbname=${POSTGRES_DB:-gamemesh} port=5432 sslmode=disable
+      AUTO_MIGRATE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+
+  matchmaking:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.matchmaking
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8082"
+      MATCH_INTERVAL_SECONDS: ${MATCH_INTERVAL_SECONDS:-5}
+      MATCH_RANK_WINDOW: ${MATCH_RANK_WINDOW:-100}
+      MATCH_BATCH_SIZE: ${MATCH_BATCH_SIZE:-1000}
+      MATCH_MAX_QUEUE_AGE: ${MATCH_MAX_QUEUE_AGE:-5m}
+      ROOM_TTL: ${ROOM_TTL:-1h}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/healthz"]
+
+  leaderboard:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.leaderboard
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8083"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/healthz"]
+
+  websocket:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.websocket
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8084"
+    ports:
+      - "8084:8084"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - gateway
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:

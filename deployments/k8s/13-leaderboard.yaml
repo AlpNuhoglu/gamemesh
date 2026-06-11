@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaderboard
+  namespace: gamemesh
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: leaderboard
+  template:
+    metadata:
+      labels:
+        app: leaderboard
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8083"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: leaderboard
+          image: gamemesh/leaderboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8083
+          env:
+            - name: HTTP_PORT
+              value: "8083"
+          envFrom:
+            - configMapRef:
+                name: gamemesh-config
+            - secretRef:
+                name: gamemesh-secrets
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8083 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8083 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: leaderboard
+  namespace: gamemesh
+spec:
+  selector:
+    app: leaderboard
+  ports:
+    - port: 8083
+      targetPort: 8083

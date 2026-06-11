@@ -1,0 +1,157 @@
+// Package config loads service configuration from environment variables.
+// Every value has a sane development default so a single service can be run
+// locally with zero setup, while production overrides everything via env.
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config holds all runtime configuration shared across services. Services
+// only read the fields they need; keeping one struct avoids config drift
+// between five small services.
+type Config struct {
+	ServiceName string
+	Env         string
+	HTTPPort    string
+
+	PostgresDSN string
+
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+
+	JWTSecret string
+	JWTExpiry time.Duration
+	JWTIssuer string
+
+	PlayerServiceURL      string
+	MatchmakingServiceURL string
+	LeaderboardServiceURL string
+	WebsocketServiceURL   string
+
+	RateLimitRPS   float64
+	RateLimitBurst int
+
+	AllowedOrigins []string
+
+	MatchInterval    time.Duration
+	MatchRankWindow  int
+	MatchBatchSize   int64
+	MatchMaxQueueAge time.Duration
+	RoomTTL          time.Duration
+
+	AutoMigrate bool
+}
+
+// Load reads configuration for the named service from the environment.
+func Load(serviceName string) *Config {
+	return &Config{
+		ServiceName: serviceName,
+		Env:         getEnv("APP_ENV", "development"),
+		HTTPPort:    getEnv("HTTP_PORT", defaultPort(serviceName)),
+
+		PostgresDSN: getEnv("POSTGRES_DSN",
+			"host=localhost user=gamemesh password=gamemesh-dev-password dbname=gamemesh port=5432 sslmode=disable"),
+
+		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvInt("REDIS_DB", 0),
+
+		JWTSecret: getEnv("JWT_SECRET", "insecure-dev-secret-do-not-use-in-prod"),
+		JWTExpiry: getEnvDuration("JWT_EXPIRY", 24*time.Hour),
+		JWTIssuer: getEnv("JWT_ISSUER", "gamemesh"),
+
+		PlayerServiceURL:      getEnv("PLAYER_SERVICE_URL", "http://localhost:8081"),
+		MatchmakingServiceURL: getEnv("MATCHMAKING_SERVICE_URL", "http://localhost:8082"),
+		LeaderboardServiceURL: getEnv("LEADERBOARD_SERVICE_URL", "http://localhost:8083"),
+		WebsocketServiceURL:   getEnv("WEBSOCKET_SERVICE_URL", "http://localhost:8084"),
+
+		RateLimitRPS:   getEnvFloat("RATE_LIMIT_RPS", 50),
+		RateLimitBurst: getEnvInt("RATE_LIMIT_BURST", 100),
+
+		AllowedOrigins: splitCSV(getEnv("ALLOWED_ORIGINS", "*")),
+
+		MatchInterval:    time.Duration(getEnvInt("MATCH_INTERVAL_SECONDS", 5)) * time.Second,
+		MatchRankWindow:  getEnvInt("MATCH_RANK_WINDOW", 100),
+		MatchBatchSize:   int64(getEnvInt("MATCH_BATCH_SIZE", 1000)),
+		MatchMaxQueueAge: getEnvDuration("MATCH_MAX_QUEUE_AGE", 5*time.Minute),
+		RoomTTL:          getEnvDuration("ROOM_TTL", time.Hour),
+
+		AutoMigrate: getEnvBool("AUTO_MIGRATE", true),
+	}
+}
+
+func defaultPort(serviceName string) string {
+	switch serviceName {
+	case "gateway":
+		return "8080"
+	case "player":
+		return "8081"
+	case "matchmaking":
+		return "8082"
+	case "leaderboard":
+		return "8083"
+	case "websocket":
+		return "8084"
+	default:
+		return "8080"
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
+}
+
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

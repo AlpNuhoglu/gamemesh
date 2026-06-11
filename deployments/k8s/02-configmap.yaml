@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gamemesh-config
+  namespace: gamemesh
+data:
+  APP_ENV: production
+  JWT_EXPIRY: 24h
+  JWT_ISSUER: gamemesh
+  REDIS_ADDR: redis:6379
+  ALLOWED_ORIGINS: "*"
+  PLAYER_SERVICE_URL: http://player:8081
+  MATCHMAKING_SERVICE_URL: http://matchmaking:8082
+  LEADERBOARD_SERVICE_URL: http://leaderboard:8083
+  WEBSOCKET_SERVICE_URL: http://websocket:8084
+  RATE_LIMIT_RPS: "50"
+  RATE_LIMIT_BURST: "100"
+  MATCH_INTERVAL_SECONDS: "5"
+  MATCH_RANK_WINDOW: "100"
+  MATCH_BATCH_SIZE: "1000"
+  MATCH_MAX_QUEUE_AGE: 5m
+  ROOM_TTL: 1h
+  AUTO_MIGRATE: "true"

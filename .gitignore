@@ -1,0 +1,22 @@
+# Binaries
+bin/
+*.exe
+*.test
+*.out
+
+# Env / secrets — never commit real secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Test & coverage artifacts
+coverage.out
+coverage.html
+
+# k6 reports
+scripts/k6/reports/
