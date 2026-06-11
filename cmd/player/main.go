@@ -32,7 +32,7 @@ func main() {
 	// SQL migrations under /migrations are the source of truth; AutoMigrate
 	// is a dev convenience that keeps `docker compose up` zero-step.
 	if cfg.AutoMigrate {
-		if err := db.AutoMigrate(&player.Player{}, &player.PlayerStats{}); err != nil {
+		if err := db.AutoMigrate(&player.Player{}, &player.Stats{}); err != nil {
 			log.Fatal("auto-migration failed", zap.Error(err))
 		}
 	}

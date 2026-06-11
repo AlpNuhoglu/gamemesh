@@ -48,7 +48,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*Player, erro
 		Username:     in.Username,
 		Email:        in.Email,
 		PasswordHash: hash,
-		Stats:        &PlayerStats{Rank: 1000},
+		Stats:        &Stats{Rank: 1000},
 	}
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, err

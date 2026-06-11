@@ -57,7 +57,7 @@ func (m *TokenManager) Generate(playerID uuid.UUID, username string) (token, jti
 func (m *TokenManager) Validate(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims,
-		func(t *jwt.Token) (any, error) { return m.secret, nil },
+		func(_ *jwt.Token) (any, error) { return m.secret, nil },
 		jwt.WithValidMethods([]string{"HS256"}),
 		jwt.WithIssuer(m.issuer),
 	)

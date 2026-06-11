@@ -43,7 +43,7 @@ func startPostgres(t *testing.T) *gorm.DB {
 		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&player.Player{}, &player.PlayerStats{}))
+	require.NoError(t, db.AutoMigrate(&player.Player{}, &player.Stats{}))
 	return db
 }
 
@@ -56,7 +56,7 @@ func TestPlayerRepositoryCRUD(t *testing.T) {
 		Username:     "alice",
 		Email:        "alice@example.com",
 		PasswordHash: "hash",
-		Stats:        &player.PlayerStats{Rank: 1000},
+		Stats:        &player.Stats{Rank: 1000},
 	}
 	require.NoError(t, repo.Create(ctx, p))
 

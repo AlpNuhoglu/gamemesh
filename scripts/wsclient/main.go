@@ -9,11 +9,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"time"
 
@@ -31,7 +32,11 @@ func main() {
 	wsURL := flag.String("ws", "ws://localhost:8084", "WebSocket gateway base URL")
 	flag.Parse()
 
-	suffix := fmt.Sprintf("%d", rand.Intn(1_000_000))
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		log.Fatalf("crypto/rand failed: %v", err)
+	}
+	suffix := n.String()
 	tokenA := mustToken(*apiURL, "wsdemoa"+suffix)
 	tokenB := mustToken(*apiURL, "wsdemob"+suffix)
 
