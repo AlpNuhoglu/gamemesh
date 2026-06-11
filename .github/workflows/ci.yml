@@ -123,11 +123,10 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      - name: Validate Kubernetes manifests (client-side dry run)
+      - name: Validate Kubernetes manifests (kubeconform, offline schema check)
         run: |
-          curl -sLo kubectl "https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          ./kubectl apply --dry-run=client -f deployments/k8s/
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary deployments/k8s/
       - name: Deploy (example)
         run: |
           echo "Would run:"
