@@ -45,6 +45,14 @@ type Config struct {
 	RoomTTL          time.Duration
 
 	AutoMigrate bool
+
+	ServiceVersion string
+
+	OTelEnabled      bool
+	OTelServiceName  string
+	OTelEndpoint     string
+	OTelSampler      string
+	OTelSamplerRatio float64
 }
 
 // Load reads configuration for the named service from the environment.
@@ -82,6 +90,18 @@ func Load(serviceName string) *Config {
 		RoomTTL:          getEnvDuration("ROOM_TTL", time.Hour),
 
 		AutoMigrate: getEnvBool("AUTO_MIGRATE", true),
+
+		ServiceVersion: getEnv("SERVICE_VERSION", "dev"),
+
+		// Distributed tracing. Defaults target a local OTel Collector
+		// (docker-compose) and always-sample so every dev request is visible.
+		// OTEL_SERVICE_NAME falls back to the service's own name so traces are
+		// correctly attributed without any extra config.
+		OTelEnabled:      getEnvBool("OTEL_ENABLED", true),
+		OTelServiceName:  getEnv("OTEL_SERVICE_NAME", serviceName),
+		OTelEndpoint:     getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
+		OTelSampler:      getEnv("OTEL_TRACES_SAMPLER", "parentbased_always_on"),
+		OTelSamplerRatio: getEnvFloat("OTEL_TRACES_SAMPLER_ARG", 1.0),
 	}
 }
 

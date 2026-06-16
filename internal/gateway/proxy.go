@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
@@ -26,6 +27,11 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 		log.Fatal("invalid upstream URL", zap.String("target", target), zap.Error(err))
 	}
 	proxy := httputil.NewSingleHostReverseProxy(u)
+	// Wrap the transport so the outbound request to the downstream service is a
+	// client span and the W3C traceparent header is injected automatically.
+	// Combined with otelgin on the downstream, gateway -> service -> store
+	// shows up as a single distributed trace.
+	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
 
 	director := proxy.Director
 	proxy.Director = func(r *http.Request) {

@@ -4,6 +4,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
+	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
 func main() {
@@ -21,11 +24,25 @@ func main() {
 	log := logger.Must(cfg.ServiceName, cfg.Env)
 	defer func() { _ = log.Sync() }()
 
+	shutdownTracing := tracing.MustInit(context.Background(), tracing.Config{
+		Enabled:      cfg.OTelEnabled,
+		ServiceName:  cfg.OTelServiceName,
+		Endpoint:     cfg.OTelEndpoint,
+		Env:          cfg.Env,
+		Version:      cfg.ServiceVersion,
+		Sampler:      cfg.OTelSampler,
+		SamplerRatio: cfg.OTelSamplerRatio,
+	}, log)
+	defer func() { _ = shutdownTracing(context.Background()) }()
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisAddr,
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
 	})
+	if err := tracing.InstrumentRedis(rdb); err != nil {
+		log.Fatal("failed to instrument redis", zap.Error(err))
+	}
 
 	m := metrics.New(cfg.ServiceName)
 	hub := wsgateway.NewHub(log, m)

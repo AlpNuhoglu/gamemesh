@@ -1,6 +1,7 @@
 package wsgateway
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -144,7 +145,7 @@ func TestBridgeDispatch(t *testing.T) {
 		RoomID: "room-9", Players: []string{"alice", "bob"},
 	})
 	require.NoError(t, err)
-	bridge.dispatch(e)
+	bridge.dispatch(context.Background(), e)
 	aliceMsgs := drain(alice)
 	require.Len(t, aliceMsgs, 1)
 	assert.Equal(t, events.TypeMatchFound, aliceMsgs[0].Type)
@@ -156,11 +157,11 @@ func TestBridgeDispatch(t *testing.T) {
 		PlayerID: "p", Score: 1, Rank: 1,
 	})
 	require.NoError(t, err)
-	bridge.dispatch(e)
+	bridge.dispatch(context.Background(), e)
 	assert.Len(t, drain(alice), 1)
 	assert.Len(t, drain(carol), 1)
 
 	// Unknown events are ignored.
-	bridge.dispatch(events.Event{Type: "SomethingElse"})
+	bridge.dispatch(context.Background(), events.Event{Type: "SomethingElse"})
 	assert.Empty(t, drain(alice))
 }

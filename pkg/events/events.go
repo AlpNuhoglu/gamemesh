@@ -32,6 +32,13 @@ type Event struct {
 	Type      string          `json:"type"`
 	Timestamp time.Time       `json:"timestamp"`
 	Payload   json.RawMessage `json:"payload"`
+	// Carrier holds W3C trace-context headers (traceparent/tracestate) so a
+	// trace propagates across the async Pub/Sub boundary. It is populated and
+	// read purely via the OTel propagator, so it is transport-agnostic: a
+	// future Kafka/NATS Publisher reuses the same field with the same
+	// inject/extract calls — no change to the event contract. omitempty keeps
+	// it backward compatible with consumers that ignore it.
+	Carrier map[string]string `json:"carrier,omitempty"`
 }
 
 // New builds an event with a generated ID and the payload marshalled to JSON.

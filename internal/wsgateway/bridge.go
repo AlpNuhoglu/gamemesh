@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
 // Bridge subscribes to backend events and fans them out to WebSocket clients.
@@ -38,25 +40,34 @@ func (b *Bridge) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			b.dispatch(e)
+			b.dispatch(ctx, e)
 		}
 	}
 }
 
-func (b *Bridge) dispatch(e events.Event) {
+func (b *Bridge) dispatch(ctx context.Context, e events.Event) {
+	// Extract the trace context the publisher embedded in the event and start a
+	// consumer span linked to the producing trace, so matchmaking-tick ->
+	// publish -> ws-dispatch shows as one trace across Redis Pub/Sub.
+	ctx, span := events.ReceiveSpan(ctx, e, "ws.dispatch")
+	defer span.End()
+
 	switch e.Type {
 	case events.TypeMatchFound:
 		var p events.MatchFoundPayload
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			tracing.RecordError(span, err)
 			b.log.Warn("malformed MatchFound payload", zap.Error(err))
 			return
 		}
+		span.SetAttributes(attribute.Int("ws.recipients", len(p.Players)))
 		msg := marshal(Message{Type: events.TypeMatchFound, Room: p.RoomID, Data: e.Payload})
 		// Matched players may not be in any room yet — target them directly.
 		for _, playerID := range p.Players {
 			b.hub.SendToPlayer(playerID, msg)
 		}
 	case events.TypeLeaderboardUpdated:
+		span.SetAttributes(attribute.String("ws.fanout", "broadcast"))
 		b.hub.BroadcastAll(marshal(Message{Type: events.TypeLeaderboardUpdated, Data: e.Payload}))
 	default:
 		b.log.Debug("ignoring event", zap.String("type", e.Type))

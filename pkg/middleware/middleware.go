@@ -18,6 +18,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/httpx"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
+	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
 // Context keys used across services.
@@ -66,6 +67,10 @@ func Logger(log *zap.Logger) gin.HandlerFunc {
 		} else if uid := c.GetHeader(HeaderUserID); uid != "" {
 			fields = append(fields, zap.String("user_id", uid))
 		}
+		// Correlate logs with traces: attach trace_id/span_id when a recording
+		// span is active (otelgin runs before this middleware), so operators
+		// can pivot from a log line straight to the trace in Jaeger.
+		fields = append(fields, tracing.LogFields(c.Request.Context())...)
 		if len(c.Errors) > 0 {
 			fields = append(fields, zap.String("error", c.Errors.String()))
 			log.Error("http request", fields...)

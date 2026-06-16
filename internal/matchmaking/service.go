@@ -5,10 +5,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
+	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
 // Config tunes the matcher.
@@ -35,7 +37,14 @@ func NewService(queue *Queue, rooms *RoomStore, pub events.Publisher, m *metrics
 
 // JoinQueue enqueues a player at the given rank.
 func (s *Service) JoinQueue(ctx context.Context, playerID string, rank int) error {
-	return s.queue.Enqueue(ctx, playerID, rank)
+	ctx, span := tracing.Tracer().Start(ctx, "matchmaking.JoinQueue")
+	defer span.End()
+	// Low-cardinality only: bucket the rank instead of recording player_id.
+	span.SetAttributes(attribute.Int("matchmaking.rank_bucket", rank/100))
+
+	err := s.queue.Enqueue(ctx, playerID, rank)
+	tracing.RecordError(span, err)
+	return err
 }
 
 // LeaveQueue removes a player; returns ErrNotQueued if absent.
@@ -83,56 +92,96 @@ func (s *Service) RunMatchLoop(ctx context.Context, interval time.Duration) {
 // players within the rank window, create rooms and publish MatchFound events.
 // Returns the number of matches created.
 func (s *Service) MatchOnce(ctx context.Context) (int, error) {
-	if evicted, err := s.queue.EvictStale(ctx, s.cfg.MaxQueueAge); err != nil {
-		s.log.Warn("stale eviction failed", zap.Error(err))
-	} else if len(evicted) > 0 {
-		s.log.Info("evicted stale players", zap.Int("count", len(evicted)))
-	}
+	// Each tick is its own root trace (it is not request-driven), so the Jaeger
+	// UI shows one trace per tick rather than one unbounded trace for the loop.
+	ctx, span := tracing.Tracer().Start(ctx, "matchmaking.tick")
+	defer span.End()
 
-	tickets, err := s.queue.Snapshot(ctx, s.cfg.BatchSize)
+	func() {
+		_, evictSpan := tracing.Tracer().Start(ctx, "matchmaking.evict_stale")
+		defer evictSpan.End()
+		if evicted, err := s.queue.EvictStale(ctx, s.cfg.MaxQueueAge); err != nil {
+			tracing.RecordError(evictSpan, err)
+			s.log.Warn("stale eviction failed", zap.Error(err))
+		} else if len(evicted) > 0 {
+			evictSpan.SetAttributes(attribute.Int("matchmaking.evicted", len(evicted)))
+			s.log.Info("evicted stale players", zap.Int("count", len(evicted)))
+		}
+	}()
+
+	snapCtx, snapSpan := tracing.Tracer().Start(ctx, "matchmaking.snapshot")
+	tickets, err := s.queue.Snapshot(snapCtx, s.cfg.BatchSize)
+	snapSpan.SetAttributes(attribute.Int("matchmaking.tickets", len(tickets)))
+	tracing.RecordError(snapSpan, err)
+	snapSpan.End()
 	if err != nil {
+		tracing.RecordError(span, err)
 		return 0, err
 	}
+
+	_, pairSpan := tracing.Tracer().Start(ctx, "matchmaking.pair")
 	pairs := Pair(tickets, s.cfg.RankWindow)
+	pairSpan.SetAttributes(
+		attribute.Int("matchmaking.tickets_in", len(tickets)),
+		attribute.Int("matchmaking.pairs_out", len(pairs)),
+	)
+	pairSpan.End()
 
 	for _, pair := range pairs {
-		room := &Room{
-			ID:      uuid.NewString(),
-			Players: []string{pair[0].PlayerID, pair[1].PlayerID},
-			Ranks: map[string]int{
-				pair[0].PlayerID: pair[0].Rank,
-				pair[1].PlayerID: pair[1].Rank,
-			},
-			Status:    "waiting",
-			CreatedAt: time.Now().UTC(),
-		}
-		if err := s.rooms.Save(ctx, room); err != nil {
-			s.log.Error("failed to save room", zap.Error(err), zap.String("room_id", room.ID))
-			continue
-		}
-		if err := s.queue.RemoveBatch(ctx, room.Players); err != nil {
-			s.log.Error("failed to dequeue matched players", zap.Error(err))
-			continue
-		}
-		s.m.MatchesCreated.Inc()
-
-		e, err := events.New(events.TypeMatchFound, events.MatchFoundPayload{
-			RoomID:  room.ID,
-			Players: room.Players,
-		})
-		if err == nil {
-			err = s.pub.Publish(ctx, events.TopicMatchmaking, e)
-		}
-		if err != nil {
-			s.log.Warn("failed to publish MatchFound", zap.Error(err), zap.String("room_id", room.ID))
-		}
-		s.log.Info("match created",
-			zap.String("room_id", room.ID),
-			zap.Strings("players", room.Players))
+		s.createRoom(ctx, pair)
 	}
+
+	span.SetAttributes(attribute.Int("matchmaking.matches", len(pairs)))
 
 	if size, err := s.queue.Size(ctx); err == nil {
 		s.m.MatchmakingQueueSize.Set(float64(size))
 	}
 	return len(pairs), nil
+}
+
+// createRoom persists a room for one matched pair, dequeues the players and
+// publishes MatchFound. Errors are logged and the room is skipped (the next
+// tick re-pairs the still-queued players).
+func (s *Service) createRoom(ctx context.Context, pair [2]Ticket) {
+	ctx, span := tracing.Tracer().Start(ctx, "matchmaking.create_room")
+	defer span.End()
+
+	room := &Room{
+		ID:      uuid.NewString(),
+		Players: []string{pair[0].PlayerID, pair[1].PlayerID},
+		Ranks: map[string]int{
+			pair[0].PlayerID: pair[0].Rank,
+			pair[1].PlayerID: pair[1].Rank,
+		},
+		Status:    "waiting",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.rooms.Save(ctx, room); err != nil {
+		tracing.RecordError(span, err)
+		s.log.Error("failed to save room", zap.Error(err), zap.String("room_id", room.ID))
+		return
+	}
+	if err := s.queue.RemoveBatch(ctx, room.Players); err != nil {
+		tracing.RecordError(span, err)
+		s.log.Error("failed to dequeue matched players", zap.Error(err))
+		return
+	}
+	s.m.MatchesCreated.Inc()
+
+	e, err := events.New(events.TypeMatchFound, events.MatchFoundPayload{
+		RoomID:  room.ID,
+		Players: room.Players,
+	})
+	if err == nil {
+		err = s.pub.Publish(ctx, events.TopicMatchmaking, e)
+	}
+	if err != nil {
+		tracing.RecordError(span, err)
+		s.log.Warn("failed to publish MatchFound", zap.Error(err), zap.String("room_id", room.ID))
+	}
+	s.log.Info("match created",
+		append([]zap.Field{
+			zap.String("room_id", room.ID),
+			zap.Strings("players", room.Players),
+		}, tracing.LogFields(ctx)...)...)
 }

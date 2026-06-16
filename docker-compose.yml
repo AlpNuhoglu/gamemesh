@@ -10,6 +10,13 @@ x-service-env: &service-env
   REDIS_ADDR: redis:6379
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+  # Distributed tracing: every service ships spans to the OTel Collector, which
+  # forwards them to Jaeger. Set OTEL_ENABLED=false to turn tracing off entirely.
+  OTEL_ENABLED: ${OTEL_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+  SERVICE_VERSION: ${SERVICE_VERSION:-dev}
 
 services:
   postgres:
@@ -85,6 +92,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       <<: *svc-healthcheck
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
@@ -104,6 +113,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       <<: *svc-healthcheck
       test: ["CMD", "wget", "-qO-", "http://localhost:8082/healthz"]
@@ -118,6 +129,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       <<: *svc-healthcheck
       test: ["CMD", "wget", "-qO-", "http://localhost:8083/healthz"]
@@ -134,9 +147,41 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       <<: *svc-healthcheck
       test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
+
+  # Jaeger all-in-one: receives OTLP directly (v1.35+) and serves the trace UI
+  # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:16686/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # OpenTelemetry Collector: a single buffering/routing hop in front of Jaeger.
+  # Services export here (OTLP/gRPC :4317); the collector batches and forwards to
+  # Jaeger. Keeping the backend behind the collector means Jaeger can be swapped
+  # for Tempo/Datadog by editing config/otel/collector.yaml — no service rebuilds.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes:
+      - ./config/otel/collector.yaml:/etc/otel/collector.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      jaeger:
+        condition: service_healthy
 
   prometheus:
     image: prom/prometheus:v2.54.1

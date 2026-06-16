@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
@@ -29,6 +30,13 @@ func NewEngine(cfg *config.Config, log *zap.Logger, m *metrics.Metrics) *gin.Eng
 	r.Use(
 		gin.Recovery(),
 		middleware.RequestID(),
+		// otelgin sits after RequestID (so request_id exists for logs) and
+		// before Logger (so the span context is in c.Request.Context() when the
+		// logger reads trace/span IDs). It extracts incoming W3C trace context,
+		// continuing a trace started upstream, and records a server span per
+		// request with http.method, http.route (low-cardinality template),
+		// status and latency.
+		otelgin.Middleware(cfg.OTelServiceName),
 		middleware.Logger(log),
 		middleware.Metrics(m),
 		middleware.CORS(cfg.AllowedOrigins),

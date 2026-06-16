@@ -9,6 +9,7 @@ import (
 
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/httpx"
+	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
 // Handler upgrades HTTP connections to WebSockets.
@@ -76,16 +77,24 @@ func (h *Handler) serveWS(c *gin.Context) {
 		return
 	}
 
+	// Trace connection establishment only — the long-lived read/write pumps are
+	// intentionally NOT traced (per-frame spans would grow without bound).
+	_, span := tracing.Tracer().Start(c.Request.Context(), "ws.connect")
+	defer span.End()
+
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		// Upgrade already wrote the HTTP error response.
+		tracing.RecordError(span, err)
 		h.log.Warn("websocket upgrade failed", zap.Error(err))
 		return
 	}
 
 	client := newClient(claims.PlayerID, conn, h.hub, h.log)
 	h.hub.register(client)
-	h.log.Info("websocket connected", zap.String("player_id", claims.PlayerID))
+	h.log.Info("websocket connected",
+		append([]zap.Field{zap.String("player_id", claims.PlayerID)},
+			tracing.LogFields(c.Request.Context())...)...)
 
 	go client.writePump()
 	go client.readPump()

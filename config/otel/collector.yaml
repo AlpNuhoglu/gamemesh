@@ -1,0 +1,38 @@
+# OpenTelemetry Collector config for local GameMesh development.
+#
+# Pipeline: services -> (OTLP) -> this collector -> (OTLP) -> Jaeger.
+# The collector batches spans (smoothing export bursts) and is the single place
+# to re-route telemetry: point the exporter at Tempo/Datadog/etc. without
+# touching any service. The `debug` exporter prints a span summary to the
+# collector logs, which is the first thing to check when traces don't show up.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+exporters:
+  # Forward to Jaeger's OTLP ingest. tls.insecure because this is an in-cluster
+  # plaintext hop on the compose network.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  # Local troubleshooting: `docker compose logs otel-collector` shows spans.
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]

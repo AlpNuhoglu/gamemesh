@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/gateway"
@@ -12,12 +14,24 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
+	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
 func main() {
 	cfg := config.Load("gateway")
 	log := logger.Must(cfg.ServiceName, cfg.Env)
 	defer func() { _ = log.Sync() }()
+
+	shutdownTracing := tracing.MustInit(context.Background(), tracing.Config{
+		Enabled:      cfg.OTelEnabled,
+		ServiceName:  cfg.OTelServiceName,
+		Endpoint:     cfg.OTelEndpoint,
+		Env:          cfg.Env,
+		Version:      cfg.ServiceVersion,
+		Sampler:      cfg.OTelSampler,
+		SamplerRatio: cfg.OTelSamplerRatio,
+	}, log)
+	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	if cfg.Env == "production" && cfg.JWTSecret == "insecure-dev-secret-do-not-use-in-prod" {
 		log.Fatal("JWT_SECRET must be set in production")
