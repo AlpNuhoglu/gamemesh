@@ -49,7 +49,7 @@ func TestNATSPublishConsumeAck(t *testing.T) {
 	defer cancel()
 
 	gotTrace := make(chan trace.TraceID, 1)
-	handler := func(hctx context.Context, e Event) error {
+	handler := func(hctx context.Context, _ Event) error {
 		gotTrace <- trace.SpanContextFromContext(hctx).TraceID()
 		return nil
 	}
