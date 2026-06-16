@@ -43,7 +43,15 @@ func main() {
 	}
 
 	m := metrics.New(cfg.ServiceName)
-	bus := events.NewRedisBus(rdb, log)
+	bus, err := events.NewBus(events.Config{
+		Transport:   cfg.EventBus,
+		DurableName: cfg.ServiceName,
+		Workers:     cfg.EventWorkers,
+	}, rdb, cfg.NATSURL, m, log)
+	if err != nil {
+		log.Fatal("failed to init event bus", zap.Error(err))
+	}
+	defer func() { _ = bus.Close() }()
 	svc := leaderboard.NewService(leaderboard.NewStore(rdb), bus, m, log)
 	handler := leaderboard.NewHandler(svc)
 

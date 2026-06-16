@@ -76,7 +76,31 @@ type Publisher interface {
 }
 
 // Subscriber delivers events from one or more topics on a channel.
+//
+// This is a fire-and-forget push model with no acknowledgement hook: it fits
+// at-most-once transports (Redis Pub/Sub) where a missed message is acceptable.
+// Transports that support acknowledgements (NATS JetStream) ALSO implement
+// AckSubscriber below; callers needing at-least-once type-assert for it.
 type Subscriber interface {
 	Subscribe(ctx context.Context, topics ...string) (<-chan Event, error)
 	Close() error
+}
+
+// Handler processes a single consumed event. Returning nil signals successful
+// processing (the transport may ACK); a non-nil error signals failure (the
+// transport may NAK and redeliver). Handlers must be safe for concurrent use:
+// AckSubscriber implementations may invoke them from a bounded worker pool.
+type Handler func(ctx context.Context, e Event) error
+
+// AckSubscriber is the richer, opt-in consumer contract for durable transports.
+// It is intentionally separate from Subscriber so the existing interface — and
+// every service depending on it — stays unchanged (additive evolution, not a
+// breaking change). A transport such as NATSBus implements BOTH: Subscribe for
+// drop-in compatibility, SubscribeAck for genuine at-least-once delivery.
+//
+// SubscribeAck delivers each event to handler and ACKs only after handler
+// returns nil, giving "ACK after successful processing" semantics with retry on
+// error. It blocks until ctx is cancelled, draining in-flight work on shutdown.
+type AckSubscriber interface {
+	SubscribeAck(ctx context.Context, handler Handler, topics ...string) error
 }

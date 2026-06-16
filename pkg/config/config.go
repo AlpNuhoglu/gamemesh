@@ -24,6 +24,13 @@ type Config struct {
 	RedisPassword string
 	RedisDB       int
 
+	// Event transport selection. EventBus picks the messaging implementation
+	// ("redis" or "nats") at startup; services keep depending only on the
+	// events.Publisher/Subscriber interfaces, never on the concrete transport.
+	EventBus     string
+	NATSURL      string
+	EventWorkers int
+
 	JWTSecret string
 	JWTExpiry time.Duration
 	JWTIssuer string
@@ -68,6 +75,12 @@ func Load(serviceName string) *Config {
 		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvInt("REDIS_DB", 0),
+
+		// Default to redis so a bare `go run` of a single service keeps working
+		// without NATS; docker-compose sets EVENT_BUS=nats explicitly.
+		EventBus:     getEnv("EVENT_BUS", "redis"),
+		NATSURL:      getEnv("NATS_URL", "nats://localhost:4222"),
+		EventWorkers: getEnvInt("EVENT_WORKERS", 8),
 
 		JWTSecret: getEnv("JWT_SECRET", "insecure-dev-secret-do-not-use-in-prod"),
 		JWTExpiry: getEnvDuration("JWT_EXPIRY", 24*time.Hour),
