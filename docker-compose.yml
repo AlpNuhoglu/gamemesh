@@ -10,6 +10,13 @@ x-service-env: &service-env
   REDIS_ADDR: redis:6379
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+  # Event transport. Redis stays the system of record (sessions, queue,
+  # leaderboard, room cache); NATS JetStream carries inter-service events with
+  # durability, replay and at-least-once delivery. Set EVENT_BUS=redis to fall
+  # back to the original Pub/Sub transport — no code change, just config.
+  EVENT_BUS: ${EVENT_BUS:-nats}
+  NATS_URL: ${NATS_URL:-nats://nats:4222}
+  EVENT_WORKERS: ${EVENT_WORKERS:-8}
   # Distributed tracing: every service ships spans to the OTel Collector, which
   # forwards them to Jaeger. Set OTEL_ENABLED=false to turn tracing off entirely.
   OTEL_ENABLED: ${OTEL_ENABLED:-true}
@@ -44,6 +51,25 @@ services:
       - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # NATS with JetStream enabled (-js): the durable event transport. Streams are
+  # created idempotently by the services on boot. Storage is persisted to a
+  # volume so events (and consumer cursors) survive container restarts —
+  # enabling replay and at-least-once redelivery. :8222 serves the monitoring
+  # endpoint used for the healthcheck.
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222" # client
+      - "8222:8222" # monitoring
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -113,6 +139,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      nats:
+        condition: service_healthy
       otel-collector:
         condition: service_started
     healthcheck:
@@ -128,6 +156,8 @@ services:
       HTTP_PORT: "8083"
     depends_on:
       redis:
+        condition: service_healthy
+      nats:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -146,6 +176,8 @@ services:
       - "8084:8084"
     depends_on:
       redis:
+        condition: service_healthy
+      nats:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -209,3 +241,4 @@ services:
 
 volumes:
   pgdata:
+  natsdata:

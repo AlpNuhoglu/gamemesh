@@ -51,7 +51,16 @@ func main() {
 
 	ctx, stop := server.ShutdownContext()
 	defer stop()
-	bridge := wsgateway.NewBridge(hub, events.NewRedisBus(rdb, log), log)
+	bus, err := events.NewBus(events.Config{
+		Transport:   cfg.EventBus,
+		DurableName: cfg.ServiceName,
+		Workers:     cfg.EventWorkers,
+	}, rdb, cfg.NATSURL, m, log)
+	if err != nil {
+		log.Fatal("failed to init event bus", zap.Error(err))
+	}
+	defer func() { _ = bus.Close() }()
+	bridge := wsgateway.NewBridge(hub, bus, log)
 	go func() {
 		if err := bridge.Run(ctx); err != nil {
 			log.Fatal("event bridge failed", zap.Error(err))

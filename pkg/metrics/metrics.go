@@ -25,6 +25,15 @@ type Metrics struct {
 	MatchmakingQueueSize prometheus.Gauge
 	MatchesCreated       prometheus.Counter
 	LeaderboardUpdates   prometheus.Counter
+
+	// Event-transport instruments. Shared by every transport (RedisBus,
+	// NATSBus) so dashboards work regardless of EVENT_BUS. Labelled by topic so
+	// matchmaking and leaderboard traffic can be split; result distinguishes
+	// ack/nak/error on the consume path.
+	EventsPublishedTotal    *prometheus.CounterVec
+	EventsConsumedTotal     *prometheus.CounterVec
+	EventsFailedTotal       *prometheus.CounterVec
+	EventProcessingDuration *prometheus.HistogramVec
 }
 
 // New creates and registers all instruments, labelled with the service name
@@ -76,11 +85,33 @@ func New(service string) *Metrics {
 			Help:        "Total leaderboard score updates.",
 			ConstLabels: constLabels,
 		}),
+		EventsPublishedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_events_published_total",
+			Help:        "Total events published to the event bus.",
+			ConstLabels: constLabels,
+		}, []string{"topic", "type"}),
+		EventsConsumedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_events_consumed_total",
+			Help:        "Total events successfully consumed and acknowledged.",
+			ConstLabels: constLabels,
+		}, []string{"topic", "type"}),
+		EventsFailedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_events_failed_total",
+			Help:        "Total event publish/consume failures.",
+			ConstLabels: constLabels,
+		}, []string{"topic", "stage"}),
+		EventProcessingDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "gamemesh_event_processing_duration_seconds",
+			Help:        "Handler processing latency for consumed events.",
+			ConstLabels: constLabels,
+			Buckets:     []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
+		}, []string{"topic", "type"}),
 	}
 
 	reg.MustRegister(
 		m.RequestsTotal, m.ErrorsTotal, m.RequestDuration,
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
+		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
 	)
 	return m
 }

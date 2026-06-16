@@ -81,7 +81,7 @@ func TestMatchmakingQueueAgainstRealRedis(t *testing.T) {
 
 func TestRedisBusPubSub(t *testing.T) {
 	rdb := startRedis(t)
-	bus := events.NewRedisBus(rdb, zap.NewNop())
+	bus := events.NewRedisBus(rdb, zap.NewNop(), nil)
 	t.Cleanup(func() { _ = bus.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

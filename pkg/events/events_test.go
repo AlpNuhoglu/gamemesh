@@ -35,7 +35,7 @@ func TestRedisBusRoundTrip(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	bus := NewRedisBus(rdb, zap.NewNop())
+	bus := NewRedisBus(rdb, zap.NewNop(), nil)
 	t.Cleanup(func() { _ = bus.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -62,7 +62,7 @@ func TestRedisBusDropsMalformedMessages(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	bus := NewRedisBus(rdb, zap.NewNop())
+	bus := NewRedisBus(rdb, zap.NewNop(), nil)
 	t.Cleanup(func() { _ = bus.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

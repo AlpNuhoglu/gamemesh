@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
@@ -25,12 +26,14 @@ import (
 type RedisBus struct {
 	client *redis.Client
 	log    *zap.Logger
+	m      *metrics.Metrics
 	subs   []*redis.PubSub
 }
 
-// NewRedisBus wraps an existing Redis client.
-func NewRedisBus(client *redis.Client, log *zap.Logger) *RedisBus {
-	return &RedisBus{client: client, log: log}
+// NewRedisBus wraps an existing Redis client. m may be nil (e.g. in unit tests),
+// in which case metrics recording is skipped — the bus stays usable.
+func NewRedisBus(client *redis.Client, log *zap.Logger, m *metrics.Metrics) *RedisBus {
+	return &RedisBus{client: client, log: log, m: m}
 }
 
 // Publish marshals and publishes the event to a topic. It creates a producer
@@ -60,6 +63,13 @@ func (b *RedisBus) Publish(ctx context.Context, topic string, e Event) error {
 	}
 	err = b.client.Publish(ctx, topic, raw).Err()
 	tracing.RecordError(span, err)
+	if b.m != nil {
+		if err != nil {
+			b.m.EventsFailedTotal.WithLabelValues(topic, "publish").Inc()
+		} else {
+			b.m.EventsPublishedTotal.WithLabelValues(topic, e.Type).Inc()
+		}
+	}
 	return err
 }
 
@@ -99,7 +109,13 @@ func (b *RedisBus) Subscribe(ctx context.Context, topics ...string) (<-chan Even
 			var e Event
 			if err := json.Unmarshal([]byte(msg.Payload), &e); err != nil {
 				b.log.Warn("dropping malformed event", zap.Error(err), zap.String("topic", msg.Channel))
+				if b.m != nil {
+					b.m.EventsFailedTotal.WithLabelValues(msg.Channel, "decode").Inc()
+				}
 				continue
+			}
+			if b.m != nil {
+				b.m.EventsConsumedTotal.WithLabelValues(msg.Channel, e.Type).Inc()
 			}
 			select {
 			case out <- e:
