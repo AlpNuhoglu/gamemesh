@@ -48,8 +48,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 func (b *Bridge) dispatch(ctx context.Context, e events.Event) {
 	// Extract the trace context the publisher embedded in the event and start a
 	// consumer span linked to the producing trace, so matchmaking-tick ->
-	// publish -> ws-dispatch shows as one trace across Redis Pub/Sub.
-	ctx, span := events.ReceiveSpan(ctx, e, "ws.dispatch")
+	// publish -> ws-dispatch shows as one trace across Redis Pub/Sub. The hub
+	// fan-out below is ctx-free (in-memory), so we only need the span here.
+	_, span := events.ReceiveSpan(ctx, e, "ws.dispatch")
 	defer span.End()
 
 	switch e.Type {
