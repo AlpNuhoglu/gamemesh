@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -43,7 +44,12 @@ func TestOutboxRowWrittenWithBusinessRows(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, events.TopicPlayer, rows[0].Topic)
 	assert.Equal(t, outbox.StatusPending, rows[0].Status)
-	assert.Equal(t, p.ID.String(), rows[0].ID.String(), "outbox id == event id (the dedup key)")
+	// The row id is the Event.ID (a generated UUID, the consumer dedup key) — NOT
+	// the player id, which travels in the payload.
+	assert.NotEqual(t, uuid.Nil, rows[0].ID, "outbox id is the generated event id")
+	var payload events.PlayerRegisteredPayload
+	require.NoError(t, json.Unmarshal(rows[0].Payload, &payload))
+	assert.Equal(t, p.ID.String(), payload.PlayerID, "payload references the new player")
 }
 
 // Atomicity: when the business INSERT fails (duplicate username), the outbox row
