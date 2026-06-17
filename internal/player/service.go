@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
+	"github.com/alpnuhoglu/gamemesh/pkg/events"
 )
 
 // ErrInvalidCredentials is returned on any login failure. It is deliberately
@@ -50,7 +51,22 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*Player, erro
 		PasswordHash: hash,
 		Stats:        &Stats{Rank: 1000},
 	}
-	if err := s.repo.Create(ctx, p); err != nil {
+	// Assign the ID up front (the model's BeforeCreate also would) so the event
+	// payload can reference it before the INSERT round-trip.
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
+	e, err := events.New(events.TypePlayerRegistered, events.PlayerRegisteredPayload{
+		PlayerID: p.ID.String(),
+		Username: p.Username,
+		Email:    p.Email,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Business row + outbox event commit atomically: the PlayerRegistered event
+	// can never be lost once registration succeeds (no dual-write).
+	if err := s.repo.CreateWithOutbox(ctx, p, e, events.TopicPlayer); err != nil {
 		return nil, err
 	}
 	s.log.Info("player registered", zap.String("player_id", p.ID.String()), zap.String("username", p.Username))
@@ -114,7 +130,15 @@ func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in UpdateInpu
 	if in.Email != nil {
 		p.Email = *in.Email
 	}
-	if err := s.repo.Update(ctx, p); err != nil {
+	e, err := events.New(events.TypePlayerUpdated, events.PlayerUpdatedPayload{
+		PlayerID: p.ID.String(),
+		Username: p.Username,
+		Email:    p.Email,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpdateWithOutbox(ctx, p, e, events.TopicPlayer); err != nil {
 		return nil, err
 	}
 	return p, nil

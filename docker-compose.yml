@@ -185,6 +185,34 @@ services:
       <<: *svc-healthcheck
       test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
 
+  # Transactional outbox relay: the publish side of the outbox pattern. It polls
+  # outbox_events (written by the player service in the same Postgres transaction
+  # as the business state) and publishes committed rows to NATS JetStream. A
+  # dedicated process so it scales/restarts independently of the player API and
+  # keeps the player service free of any NATS dependency.
+  outbox-relay:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.outbox-relay
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8085"
+      POSTGRES_DSN: host=postgres user=${POSTGRES_USER:-gamemesh} password=${POSTGRES_PASSWORD:-gamemesh-dev-password} dbname=${POSTGRES_DB:-gamemesh} port=5432 sslmode=disable
+      OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
+      OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-1s}
+      OUTBOX_WORKERS: ${OUTBOX_WORKERS:-4}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/healthz"]
+
   # Jaeger all-in-one: receives OTLP directly (v1.35+) and serves the trace UI
   # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.
   jaeger:

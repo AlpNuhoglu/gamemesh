@@ -76,6 +76,11 @@ var streamFor = map[string]stream{
 		subjects: []string{TopicLeaderboard, TopicLeaderboard + ".>"},
 		maxAge:   1 * time.Hour, // score updates are high-volume and disposable
 	},
+	TopicPlayer: {
+		name:     "PLAYER",
+		subjects: []string{TopicPlayer, TopicPlayer + ".>"},
+		maxAge:   72 * time.Hour, // identity events are low-volume, long replay window
+	},
 }
 
 // NewNATSBus connects to NATS, ensures the streams exist and returns a bus.

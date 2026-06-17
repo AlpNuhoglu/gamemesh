@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
+	"github.com/alpnuhoglu/gamemesh/internal/outbox"
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 )
 
@@ -43,13 +44,19 @@ func startPostgres(t *testing.T) *gorm.DB {
 		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&player.Player{}, &player.Stats{}))
+	require.NoError(t, db.AutoMigrate(&player.Player{}, &player.Stats{}, &outbox.Event{}))
 	return db
+}
+
+// newRepo builds a repository whose outbox writes target the same DB, so the
+// *WithOutbox paths (used by the service layer) commit the event atomically.
+func newRepo(db *gorm.DB) player.Repository {
+	return player.NewRepository(db, outbox.NewPublisher(outbox.NewStore(db)))
 }
 
 func TestPlayerRepositoryCRUD(t *testing.T) {
 	db := startPostgres(t)
-	repo := player.NewRepository(db)
+	repo := newRepo(db)
 	ctx := context.Background()
 
 	p := &player.Player{
@@ -85,7 +92,7 @@ func TestPlayerRepositoryCRUD(t *testing.T) {
 
 func TestPlayerRepositoryConstraints(t *testing.T) {
 	db := startPostgres(t)
-	repo := player.NewRepository(db)
+	repo := newRepo(db)
 	ctx := context.Background()
 
 	require.NoError(t, repo.Create(ctx, &player.Player{

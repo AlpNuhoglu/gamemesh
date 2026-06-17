@@ -27,3 +27,22 @@ CREATE TABLE IF NOT EXISTS player_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_stats_rank ON player_stats (rank);
+
+-- Transactional outbox: events written here in the same transaction as the
+-- business rows, then relayed to NATS by the outbox-relay process.
+CREATE TABLE IF NOT EXISTS outbox_events (
+    id            UUID        PRIMARY KEY,
+    event_type    TEXT        NOT NULL,
+    topic         TEXT        NOT NULL,
+    payload       JSONB       NOT NULL,
+    carrier       JSONB       NOT NULL DEFAULT '{}',
+    status        TEXT        NOT NULL DEFAULT 'PENDING',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at  TIMESTAMPTZ,
+    attempt_count INTEGER     NOT NULL DEFAULT 0,
+    CONSTRAINT ck_outbox_status CHECK (status IN ('PENDING', 'PUBLISHED'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_pending
+    ON outbox_events (created_at)
+    WHERE status = 'PENDING';

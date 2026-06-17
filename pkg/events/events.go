@@ -18,12 +18,20 @@ const (
 	TypePlayerLeft         = "PlayerLeft"
 	TypeMatchFound         = "MatchFound"
 	TypeLeaderboardUpdated = "LeaderboardUpdated"
+	// Player identity events. These flow through the transactional outbox: they
+	// are written to outbox_events in the SAME Postgres transaction as the
+	// players/player_stats rows, then relayed to NATS — so the event can never
+	// be lost once the registration/update commits (no dual-write).
+	TypePlayerRegistered = "PlayerRegistered"
+	TypePlayerUpdated    = "PlayerUpdated"
 )
 
 // Topics (channels) events are published on.
 const (
 	TopicMatchmaking = "events.matchmaking"
 	TopicLeaderboard = "events.leaderboard"
+	// TopicPlayer carries identity lifecycle events emitted via the outbox.
+	TopicPlayer = "events.player"
 )
 
 // Event is the wire format for all inter-service messages.
@@ -66,6 +74,21 @@ type LeaderboardUpdatedPayload struct {
 	PlayerID string  `json:"player_id"`
 	Score    float64 `json:"score"`
 	Rank     int64   `json:"rank"`
+}
+
+// PlayerRegisteredPayload is emitted when a new player is created. Written to
+// the outbox atomically with the players/player_stats rows.
+type PlayerRegisteredPayload struct {
+	PlayerID string `json:"player_id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
+// PlayerUpdatedPayload is emitted when a player edits their profile.
+type PlayerUpdatedPayload struct {
+	PlayerID string `json:"player_id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
 }
 
 // Publisher sends events to a topic. Implementations must be safe for
