@@ -12,6 +12,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/alpnuhoglu/gamemesh/internal/outbox"
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
@@ -49,7 +50,7 @@ func main() {
 	// SQL migrations under /migrations are the source of truth; AutoMigrate
 	// is a dev convenience that keeps `docker compose up` zero-step.
 	if cfg.AutoMigrate {
-		if err := db.AutoMigrate(&player.Player{}, &player.Stats{}); err != nil {
+		if err := db.AutoMigrate(&player.Player{}, &player.Stats{}, &outbox.OutboxEvent{}); err != nil {
 			log.Fatal("auto-migration failed", zap.Error(err))
 		}
 	}
@@ -64,7 +65,11 @@ func main() {
 	}
 
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
-	repo := player.NewRepository(db)
+	// The player service writes domain events to the outbox (NOT to NATS): the
+	// dedicated outbox-relay process publishes them. So the player service has no
+	// NATS dependency — the OutboxPublisher writes rows on the business tx.
+	outboxPub := outbox.NewPublisher(outbox.NewStore(db))
+	repo := player.NewRepository(db, outboxPub)
 	sessions := player.NewSessionStore(rdb)
 	svc := player.NewService(repo, sessions, tokens, log)
 	handler := player.NewHandler(svc)

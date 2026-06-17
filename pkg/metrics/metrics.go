@@ -34,6 +34,13 @@ type Metrics struct {
 	EventsConsumedTotal     *prometheus.CounterVec
 	EventsFailedTotal       *prometheus.CounterVec
 	EventProcessingDuration *prometheus.HistogramVec
+
+	// Transactional outbox relay instruments. Pending is a gauge of the current
+	// backlog (PENDING rows); the rest track the relay's publish path.
+	OutboxEventsPending        prometheus.Gauge
+	OutboxEventsPublishedTotal prometheus.Counter
+	OutboxPublishFailuresTotal prometheus.Counter
+	OutboxPublishDuration      prometheus.Histogram
 }
 
 // New creates and registers all instruments, labelled with the service name
@@ -106,12 +113,34 @@ func New(service string) *Metrics {
 			ConstLabels: constLabels,
 			Buckets:     []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
 		}, []string{"topic", "type"}),
+		OutboxEventsPending: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "gamemesh_outbox_events_pending",
+			Help:        "Outbox rows awaiting publication (the relay backlog).",
+			ConstLabels: constLabels,
+		}),
+		OutboxEventsPublishedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_outbox_events_published_total",
+			Help:        "Total outbox rows successfully relayed to the event bus.",
+			ConstLabels: constLabels,
+		}),
+		OutboxPublishFailuresTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_outbox_publish_failures_total",
+			Help:        "Total outbox publish attempts that failed (row stays PENDING and is retried).",
+			ConstLabels: constLabels,
+		}),
+		OutboxPublishDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:        "gamemesh_outbox_publish_duration_seconds",
+			Help:        "Latency of publishing a single outbox row to the event bus.",
+			ConstLabels: constLabels,
+			Buckets:     []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
+		}),
 	}
 
 	reg.MustRegister(
 		m.RequestsTotal, m.ErrorsTotal, m.RequestDuration,
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
 		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
+		m.OutboxEventsPending, m.OutboxEventsPublishedTotal, m.OutboxPublishFailuresTotal, m.OutboxPublishDuration,
 	)
 	return m
 }

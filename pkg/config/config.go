@@ -31,6 +31,14 @@ type Config struct {
 	NATSURL      string
 	EventWorkers int
 
+	// Transactional outbox relay tuning. The relay polls outbox_events and
+	// publishes committed rows to NATS. OutboxEnabled gates the relay loop;
+	// the player service always writes to the outbox regardless.
+	OutboxEnabled      bool
+	OutboxBatchSize    int
+	OutboxPollInterval time.Duration
+	OutboxWorkers      int
+
 	JWTSecret string
 	JWTExpiry time.Duration
 	JWTIssuer string
@@ -82,6 +90,11 @@ func Load(serviceName string) *Config {
 		NATSURL:      getEnv("NATS_URL", "nats://localhost:4222"),
 		EventWorkers: getEnvInt("EVENT_WORKERS", 8),
 
+		OutboxEnabled:      getEnvBool("OUTBOX_ENABLED", true),
+		OutboxBatchSize:    getEnvInt("OUTBOX_BATCH_SIZE", 100),
+		OutboxPollInterval: getEnvDuration("OUTBOX_POLL_INTERVAL", time.Second),
+		OutboxWorkers:      getEnvInt("OUTBOX_WORKERS", 4),
+
 		JWTSecret: getEnv("JWT_SECRET", "insecure-dev-secret-do-not-use-in-prod"),
 		JWTExpiry: getEnvDuration("JWT_EXPIRY", 24*time.Hour),
 		JWTIssuer: getEnv("JWT_ISSUER", "gamemesh"),
@@ -130,6 +143,8 @@ func defaultPort(serviceName string) string {
 		return "8083"
 	case "websocket":
 		return "8084"
+	case "outbox-relay":
+		return "8085"
 	default:
 		return "8080"
 	}

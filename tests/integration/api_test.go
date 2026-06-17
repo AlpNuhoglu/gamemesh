@@ -29,7 +29,7 @@ func TestPlayerAPIEndToEnd(t *testing.T) {
 
 	tokens := auth.NewTokenManager("integration-secret", time.Hour, "gamemesh")
 	svc := player.NewService(
-		player.NewRepository(db),
+		newRepo(db),
 		player.NewSessionStore(rdb),
 		tokens,
 		zap.NewNop(),

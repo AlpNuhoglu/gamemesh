@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -11,11 +12,15 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
+	"github.com/alpnuhoglu/gamemesh/pkg/events"
 )
 
-// mockRepository is an in-memory Repository for unit tests.
+// mockRepository is an in-memory Repository for unit tests. The *WithOutbox
+// methods capture the emitted event so tests can assert the outbox payload
+// without a database (the real atomicity is covered by the integration tests).
 type mockRepository struct {
 	players map[uuid.UUID]*Player
+	events  []events.Event
 }
 
 func newMockRepository() *mockRepository {
@@ -68,6 +73,22 @@ func (r *mockRepository) Update(_ context.Context, p *Player) error {
 	return nil
 }
 
+func (r *mockRepository) CreateWithOutbox(ctx context.Context, p *Player, e events.Event, _ string) error {
+	if err := r.Create(ctx, p); err != nil {
+		return err
+	}
+	r.events = append(r.events, e)
+	return nil
+}
+
+func (r *mockRepository) UpdateWithOutbox(ctx context.Context, p *Player, e events.Event, _ string) error {
+	if err := r.Update(ctx, p); err != nil {
+		return err
+	}
+	r.events = append(r.events, e)
+	return nil
+}
+
 // fakeSessions records session operations.
 type fakeSessions struct {
 	saved   map[string]string
@@ -112,6 +133,23 @@ func TestRegisterHashesPassword(t *testing.T) {
 	assert.True(t, auth.CheckPassword(p.PasswordHash, "password123"))
 	require.NotNil(t, p.Stats)
 	assert.Equal(t, 1000, p.Stats.Rank, "new players start at default rank")
+}
+
+func TestRegisterEmitsOutboxEvent(t *testing.T) {
+	svc, repo, _ := newTestService()
+
+	p, err := svc.Register(context.Background(), RegisterInput{
+		Username: "alice", Email: "alice@example.com", Password: "password123",
+	})
+	require.NoError(t, err)
+
+	require.Len(t, repo.events, 1, "register must emit exactly one event through the outbox")
+	e := repo.events[0]
+	assert.Equal(t, events.TypePlayerRegistered, e.Type)
+	var payload events.PlayerRegisteredPayload
+	require.NoError(t, json.Unmarshal(e.Payload, &payload))
+	assert.Equal(t, p.ID.String(), payload.PlayerID)
+	assert.Equal(t, "alice", payload.Username)
 }
 
 func TestRegisterDuplicate(t *testing.T) {
