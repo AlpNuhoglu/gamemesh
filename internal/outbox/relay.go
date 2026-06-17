@@ -106,7 +106,7 @@ func (r *Relay) processBatch(ctx context.Context) (int, error) {
 	pollCtx, span := tracing.Tracer().Start(ctx, "outbox.poll")
 	defer span.End()
 
-	polled, err := r.store.RunBatch(pollCtx, r.cfg.BatchSize, func(ctx context.Context, rows []OutboxEvent) ([]uuid.UUID, []uuid.UUID, error) {
+	polled, err := r.store.RunBatch(pollCtx, r.cfg.BatchSize, func(ctx context.Context, rows []Event) ([]uuid.UUID, []uuid.UUID, error) {
 		published, failed := r.publishAll(ctx, rows)
 		return published, failed, nil
 	})
@@ -117,13 +117,13 @@ func (r *Relay) processBatch(ctx context.Context) (int, error) {
 // publishAll fans the batch out across a bounded worker pool (NOT one goroutine
 // per event) and returns the IDs that published successfully and those that
 // failed.
-func (r *Relay) publishAll(ctx context.Context, rows []OutboxEvent) (published, failed []uuid.UUID) {
+func (r *Relay) publishAll(ctx context.Context, rows []Event) (published, failed []uuid.UUID) {
 	type result struct {
 		id  uuid.UUID
 		err error
 	}
 
-	jobs := make(chan OutboxEvent)
+	jobs := make(chan Event)
 	results := make(chan result)
 
 	var wg sync.WaitGroup
@@ -167,7 +167,7 @@ func (r *Relay) publishAll(ctx context.Context, rows []OutboxEvent) (published, 
 // and publishes it. The carrier is extracted so the relay's publish span — and
 // the downstream NATS producer span — link back to the originating request's
 // trace even though publication happens later in this separate process.
-func (r *Relay) publishOne(ctx context.Context, row OutboxEvent) error {
+func (r *Relay) publishOne(ctx context.Context, row Event) error {
 	carrier := map[string]string{}
 	if len(row.Carrier) > 0 {
 		_ = json.Unmarshal(row.Carrier, &carrier)

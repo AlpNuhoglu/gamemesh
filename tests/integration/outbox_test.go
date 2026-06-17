@@ -38,7 +38,7 @@ func TestOutboxRowWrittenWithBusinessRows(t *testing.T) {
 	assert.Equal(t, int64(1), players)
 
 	// Outbox row committed in the same transaction, PENDING, correct type.
-	var rows []outbox.OutboxEvent
+	var rows []outbox.Event
 	require.NoError(t, db.Where("event_type = ?", events.TypePlayerRegistered).Find(&rows).Error)
 	require.Len(t, rows, 1)
 	assert.Equal(t, events.TopicPlayer, rows[0].Topic)
@@ -70,7 +70,7 @@ func TestOutboxRollsBackWithBusinessFailure(t *testing.T) {
 	// Exactly one outbox row (from the first, successful register) — the failed
 	// transaction left no orphan event.
 	var n int64
-	require.NoError(t, db.Model(&outbox.OutboxEvent{}).Count(&n).Error)
+	require.NoError(t, db.Model(&outbox.Event{}).Count(&n).Error)
 	assert.Equal(t, int64(1), n, "failed business tx must not leave an outbox row")
 }
 
@@ -91,7 +91,7 @@ func TestStoreRunBatchMarksPublished(t *testing.T) {
 	require.Equal(t, int64(1), pendingBefore)
 
 	var publishedCount int
-	n, err := store.RunBatch(ctx, 10, func(_ context.Context, rows []outbox.OutboxEvent) ([]uuid.UUID, []uuid.UUID, error) {
+	n, err := store.RunBatch(ctx, 10, func(_ context.Context, rows []outbox.Event) ([]uuid.UUID, []uuid.UUID, error) {
 		publishedCount = len(rows)
 		ids := make([]uuid.UUID, len(rows))
 		for i, r := range rows {

@@ -28,9 +28,11 @@ const (
 	StatusPublished = "PUBLISHED"
 )
 
-// OutboxEvent is the GORM model backing the outbox_events table. The struct
-// fields mirror the migration in migrations/0003_create_outbox_events.up.sql.
-type OutboxEvent struct {
+// Event is the GORM model backing the outbox_events table. The struct fields
+// mirror the migration in migrations/0003_create_outbox_events.up.sql. (Named
+// Event rather than OutboxEvent to avoid the outbox.OutboxEvent stutter; it is
+// distinct from events.Event, the wire format that flows over NATS.)
+type Event struct {
 	// ID equals events.Event.ID so the same identity flows DB -> NATS ->
 	// consumer, giving consumers a natural dedup key with no extra columns.
 	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
@@ -47,7 +49,7 @@ type OutboxEvent struct {
 }
 
 // TableName pins the table name to match the SQL migrations.
-func (OutboxEvent) TableName() string { return "outbox_events" }
+func (Event) TableName() string { return "outbox_events" }
 
 // Store provides access to outbox_events. The same Store type serves both the
 // write side (Insert, on a caller-supplied tx) and the relay side (RunBatch,
@@ -73,7 +75,7 @@ func (s *Store) Insert(ctx context.Context, tx *gorm.DB, id uuid.UUID, eventType
 	if len(carrierJSON) == 0 {
 		carrierJSON = []byte("{}")
 	}
-	row := OutboxEvent{
+	row := Event{
 		ID:        id,
 		EventType: eventType,
 		Topic:     topic,
@@ -88,7 +90,7 @@ func (s *Store) Insert(ctx context.Context, tx *gorm.DB, id uuid.UUID, eventType
 // which failed. The relay supplies this; the store calls it inside the batch
 // transaction so the rows stay locked (FOR UPDATE SKIP LOCKED) until their
 // status is updated.
-type PublishFunc func(ctx context.Context, rows []OutboxEvent) (published, failed []uuid.UUID, err error)
+type PublishFunc func(ctx context.Context, rows []Event) (published, failed []uuid.UUID, err error)
 
 // RunBatch is the relay's poll → publish → mark cycle, all inside ONE
 // transaction. It locks up to limit of the oldest PENDING rows with
@@ -101,7 +103,7 @@ type PublishFunc func(ctx context.Context, rows []OutboxEvent) (published, faile
 func (s *Store) RunBatch(ctx context.Context, limit int, publish PublishFunc) (int, error) {
 	var polled int
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var rows []OutboxEvent
+		var rows []Event
 		if err := tx.
 			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where("status = ?", StatusPending).
@@ -142,7 +144,7 @@ func markPublished(ctx context.Context, tx *gorm.DB, ids []uuid.UUID) error {
 	}
 	now := time.Now().UTC()
 	return tx.WithContext(ctx).
-		Model(&OutboxEvent{}).
+		Model(&Event{}).
 		Where("id IN ?", ids).
 		Updates(map[string]any{"status": StatusPublished, "published_at": now}).Error
 }
@@ -152,7 +154,7 @@ func incrementAttempt(ctx context.Context, tx *gorm.DB, ids []uuid.UUID) error {
 		return nil
 	}
 	return tx.WithContext(ctx).
-		Model(&OutboxEvent{}).
+		Model(&Event{}).
 		Where("id IN ?", ids).
 		UpdateColumn("attempt_count", gorm.Expr("attempt_count + 1")).Error
 }
@@ -162,7 +164,7 @@ func incrementAttempt(ctx context.Context, tx *gorm.DB, ids []uuid.UUID) error {
 func (s *Store) CountPending(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.WithContext(ctx).
-		Model(&OutboxEvent{}).
+		Model(&Event{}).
 		Where("status = ?", StatusPending).
 		Count(&n).Error
 	return n, err

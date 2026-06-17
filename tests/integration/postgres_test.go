@@ -44,7 +44,7 @@ func startPostgres(t *testing.T) *gorm.DB {
 		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&player.Player{}, &player.Stats{}, &outbox.OutboxEvent{}))
+	require.NoError(t, db.AutoMigrate(&player.Player{}, &player.Stats{}, &outbox.Event{}))
 	return db
 }
 

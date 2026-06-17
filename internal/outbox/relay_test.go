@@ -26,11 +26,11 @@ import (
 // retry logic can be tested in isolation.
 type fakeBatcher struct {
 	mu      sync.Mutex
-	rows    []OutboxEvent     // current PENDING rows, oldest first
+	rows    []Event           // current PENDING rows, oldest first
 	attempt map[uuid.UUID]int // attempt_count per id
 }
 
-func newFakeBatcher(rows ...OutboxEvent) *fakeBatcher {
+func newFakeBatcher(rows ...Event) *fakeBatcher {
 	return &fakeBatcher{rows: rows, attempt: map[uuid.UUID]int{}}
 }
 
@@ -41,7 +41,7 @@ func (f *fakeBatcher) RunBatch(ctx context.Context, limit int, publish PublishFu
 		batch = batch[:limit]
 	}
 	// Copy so the publish callback can't mutate our slice mid-flight.
-	rows := make([]OutboxEvent, len(batch))
+	rows := make([]Event, len(batch))
 	copy(rows, batch)
 	f.mu.Unlock()
 
@@ -64,7 +64,7 @@ func (f *fakeBatcher) RunBatch(ctx context.Context, limit int, publish PublishFu
 		f.attempt[id]++
 	}
 	// Drop published rows from the PENDING set; failed rows stay for retry.
-	var remaining []OutboxEvent
+	var remaining []Event
 	for _, r := range f.rows {
 		if !done[r.ID] {
 			remaining = append(remaining, r)
@@ -110,11 +110,11 @@ type publishError struct{}
 
 func (*publishError) Error() string { return "simulated publish failure" }
 
-func pendingRow(t *testing.T, eventType string, payload any) OutboxEvent {
+func pendingRow(t *testing.T, eventType string, payload any) Event {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	require.NoError(t, err)
-	return OutboxEvent{
+	return Event{
 		ID:        uuid.New(),
 		EventType: eventType,
 		Topic:     events.TopicPlayer,
