@@ -97,7 +97,8 @@ func TestStoreRunBatchMarksPublished(t *testing.T) {
 	require.Equal(t, int64(1), pendingBefore)
 
 	var publishedCount int
-	n, err := store.RunBatch(ctx, 10, func(_ context.Context, rows []outbox.Event) ([]uuid.UUID, []uuid.UUID, error) {
+	// maxAttempts 0: dead-lettering disabled, exercises the plain publish path.
+	n, dead, err := store.RunBatch(ctx, 10, 0, func(_ context.Context, rows []outbox.Event) ([]uuid.UUID, []uuid.UUID, error) {
 		publishedCount = len(rows)
 		ids := make([]uuid.UUID, len(rows))
 		for i, r := range rows {
@@ -107,9 +108,59 @@ func TestStoreRunBatchMarksPublished(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
+	assert.Equal(t, 0, dead)
 	assert.Equal(t, 1, publishedCount)
 
 	pendingAfter, err := store.CountPending(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), pendingAfter, "row must be marked PUBLISHED")
+}
+
+// A row that keeps failing is dead-lettered (status FAILED) once attempt_count
+// reaches maxAttempts, exercising the real SQL CASE update: it drops out of the
+// PENDING poll and carries a last_error for operator triage.
+func TestStoreRunBatchDeadLetters(t *testing.T) {
+	db := startPostgres(t)
+	ctx := context.Background()
+	store := outbox.NewStore(db)
+
+	e, err := events.New(events.TypePlayerRegistered, events.PlayerRegisteredPayload{PlayerID: "p1"})
+	require.NoError(t, err)
+	require.NoError(t, outbox.NewPublisher(store).Publish(ctx, events.TopicPlayer, e))
+
+	// failPublish reports every row as failed so attempt_count climbs each batch.
+	failPublish := func(_ context.Context, rows []outbox.Event) ([]uuid.UUID, []uuid.UUID, error) {
+		ids := make([]uuid.UUID, len(rows))
+		for i, r := range rows {
+			ids[i] = r.ID
+		}
+		return nil, ids, nil
+	}
+
+	// maxAttempts 2: first failure bumps to 1 (stays PENDING), second reaches 2
+	// and dead-letters.
+	_, dead, err := store.RunBatch(ctx, 10, 2, failPublish)
+	require.NoError(t, err)
+	assert.Equal(t, 0, dead, "not dead-lettered before max attempts")
+	pending, err := store.CountPending(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), pending)
+
+	_, dead, err = store.RunBatch(ctx, 10, 2, failPublish)
+	require.NoError(t, err)
+	assert.Equal(t, 1, dead, "row dead-lettered on reaching max attempts")
+	pending, err = store.CountPending(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), pending, "FAILED row must leave the PENDING set")
+
+	// The row now carries FAILED status and a last_error for triage.
+	var row outbox.Event
+	require.NoError(t, db.WithContext(ctx).Where("id = ?", e.ID).First(&row).Error)
+	assert.Equal(t, outbox.StatusFailed, row.Status)
+	assert.NotEmpty(t, row.LastError)
+
+	// A further batch is a no-op: the poison row is never polled again.
+	n, _, err := store.RunBatch(ctx, 10, 2, failPublish)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
 }

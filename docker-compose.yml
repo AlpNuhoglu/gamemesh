@@ -202,6 +202,9 @@ services:
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
       OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-1s}
       OUTBOX_WORKERS: ${OUTBOX_WORKERS:-4}
+      # Dead-letter a row after this many failed publish attempts (0 = retry
+      # forever). 5 lets transient NATS blips self-heal but caps poison rows.
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -250,7 +253,8 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Mount the whole dir so prometheus.yml and alerts.yml are both available.
+      - ./config/prometheus:/etc/prometheus:ro
     depends_on:
       - gateway
 

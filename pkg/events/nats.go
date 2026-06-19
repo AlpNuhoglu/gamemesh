@@ -11,9 +11,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -156,10 +154,7 @@ func (b *NATSBus) Publish(ctx context.Context, topic string, e Event) error {
 	)
 	defer span.End()
 
-	if e.Carrier == nil {
-		e.Carrier = make(map[string]string)
-	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(e.Carrier))
+	e.Carrier = tracing.InjectCarrier(ctx, e.Carrier)
 
 	raw, err := json.Marshal(e)
 	if err != nil {
@@ -319,10 +314,7 @@ func (b *NATSBus) process(ctx context.Context, topic string, handler Handler, ms
 
 	// Continue the producer's trace across the async boundary (same mechanism
 	// as RedisBus / ReceiveSpan, just inlined so we can wrap ACK timing).
-	hctx := ctx
-	if e.Carrier != nil {
-		hctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(e.Carrier))
-	}
+	hctx := tracing.ResumeFromCarrier(ctx, e.Carrier)
 	hctx, span := tracing.Tracer().Start(hctx, "events.consume "+topic,
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(

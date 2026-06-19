@@ -1,0 +1,53 @@
+# Alerting rules for the transactional outbox relay. These turn the relay's
+# instruments (see docs/outbox.md §9) into actionable signals: a growing backlog
+# means the relay is falling behind or NATS is unreachable; a dead-lettered row
+# means an event will never be delivered without operator action.
+groups:
+  - name: outbox-relay
+    rules:
+      # Any dead-lettered row is page-worthy: the event is permanently stuck in
+      # FAILED and a human must inspect last_error and re-queue or drop it.
+      - alert: OutboxEventsDeadLettered
+        expr: increase(gamemesh_outbox_events_dead_lettered_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: outbox-relay
+        annotations:
+          summary: "Outbox rows dead-lettered (service {{ $labels.service }})"
+          description: >
+            {{ $value | printf "%.0f" }} outbox row(s) moved to FAILED in the last
+            5m. They will never be published without operator action — inspect
+            last_error and re-queue or drop them.
+
+      # A persistently rising backlog means the relay cannot keep up or NATS is
+      # down. Rows are durable (no loss), so this is a warning, not a page.
+      - alert: OutboxBacklogGrowing
+        expr: gamemesh_outbox_events_pending > 500
+        for: 10m
+        labels:
+          severity: warning
+          component: outbox-relay
+        annotations:
+          summary: "Outbox backlog growing (service {{ $labels.service }})"
+          description: >
+            {{ $value | printf "%.0f" }} PENDING outbox rows for over 10m. The
+            relay is falling behind or NATS is unreachable. Events are safe but
+            delayed — check NATS connectivity and relay throughput/replicas.
+
+      # Publishes failing while nothing is succeeding = NATS is down. Distinct
+      # from a backlog: this fires fast on the failure rate, not the queue depth.
+      - alert: OutboxPublishStalled
+        expr: |
+          rate(gamemesh_outbox_publish_failures_total[5m]) > 0
+          and rate(gamemesh_outbox_events_published_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: outbox-relay
+        annotations:
+          summary: "Outbox publishing stalled (service {{ $labels.service }})"
+          description: >
+            Publish attempts are failing and nothing is succeeding for 5m — NATS
+            is likely down. Rows stay PENDING and retry; if this persists they
+            will eventually dead-letter (see OutboxEventsDeadLettered).

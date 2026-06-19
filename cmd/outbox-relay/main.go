@@ -68,6 +68,7 @@ func main() {
 		BatchSize:    cfg.OutboxBatchSize,
 		PollInterval: cfg.OutboxPollInterval,
 		Workers:      cfg.OutboxWorkers,
+		MaxAttempts:  cfg.OutboxMaxAttempts,
 	}, m, log)
 
 	ctx, stop := server.ShutdownContext()

@@ -126,7 +126,9 @@ CREATE INDEX idx_outbox_pending
 - **Partial index on `PENDING`.** The relay's only hot query is "oldest
   unpublished rows." A partial index stays small as `PUBLISHED` rows accumulate,
   keeping the poll `O(batch)` regardless of total table size.
-- **Two states, no `FAILED`.** See §6.
+- **Three states (`PENDING` → `PUBLISHED`, or `PENDING` → `FAILED`).** A failed
+  publish stays `PENDING` and retries; a row that exhausts `OUTBOX_MAX_ATTEMPTS`
+  is dead-lettered to `FAILED`. See §6.
 
 ---
 
@@ -150,7 +152,9 @@ transaction**:
 2. **Publish** the batch across a **bounded worker pool** of `OUTBOX_WORKERS`
    (`internal/outbox/relay.go: publishAll`) — never one goroutine per event.
 3. **Mark** successfully published rows `PUBLISHED` (stamping `published_at`) and
-   **bump `attempt_count`** on the failures, which stay `PENDING`.
+   **bump `attempt_count`** on the failures, which stay `PENDING` — unless a row
+   reaches `OUTBOX_MAX_ATTEMPTS`, in which case it is moved to `FAILED`
+   (dead-lettered) in the same statement so it is never polled again.
 4. **Commit.** The rows stayed locked for the whole cycle, so no other replica
    touched them.
 
@@ -167,6 +171,7 @@ in-flight batch's transaction completes or rolls back cleanly.
 | `OUTBOX_BATCH_SIZE`    | `100`   | Rows claimed per poll.               |
 | `OUTBOX_POLL_INTERVAL` | `1s`    | Delay between polls when idle.       |
 | `OUTBOX_WORKERS`       | `4`     | Bounded publish concurrency / batch. |
+| `OUTBOX_MAX_ATTEMPTS`  | `0`     | Dead-letter a row to `FAILED` after this many failed publishes (`0` = retry forever). |
 
 The player service always **writes** to the outbox regardless of
 `OUTBOX_ENABLED`; the flag only governs the relay.
@@ -191,20 +196,26 @@ other event. The outbox is invisible past the publish.
         insert (in business tx)
 PENDING ───────────────────────► (relay publishes) ──success──► PUBLISHED
    ▲                                     │
-   └───────────── failure ───────────────┘  (attempt_count++ , stays PENDING)
+   ├───────── failure (attempt < max) ───┘  (attempt_count++ , stays PENDING)
+   │
+   └───────── failure (attempt = max) ──────────────────────────► FAILED (dead-letter)
 ```
 
-**Only two states.** A failed publish is simply a `PENDING` row that is retried
-on the next poll, so a transient NATS outage **self-heals** with no operator
-action and nothing to reconcile. There is intentionally **no `FAILED` state**:
-it would add a manual recovery step for a condition that resolves itself.
-`attempt_count` is enough to alert on a genuinely poisoned row (e.g. one that
-keeps failing) without a state machine.
+**Self-healing, with a poison-row backstop.** A failed publish is normally just a
+`PENDING` row that is retried on the next poll, so a transient NATS outage
+**self-heals** with no operator action. To stop a genuinely poisoned row (one
+that can *never* publish — e.g. malformed payload) from being retried forever and
+tying up a worker, a row is moved to `FAILED` once `attempt_count` reaches
+`OUTBOX_MAX_ATTEMPTS`. `FAILED` rows drop out of the `PENDING` poll, carry a
+`last_error`, and increment `gamemesh_outbox_events_dead_lettered_total` so an
+operator can alert, inspect, and re-queue them. Setting `OUTBOX_MAX_ATTEMPTS=0`
+disables the backstop and restores the original retry-forever behaviour.
 
 | Failure                                          | Outcome                                                                 |
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | Crash between `COMMIT` and any publish           | Row is durable & `PENDING`; relay publishes it on next poll. **No loss.** |
 | NATS down when relay polls                       | `Publish` fails; row stays `PENDING`, `attempt_count++`; retried later. |
+| Row fails `OUTBOX_MAX_ATTEMPTS` times            | Row moved to `FAILED` (dead-letter); no longer polled; metric + `last_error` for triage. |
 | Crash **after** NATS publish, **before** mark    | Row stays `PENDING`; relay republishes → **duplicate** (see §7).        |
 | Business `INSERT` fails (e.g. duplicate username)| Whole tx rolls back; **no orphan outbox row**.                          |
 | Two relay replicas poll simultaneously           | `SKIP LOCKED` hands each row to exactly one replica.                    |
@@ -278,11 +289,25 @@ following the existing `gamemesh_*` convention with a `service` const label:
 | `gamemesh_outbox_events_pending`         | Gauge     | Current `PENDING` backlog (per poll).    |
 | `gamemesh_outbox_events_published_total` | Counter   | Rows successfully relayed.               |
 | `gamemesh_outbox_publish_failures_total` | Counter   | Publish attempts that failed (retried).  |
+| `gamemesh_outbox_events_dead_lettered_total`| Counter| Rows moved to `FAILED` after `OUTBOX_MAX_ATTEMPTS` (poison rows). |
 | `gamemesh_outbox_publish_duration_seconds`| Histogram| Per-row publish latency.                 |
 
 **Operational signals:** a steadily rising `pending` gauge means the relay is
 falling behind or NATS is unreachable; a rising `publish_failures_total` with a
-flat `published_total` means NATS is down (rows are safe, just delayed).
+flat `published_total` means NATS is down (rows are safe, just delayed). Any
+increase in `dead_lettered_total` is a **page-worthy** signal — an event will
+never be delivered without operator action, so alert on
+`increase(gamemesh_outbox_events_dead_lettered_total[5m]) > 0`.
+
+**Alert rules.** These signals are shipped as Prometheus rules in
+`config/prometheus/alerts.yml` (compose) and the `prometheus-config` ConfigMap in
+`deployments/k8s/30-monitoring.yaml` (k8s):
+
+| Alert                     | Severity | Fires when                                                       |
+| ------------------------- | -------- | ---------------------------------------------------------------- |
+| `OutboxEventsDeadLettered`| critical | any row dead-letters in 5m (permanent loss without action).      |
+| `OutboxBacklogGrowing`    | warning  | `pending > 500` for 10m (relay behind or NATS unreachable).      |
+| `OutboxPublishStalled`    | critical | publishes failing and none succeeding for 5m (NATS down).        |
 
 ---
 
@@ -297,9 +322,12 @@ flat `published_total` means NATS is down (rows are safe, just delayed).
   throughput.
 - **Ordering.** The relay processes oldest-first but does not guarantee strict
   global ordering under concurrency. Consumers must not assume cross-event order.
-- **Kubernetes.** The compose deployment runs the relay; the k8s manifests under
-  `deployments/k8s/` are not updated in this change and would need an analogous
-  Deployment to run the relay in-cluster.
+- **Kubernetes.** `deployments/k8s/15-outbox-relay.yaml` runs the relay in-cluster
+  with **3 replicas** and a `PodDisruptionBudget` of `minAvailable: 2`, so node
+  drains and rollouts never evict the whole relay at once. The replicas are safe
+  by construction — `FOR UPDATE SKIP LOCKED` hands each outbox row to exactly one
+  of them — which removes the relay as a single point of failure between
+  persistence and event transport.
 
 ---
 

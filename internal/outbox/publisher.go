@@ -4,9 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 
@@ -56,10 +54,7 @@ func (p *Publisher) Publish(ctx context.Context, topic string, e events.Event) e
 	)
 	defer span.End()
 
-	if e.Carrier == nil {
-		e.Carrier = make(map[string]string)
-	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(e.Carrier))
+	e.Carrier = tracing.InjectCarrier(ctx, e.Carrier)
 
 	id, err := uuid.Parse(e.ID)
 	if err != nil {

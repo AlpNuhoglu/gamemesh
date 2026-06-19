@@ -5,6 +5,10 @@ global:
   scrape_interval: 5s
   evaluation_interval: 5s
 
+# Alerting rules (outbox relay SLOs). Evaluated every evaluation_interval.
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: gateway
     static_configs:
