@@ -38,6 +38,10 @@ type Config struct {
 	OutboxBatchSize    int
 	OutboxPollInterval time.Duration
 	OutboxWorkers      int
+	// OutboxMaxAttempts dead-letters a row (status FAILED) once its publish
+	// attempts reach this count, so a poison row stops being retried forever.
+	// 0 (the default) disables dead-lettering: rows retry indefinitely.
+	OutboxMaxAttempts int
 
 	JWTSecret string
 	JWTExpiry time.Duration
@@ -94,6 +98,7 @@ func Load(serviceName string) *Config {
 		OutboxBatchSize:    getEnvInt("OUTBOX_BATCH_SIZE", 100),
 		OutboxPollInterval: getEnvDuration("OUTBOX_POLL_INTERVAL", time.Second),
 		OutboxWorkers:      getEnvInt("OUTBOX_WORKERS", 4),
+		OutboxMaxAttempts:  getEnvInt("OUTBOX_MAX_ATTEMPTS", 0),
 
 		JWTSecret: getEnv("JWT_SECRET", "insecure-dev-secret-do-not-use-in-prod"),
 		JWTExpiry: getEnvDuration("JWT_EXPIRY", 24*time.Hour),

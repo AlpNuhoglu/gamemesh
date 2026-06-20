@@ -19,13 +19,16 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
-// Status values for an outbox row. The lifecycle is intentionally just two
-// states: a failed publish is simply a PENDING row that gets retried on the
-// next poll, so a transient NATS outage self-heals with no operator action and
-// no FAILED state to reconcile.
+// Status values for an outbox row. A failed publish stays PENDING and is retried
+// on the next poll, so a transient NATS outage self-heals with no operator
+// action. A row that keeps failing past MaxAttempts is moved to FAILED (a
+// dead-letter state): it is no longer polled, so a single poison row can never
+// be retried forever and wedge a worker. FAILED rows are surfaced via metrics
+// for an operator to inspect and replay.
 const (
 	StatusPending   = "PENDING"
 	StatusPublished = "PUBLISHED"
+	StatusFailed    = "FAILED"
 )
 
 // Event is the GORM model backing the outbox_events table. The struct fields
@@ -46,6 +49,9 @@ type Event struct {
 	CreatedAt    time.Time  `gorm:"not null;default:now()"`
 	PublishedAt  *time.Time `gorm:"column:published_at"`
 	AttemptCount int        `gorm:"column:attempt_count;not null;default:0"`
+	// LastError records the most recent publish failure, kept on FAILED rows so an
+	// operator can see why a dead-lettered event never made it to NATS.
+	LastError string `gorm:"column:last_error"`
 }
 
 // TableName pins the table name to match the SQL migrations.
@@ -96,13 +102,15 @@ type PublishFunc func(ctx context.Context, rows []Event) (published, failed []uu
 // transaction. It locks up to limit of the oldest PENDING rows with
 // FOR UPDATE SKIP LOCKED (so concurrent relay replicas never grab the same
 // rows), hands them to publish, then marks the successful ones PUBLISHED and
-// bumps attempt_count on the failures (which stay PENDING and retry next cycle).
-// Returns the number of rows polled. Keeping the transaction logic here is the
-// only place that knows about gorm, which keeps the relay unit-testable behind
-// the Batcher interface.
-func (s *Store) RunBatch(ctx context.Context, limit int, publish PublishFunc) (int, error) {
-	var polled int
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// bumps attempt_count on the failures. A failure whose bumped attempt_count
+// reaches maxAttempts is moved to FAILED (dead-lettered) instead of staying
+// PENDING, so a poison row stops being retried; maxAttempts <= 0 disables this
+// and rows retry forever (the original behaviour). Returns the number of rows
+// polled and the number dead-lettered in this batch. Keeping the transaction
+// logic here is the only place that knows about gorm, which keeps the relay
+// unit-testable behind the Batcher interface.
+func (s *Store) RunBatch(ctx context.Context, limit, maxAttempts int, publish PublishFunc) (polledN, deadLetteredN int, err error) {
+	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var rows []Event
 		if err := tx.
 			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
@@ -112,8 +120,8 @@ func (s *Store) RunBatch(ctx context.Context, limit int, publish PublishFunc) (i
 			Find(&rows).Error; err != nil {
 			return err
 		}
-		polled = len(rows)
-		if polled == 0 {
+		polledN = len(rows)
+		if polledN == 0 {
 			return nil
 		}
 
@@ -129,13 +137,20 @@ func (s *Store) RunBatch(ctx context.Context, limit int, publish PublishFunc) (i
 			tracing.RecordError(span, err)
 			return err
 		}
-		if err := incrementAttempt(markCtx, tx, failed); err != nil {
+		dead, err := incrementAttempt(markCtx, tx, failed, maxAttempts)
+		if err != nil {
 			tracing.RecordError(span, err)
 			return err
 		}
+		deadLetteredN = dead
+		span.SetAttributes(attribute.Int("outbox.dead_lettered", dead))
 		return nil
 	})
-	return polled, err
+	if txErr != nil {
+		// A failed transaction commits nothing, so no rows were dead-lettered.
+		return polledN, 0, txErr
+	}
+	return polledN, deadLetteredN, nil
 }
 
 func markPublished(ctx context.Context, tx *gorm.DB, ids []uuid.UUID) error {
@@ -149,14 +164,52 @@ func markPublished(ctx context.Context, tx *gorm.DB, ids []uuid.UUID) error {
 		Updates(map[string]any{"status": StatusPublished, "published_at": now}).Error
 }
 
-func incrementAttempt(ctx context.Context, tx *gorm.DB, ids []uuid.UUID) error {
+// incrementAttempt bumps attempt_count on every failed row and, when maxAttempts
+// is positive, dead-letters the rows whose bumped count reaches it: those flip to
+// FAILED so the PENDING-only poll skips them on the next cycle. Both updates run
+// in one statement via a CASE so the bump and the status flip stay atomic and a
+// row is never read back between them. Returns the number of rows dead-lettered.
+func incrementAttempt(ctx context.Context, tx *gorm.DB, ids []uuid.UUID, maxAttempts int) (deadLettered int, err error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
 	}
-	return tx.WithContext(ctx).
+
+	updates := map[string]any{
+		"attempt_count": gorm.Expr("attempt_count + 1"),
+	}
+	// maxAttempts <= 0 disables dead-lettering: rows just keep retrying (the
+	// original self-healing behaviour for indefinite transient outages).
+	if maxAttempts > 0 {
+		updates["status"] = gorm.Expr(
+			"CASE WHEN attempt_count + 1 >= ? THEN ? ELSE status END",
+			maxAttempts, StatusFailed,
+		)
+		updates["last_error"] = gorm.Expr(
+			"CASE WHEN attempt_count + 1 >= ? THEN ? ELSE last_error END",
+			maxAttempts, "publish failed: max attempts exceeded",
+		)
+	}
+
+	if err := tx.WithContext(ctx).
 		Model(&Event{}).
 		Where("id IN ?", ids).
-		UpdateColumn("attempt_count", gorm.Expr("attempt_count + 1")).Error
+		Updates(updates).Error; err != nil {
+		return 0, err
+	}
+
+	if maxAttempts <= 0 {
+		return 0, nil
+	}
+	// Count how many of these rows ended up FAILED so the relay can record the
+	// dead-letter metric. Scoped to the just-touched ids inside the same tx.
+	var n int64
+	if err := tx.WithContext(ctx).
+		Model(&Event{}).
+		Where("id IN ? AND status = ?", ids, StatusFailed).
+		Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 // CountPending returns the number of PENDING rows, used to publish the backlog

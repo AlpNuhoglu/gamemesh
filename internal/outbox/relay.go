@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
@@ -20,8 +19,17 @@ import (
 // Postgres; tests substitute an in-memory fake so the relay's publish/retry
 // logic is exercised without a database.
 type Batcher interface {
-	RunBatch(ctx context.Context, limit int, publish PublishFunc) (int, error)
+	RunBatch(ctx context.Context, limit, maxAttempts int, publish PublishFunc) (polled, deadLettered int, err error)
 	CountPending(ctx context.Context) (int64, error)
+}
+
+// BusPublisher is the narrow publish seam the relay needs — just the one method
+// it calls. It is satisfied by events.Publisher (NATSBus/RedisBus) without the
+// relay depending on the wider Publish+Close interface, so the relay's coupling
+// to the event bus is exactly "I can publish one event" and nothing more. (Named
+// BusPublisher to avoid colliding with outbox.Publisher, the outbox write side.)
+type BusPublisher interface {
+	Publish(ctx context.Context, topic string, e events.Event) error
 }
 
 // RelayConfig tunes the relay loop.
@@ -29,6 +37,10 @@ type RelayConfig struct {
 	BatchSize    int           // rows fetched per poll
 	PollInterval time.Duration // delay between polls when idle
 	Workers      int           // bounded publish concurrency per batch
+	// MaxAttempts dead-letters a row (status FAILED) once its publish attempts
+	// reach this count, so a poison row stops being retried forever. 0 disables
+	// dead-lettering and rows retry indefinitely (the original behaviour).
+	MaxAttempts int
 }
 
 func (c RelayConfig) withDefaults() RelayConfig {
@@ -41,6 +53,8 @@ func (c RelayConfig) withDefaults() RelayConfig {
 	if c.Workers <= 0 {
 		c.Workers = 4
 	}
+	// MaxAttempts intentionally has no default: 0 preserves the retry-forever
+	// behaviour, which a deployment opts out of by setting OUTBOX_MAX_ATTEMPTS.
 	return c
 }
 
@@ -50,14 +64,14 @@ func (c RelayConfig) withDefaults() RelayConfig {
 // and restart independently of the business services.
 type Relay struct {
 	store Batcher
-	bus   events.Publisher
+	bus   BusPublisher
 	cfg   RelayConfig
 	m     *metrics.Metrics
 	log   *zap.Logger
 }
 
 // NewRelay wires a relay. m may be nil (metrics skipped).
-func NewRelay(store Batcher, bus events.Publisher, cfg RelayConfig, m *metrics.Metrics, log *zap.Logger) *Relay {
+func NewRelay(store Batcher, bus BusPublisher, cfg RelayConfig, m *metrics.Metrics, log *zap.Logger) *Relay {
 	return &Relay{store: store, bus: bus, cfg: cfg.withDefaults(), m: m, log: log}
 }
 
@@ -100,17 +114,27 @@ func (r *Relay) Run(ctx context.Context) error {
 // transaction (owned by the store). The PENDING rows are locked with
 // FOR UPDATE SKIP LOCKED for the duration so concurrent relay replicas never
 // touch the same rows. Successfully published rows are marked PUBLISHED; failed
-// ones get attempt_count bumped and stay PENDING for the next cycle (retry).
-// Returns the number of rows polled.
+// ones get attempt_count bumped and stay PENDING for the next cycle (retry),
+// unless they reach MaxAttempts, in which case they are dead-lettered (FAILED)
+// and counted on the dead-letter metric. Returns the number of rows polled.
 func (r *Relay) processBatch(ctx context.Context) (int, error) {
 	pollCtx, span := tracing.Tracer().Start(ctx, "outbox.poll")
 	defer span.End()
 
-	polled, err := r.store.RunBatch(pollCtx, r.cfg.BatchSize, func(ctx context.Context, rows []Event) ([]uuid.UUID, []uuid.UUID, error) {
-		published, failed := r.publishAll(ctx, rows)
-		return published, failed, nil
-	})
+	polled, deadLettered, err := r.store.RunBatch(pollCtx, r.cfg.BatchSize, r.cfg.MaxAttempts,
+		func(ctx context.Context, rows []Event) ([]uuid.UUID, []uuid.UUID, error) {
+			published, failed := r.publishAll(ctx, rows)
+			return published, failed, nil
+		})
 	tracing.RecordError(span, err)
+	if deadLettered > 0 {
+		span.SetAttributes(attribute.Int("outbox.dead_lettered", deadLettered))
+		if r.m != nil {
+			r.m.OutboxEventsDeadLetteredTotal.Add(float64(deadLettered))
+		}
+		r.log.Warn("outbox rows dead-lettered after max attempts",
+			zap.Int("count", deadLettered), zap.Int("max_attempts", r.cfg.MaxAttempts))
+	}
 	return polled, err
 }
 
@@ -172,7 +196,7 @@ func (r *Relay) publishOne(ctx context.Context, row Event) error {
 	if len(row.Carrier) > 0 {
 		_ = json.Unmarshal(row.Carrier, &carrier)
 	}
-	ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(carrier))
+	ctx = tracing.ResumeFromCarrier(ctx, carrier)
 
 	ctx, span := tracing.Tracer().Start(ctx, "outbox.publish "+row.Topic)
 	defer span.End()

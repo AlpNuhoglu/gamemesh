@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/redis/go-redis/v9"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -51,10 +49,7 @@ func (b *RedisBus) Publish(ctx context.Context, topic string, e Event) error {
 	defer span.End()
 
 	// Inject W3C trace context into the carrier (transport-agnostic).
-	if e.Carrier == nil {
-		e.Carrier = make(map[string]string)
-	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(e.Carrier))
+	e.Carrier = tracing.InjectCarrier(ctx, e.Carrier)
 
 	raw, err := json.Marshal(e)
 	if err != nil {
@@ -79,9 +74,7 @@ func (b *RedisBus) Publish(ctx context.Context, topic string, e Event) error {
 // distributed trace. Returns the new context and span; the caller must End the
 // span. Transport-agnostic: relies only on the OTel propagator and the Carrier.
 func ReceiveSpan(ctx context.Context, e Event, name string) (context.Context, trace.Span) {
-	if e.Carrier != nil {
-		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(e.Carrier))
-	}
+	ctx = tracing.ResumeFromCarrier(ctx, e.Carrier)
 	return tracing.Tracer().Start(ctx, name,
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(

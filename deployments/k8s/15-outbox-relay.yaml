@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outbox-relay
+  namespace: gamemesh
+spec:
+  # Three replicas for HA. The relay claims rows with FOR UPDATE SKIP LOCKED
+  # (internal/outbox/store.go), so replicas never publish the same outbox row —
+  # running more than one removes the relay as a single point of failure between
+  # persistence and event transport.
+  replicas: 3
+  selector:
+    matchLabels:
+      app: outbox-relay
+  template:
+    metadata:
+      labels:
+        app: outbox-relay
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8085"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: outbox-relay
+          image: gamemesh/outbox-relay:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8085
+          env:
+            - name: HTTP_PORT
+              value: "8085"
+            - name: NATS_URL
+              value: nats://nats:4222
+            - name: OUTBOX_ENABLED
+              value: "true"
+            - name: OUTBOX_BATCH_SIZE
+              value: "100"
+            - name: OUTBOX_POLL_INTERVAL
+              value: "1s"
+            - name: OUTBOX_WORKERS
+              value: "4"
+            # Dead-letter a row after this many failed publish attempts
+            # (0 = retry forever). Caps poison rows from wedging a worker.
+            - name: OUTBOX_MAX_ATTEMPTS
+              value: "5"
+            - name: POSTGRES_DSN
+              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable
+          envFrom:
+            - configMapRef:
+                name: gamemesh-config
+            - secretRef:
+                name: gamemesh-secrets
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8085 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8085 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: outbox-relay
+  namespace: gamemesh
+spec:
+  selector:
+    app: outbox-relay
+  ports:
+    - port: 8085
+      targetPort: 8085
+---
+# Keep at least 2 relays running during voluntary disruptions (node drains,
+# rollouts). Without this a cluster autoscaler or upgrade could evict all three
+# replicas at once and stall outbox publishing until they reschedule.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: outbox-relay
+  namespace: gamemesh
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: outbox-relay

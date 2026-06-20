@@ -34,7 +34,7 @@ func newFakeBatcher(rows ...Event) *fakeBatcher {
 	return &fakeBatcher{rows: rows, attempt: map[uuid.UUID]int{}}
 }
 
-func (f *fakeBatcher) RunBatch(ctx context.Context, limit int, publish PublishFunc) (int, error) {
+func (f *fakeBatcher) RunBatch(ctx context.Context, limit, maxAttempts int, publish PublishFunc) (polled, deadLettered int, err error) {
 	f.mu.Lock()
 	batch := f.rows
 	if len(batch) > limit {
@@ -46,12 +46,12 @@ func (f *fakeBatcher) RunBatch(ctx context.Context, limit int, publish PublishFu
 	f.mu.Unlock()
 
 	if len(rows) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	published, failed, err := publish(ctx, rows)
 	if err != nil {
-		return len(rows), err
+		return len(rows), 0, err
 	}
 
 	f.mu.Lock()
@@ -60,18 +60,25 @@ func (f *fakeBatcher) RunBatch(ctx context.Context, limit int, publish PublishFu
 	for _, id := range published {
 		done[id] = true
 	}
+	// dead collects failed rows whose bumped attempt_count reached maxAttempts:
+	// they leave the PENDING set (dead-lettered) just like the SQL store does.
+	dead := map[uuid.UUID]bool{}
 	for _, id := range failed {
 		f.attempt[id]++
+		if maxAttempts > 0 && f.attempt[id] >= maxAttempts {
+			dead[id] = true
+			deadLettered++
+		}
 	}
-	// Drop published rows from the PENDING set; failed rows stay for retry.
+	// Drop published and dead-lettered rows; transiently failed rows stay PENDING.
 	var remaining []Event
 	for _, r := range f.rows {
-		if !done[r.ID] {
+		if !done[r.ID] && !dead[r.ID] {
 			remaining = append(remaining, r)
 		}
 	}
 	f.rows = remaining
-	return len(rows), nil
+	return len(rows), deadLettered, nil
 }
 
 func (f *fakeBatcher) CountPending(context.Context) (int64, error) {
@@ -164,6 +171,40 @@ func TestRelayRetriesPublishFailure(t *testing.T) {
 	_, err = relay.processBatch(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, pub.count(), "event published on the retry tick")
+	pending, _ = fb.CountPending(context.Background())
+	assert.Equal(t, int64(0), pending)
+}
+
+// Scenario 3a: a row that keeps failing is dead-lettered once it reaches
+// MaxAttempts — it leaves the PENDING set so it is never retried again, and the
+// dead-letter metric is incremented for an operator to alert on.
+func TestRelayDeadLettersAfterMaxAttempts(t *testing.T) {
+	row := pendingRow(t, events.TypePlayerRegistered, events.PlayerRegisteredPayload{PlayerID: "p1"})
+	fb := newFakeBatcher(row)
+	pub := &capturingPublisher{failNext: 100} // every publish fails
+	m := metrics.New("test-relay-deadletter")
+	relay := NewRelay(fb, pub, RelayConfig{BatchSize: 10, MaxAttempts: 3}, m, zap.NewNop())
+
+	// Two failing ticks: row stays PENDING, attempts 1 then 2.
+	for i := 1; i <= 2; i++ {
+		_, err := relay.processBatch(context.Background())
+		require.NoError(t, err)
+		pending, _ := fb.CountPending(context.Background())
+		assert.Equal(t, int64(1), pending, "row still pending before max attempts")
+		assert.Equal(t, i, fb.attempt[row.ID])
+	}
+
+	// Third failing tick reaches MaxAttempts: the row is dead-lettered.
+	_, err := relay.processBatch(context.Background())
+	require.NoError(t, err)
+	pending, _ := fb.CountPending(context.Background())
+	assert.Equal(t, int64(0), pending, "dead-lettered row must leave the PENDING set")
+	assert.Equal(t, 0, pub.count(), "nothing was ever published")
+
+	// A further tick is a no-op: there is nothing left to poll, so the poison row
+	// can never wedge a worker again.
+	_, err = relay.processBatch(context.Background())
+	require.NoError(t, err)
 	pending, _ = fb.CountPending(context.Background())
 	assert.Equal(t, int64(0), pending)
 }
