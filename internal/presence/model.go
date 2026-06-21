@@ -20,6 +20,7 @@ import (
 // directly.
 type State string
 
+// The presence states. Values are stable on the wire (Redis, events, HTTP).
 const (
 	StateOffline State = "OFFLINE"
 	StateOnline  State = "ONLINE"

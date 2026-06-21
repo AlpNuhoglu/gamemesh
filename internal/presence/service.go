@@ -37,7 +37,7 @@ func (s *Service) Connect(ctx context.Context, playerID string) (Record, error) 
 	defer span.End()
 	span.SetAttributes(attribute.String("presence.player_id", playerID))
 
-	mut, err := s.repo.Connect(ctx, playerID)
+	mut, err := s.repo.connect(ctx, playerID)
 	if err != nil {
 		tracing.RecordError(span, err)
 		return Record{}, err
@@ -56,7 +56,7 @@ func (s *Service) Disconnect(ctx context.Context, playerID string) (Record, erro
 		attribute.String("presence.op", "disconnect"),
 	)
 
-	mut, err := s.repo.Disconnect(ctx, playerID)
+	mut, err := s.repo.disconnect(ctx, playerID)
 	if err != nil {
 		tracing.RecordError(span, err)
 		return Record{}, err
@@ -73,7 +73,7 @@ func (s *Service) Heartbeat(ctx context.Context, playerID string) (Record, error
 	defer span.End()
 	span.SetAttributes(attribute.String("presence.player_id", playerID))
 
-	mut, err := s.repo.Heartbeat(ctx, playerID)
+	mut, err := s.repo.heartbeat(ctx, playerID)
 	if err != nil {
 		tracing.RecordError(span, err)
 		return Record{}, err
@@ -117,7 +117,7 @@ func (s *Service) SetState(ctx context.Context, playerID string, to State) (Reco
 		return Record{}, ErrInvalidTransition
 	}
 
-	mut, err := s.repo.SetState(ctx, playerID, to)
+	mut, err := s.repo.setState(ctx, playerID, to)
 	if err != nil {
 		tracing.RecordError(span, err)
 		return Record{}, err

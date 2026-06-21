@@ -156,23 +156,25 @@ func (r *Repository) runMutation(ctx context.Context, s *redis.Script, playerID 
 	return mutation{Previous: pair[0], Current: pair[1]}, nil
 }
 
-// Connect registers a new connection for the player (multi-device safe).
-func (r *Repository) Connect(ctx context.Context, playerID string) (mutation, error) {
+// connect registers a new connection for the player (multi-device safe).
+// Unexported because it returns the internal mutation plumbing and is only
+// driven by Service in this package.
+func (r *Repository) connect(ctx context.Context, playerID string) (mutation, error) {
 	return r.runMutation(ctx, scriptConnect, playerID)
 }
 
-// Disconnect drops one connection; the player goes OFFLINE only at zero.
-func (r *Repository) Disconnect(ctx context.Context, playerID string) (mutation, error) {
+// disconnect drops one connection; the player goes OFFLINE only at zero.
+func (r *Repository) disconnect(ctx context.Context, playerID string) (mutation, error) {
 	return r.runMutation(ctx, scriptDisconnect, playerID)
 }
 
-// Heartbeat refreshes the TTL (and re-creates an expired record).
-func (r *Repository) Heartbeat(ctx context.Context, playerID string) (mutation, error) {
+// heartbeat refreshes the TTL (and re-creates an expired record).
+func (r *Repository) heartbeat(ctx context.Context, playerID string) (mutation, error) {
 	return r.runMutation(ctx, scriptHeartbeat, playerID)
 }
 
-// SetState writes an explicit state for the player and refreshes the TTL.
-func (r *Repository) SetState(ctx context.Context, playerID string, to State) (mutation, error) {
+// setState writes an explicit state for the player and refreshes the TTL.
+func (r *Repository) setState(ctx context.Context, playerID string, to State) (mutation, error) {
 	return r.runMutation(ctx, scriptSetState, playerID, string(to))
 }
 

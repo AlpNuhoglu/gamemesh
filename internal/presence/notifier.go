@@ -43,14 +43,17 @@ func NewHTTPNotifier(baseURL string, timeout time.Duration) *HTTPNotifier {
 	}
 }
 
+// Connect reports a new connection for the player to the Presence Service.
 func (n *HTTPNotifier) Connect(ctx context.Context, playerID string) error {
 	return n.post(ctx, "/presence/connect", playerID)
 }
 
+// Disconnect reports that one of the player's connections has closed.
 func (n *HTTPNotifier) Disconnect(ctx context.Context, playerID string) error {
 	return n.post(ctx, "/presence/disconnect", playerID)
 }
 
+// Heartbeat refreshes the player's presence TTL on the Presence Service.
 func (n *HTTPNotifier) Heartbeat(ctx context.Context, playerID string) error {
 	return n.post(ctx, "/presence/heartbeat", playerID)
 }
@@ -87,6 +90,11 @@ func (n *HTTPNotifier) post(ctx context.Context, path, playerID string) error {
 // Presence Service is configured, so the WS gateway runs unchanged.
 type NoopNotifier struct{}
 
-func (NoopNotifier) Connect(context.Context, string) error    { return nil }
+// Connect does nothing and returns nil.
+func (NoopNotifier) Connect(context.Context, string) error { return nil }
+
+// Disconnect does nothing and returns nil.
 func (NoopNotifier) Disconnect(context.Context, string) error { return nil }
-func (NoopNotifier) Heartbeat(context.Context, string) error  { return nil }
+
+// Heartbeat does nothing and returns nil.
+func (NoopNotifier) Heartbeat(context.Context, string) error { return nil }
