@@ -1,6 +1,6 @@
 .PHONY: help build test test-integration lint cover up down k8s-build k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
 
-SERVICES := gateway player matchmaking leaderboard websocket
+SERVICES := gateway player matchmaking leaderboard websocket presence
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'

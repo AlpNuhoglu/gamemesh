@@ -1,6 +1,7 @@
-// The WebSocket gateway holds client connections, manages room
-// subscriptions and pushes backend events (MatchFound, LeaderboardUpdated)
-// to clients in real time.
+// The presence service tracks where every player is (OFFLINE, ONLINE,
+// IN_QUEUE, IN_MATCH, AWAY) in Redis, refreshed by WS-gateway heartbeats with a
+// TTL so presence self-heals after crashes, and publishes presence transitions
+// as events for the social layer (friends, parties, invites, notifications).
 package main
 
 import (
@@ -10,8 +11,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
-	"github.com/alpnuhoglu/gamemesh/internal/wsgateway"
-	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
@@ -21,7 +20,7 @@ import (
 )
 
 func main() {
-	cfg := config.Load("websocket")
+	cfg := config.Load("presence")
 	log := logger.Must(cfg.ServiceName, cfg.Env)
 	defer func() { _ = log.Sync() }()
 
@@ -46,19 +45,6 @@ func main() {
 	}
 
 	m := metrics.New(cfg.ServiceName)
-	// Feed presence over HTTP. The notifier is the only coupling between the WS
-	// gateway and the Presence Service; if the Presence Service is down, calls
-	// fail softly and presence self-heals from later heartbeats / TTL.
-	notifier := presence.NewHTTPNotifier(cfg.PresenceServiceURL, cfg.PresenceHeartbeatInterval)
-	hub := wsgateway.NewHub(log, m, notifier)
-	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
-	handler := wsgateway.NewHandler(hub, tokens, cfg.AllowedOrigins, log)
-
-	ctx, stop := server.ShutdownContext()
-	defer stop()
-
-	// Refresh presence TTL for every locally-connected player on a ticker.
-	go hub.RunHeartbeat(ctx, cfg.PresenceHeartbeatInterval)
 	bus, err := events.NewBus(events.Config{
 		Transport:   cfg.EventBus,
 		DurableName: cfg.ServiceName,
@@ -68,12 +54,10 @@ func main() {
 		log.Fatal("failed to init event bus", zap.Error(err))
 	}
 	defer func() { _ = bus.Close() }()
-	bridge := wsgateway.NewBridge(hub, bus, log)
-	go func() {
-		if err := bridge.Run(ctx); err != nil {
-			log.Fatal("event bridge failed", zap.Error(err))
-		}
-	}()
+
+	repo := presence.NewRepository(rdb, cfg.PresenceTTL)
+	svc := presence.NewService(repo, bus, m, log)
+	handler := presence.NewHandler(svc)
 
 	engine := server.NewEngine(cfg, log, m)
 	handler.RegisterRoutes(engine)

@@ -79,6 +79,11 @@ var streamFor = map[string]stream{
 		subjects: []string{TopicPlayer, TopicPlayer + ".>"},
 		maxAge:   72 * time.Hour, // identity events are low-volume, long replay window
 	},
+	TopicPresence: {
+		name:     "PRESENCE",
+		subjects: []string{TopicPresence, TopicPresence + ".>"},
+		maxAge:   15 * time.Minute, // high-churn, disposable; Redis is source of truth, not JetStream replay
+	},
 }
 
 // NewNATSBus connects to NATS, ensures the streams exist and returns a bus.

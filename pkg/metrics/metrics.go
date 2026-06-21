@@ -35,6 +35,15 @@ type Metrics struct {
 	EventsFailedTotal       *prometheus.CounterVec
 	EventProcessingDuration *prometheus.HistogramVec
 
+	// Presence instruments. OnlinePlayers is a gauge of players whose presence
+	// record is non-offline; the rest track the presence write path. (An expired
+	// counter is intentionally absent: TTL expiry is passive Redis behaviour with
+	// no code path to observe in this milestone.)
+	PresenceOnlinePlayers         prometheus.Gauge
+	PresenceStateTransitionsTotal *prometheus.CounterVec
+	PresenceHeartbeatTotal        prometheus.Counter
+	PresenceInvalidTransitions    prometheus.Counter
+
 	// Transactional outbox relay instruments. Pending is a gauge of the current
 	// backlog (PENDING rows); the rest track the relay's publish path.
 	OutboxEventsPending           prometheus.Gauge
@@ -114,6 +123,26 @@ func New(service string) *Metrics {
 			ConstLabels: constLabels,
 			Buckets:     []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
 		}, []string{"topic", "type"}),
+		PresenceOnlinePlayers: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "gamemesh_presence_online_players",
+			Help:        "Players currently tracked as non-offline by this presence replica.",
+			ConstLabels: constLabels,
+		}),
+		PresenceStateTransitionsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_presence_state_transitions_total",
+			Help:        "Total presence state transitions, labelled by from/to state.",
+			ConstLabels: constLabels,
+		}, []string{"from", "to"}),
+		PresenceHeartbeatTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_presence_heartbeat_total",
+			Help:        "Total presence heartbeats processed.",
+			ConstLabels: constLabels,
+		}),
+		PresenceInvalidTransitions: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_presence_invalid_transitions_total",
+			Help:        "Total presence transitions rejected as invalid (e.g. OFFLINE->IN_MATCH).",
+			ConstLabels: constLabels,
+		}),
 		OutboxEventsPending: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        "gamemesh_outbox_events_pending",
 			Help:        "Outbox rows awaiting publication (the relay backlog).",
@@ -146,6 +175,7 @@ func New(service string) *Metrics {
 		m.RequestsTotal, m.ErrorsTotal, m.RequestDuration,
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
 		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
+		m.PresenceOnlinePlayers, m.PresenceStateTransitionsTotal, m.PresenceHeartbeatTotal, m.PresenceInvalidTransitions,
 		m.OutboxEventsPending, m.OutboxEventsPublishedTotal, m.OutboxPublishFailuresTotal,
 		m.OutboxEventsDeadLetteredTotal, m.OutboxPublishDuration,
 	)

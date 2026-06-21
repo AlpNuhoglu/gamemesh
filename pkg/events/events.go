@@ -24,6 +24,14 @@ const (
 	// be lost once the registration/update commits (no dual-write).
 	TypePlayerRegistered = "PlayerRegistered"
 	TypePlayerUpdated    = "PlayerUpdated"
+	// Presence events. Emitted by the Presence Service on connection-driven
+	// transitions. Published directly to NATS (not via the outbox): presence is
+	// high-churn and self-correcting — a dropped event is re-derived on the next
+	// heartbeat, so durability is unnecessary and the latency of the outbox poll
+	// loop is undesirable.
+	TypePresenceOnline       = "PresenceOnline"
+	TypePresenceOffline      = "PresenceOffline"
+	TypePresenceStateChanged = "PresenceStateChanged"
 )
 
 // Topics (channels) events are published on.
@@ -32,6 +40,9 @@ const (
 	TopicLeaderboard = "events.leaderboard"
 	// TopicPlayer carries identity lifecycle events emitted via the outbox.
 	TopicPlayer = "events.player"
+	// TopicPresence carries player presence transitions (online/offline/state
+	// changes). High-churn and short-lived — see the PRESENCE stream's MaxAge.
+	TopicPresence = "events.presence"
 )
 
 // Event is the wire format for all inter-service messages.
@@ -89,6 +100,18 @@ type PlayerUpdatedPayload struct {
 	PlayerID string `json:"player_id"`
 	Username string `json:"username"`
 	Email    string `json:"email"`
+}
+
+// PresenceChangedPayload is emitted on every presence transition. It carries
+// both the new and previous state plus the live connection count so downstream
+// consumers (friends, parties, notifications) have full context without an extra
+// lookup. PreviousState is empty when the player had no prior presence record.
+type PresenceChangedPayload struct {
+	PlayerID        string `json:"player_id"`
+	State           string `json:"state"`
+	PreviousState   string `json:"previous_state,omitempty"`
+	ConnectionCount int    `json:"connection_count"`
+	LastSeen        int64  `json:"last_seen"` // Unix seconds
 }
 
 // Publisher sends events to a topic. Implementations must be safe for
