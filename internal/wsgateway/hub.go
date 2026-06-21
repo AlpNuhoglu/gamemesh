@@ -3,11 +3,14 @@
 package wsgateway
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/internal/presence"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
@@ -33,28 +36,43 @@ type Hub struct {
 
 	log *zap.Logger
 	m   *metrics.Metrics
+
+	// presence feeds player presence to the Presence Service. It is an injected
+	// interface and never nil (NoopNotifier when no Presence Service is wired),
+	// so the gateway stays decoupled from presence internals and runs standalone.
+	presence presence.Notifier
 }
 
-// NewHub constructs an empty hub.
-func NewHub(log *zap.Logger, m *metrics.Metrics) *Hub {
+// NewHub constructs an empty hub. A nil notifier becomes a no-op, so existing
+// callers (and tests) that do not care about presence keep working unchanged.
+func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier) *Hub {
+	if notifier == nil {
+		notifier = presence.NoopNotifier{}
+	}
 	return &Hub{
 		clients:  make(map[*Client]struct{}),
 		byPlayer: make(map[string]map[*Client]struct{}),
 		rooms:    make(map[string]map[*Client]struct{}),
 		log:      log,
 		m:        m,
+		presence: notifier,
 	}
 }
 
 func (h *Hub) register(c *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.clients[c] = struct{}{}
 	if h.byPlayer[c.playerID] == nil {
 		h.byPlayer[c.playerID] = make(map[*Client]struct{})
 	}
 	h.byPlayer[c.playerID][c] = struct{}{}
 	h.m.WSConnections.Set(float64(len(h.clients)))
+	h.mu.Unlock()
+
+	// Each connection is one presence connection (the Presence Service does the
+	// multi-device counting). Fire async with a fresh context so a slow/absent
+	// Presence Service never blocks accepting the WebSocket.
+	h.notifyPresence("connect", c.playerID, h.presence.Connect)
 }
 
 func (h *Hub) unregister(c *Client) {
@@ -78,6 +96,11 @@ func (h *Hub) unregister(c *Client) {
 	}
 	h.m.WSConnections.Set(float64(len(h.clients)))
 	h.mu.Unlock()
+
+	// Drop one presence connection. The Presence Service only flips the player to
+	// OFFLINE when their last connection closes, so multi-device players stay
+	// online here too.
+	h.notifyPresence("disconnect", c.playerID, h.presence.Disconnect)
 
 	// Notify remaining occupants outside the lock.
 	for _, room := range left {
@@ -136,6 +159,57 @@ func (h *Hub) SendToPlayer(playerID string, msg []byte) {
 	for c := range h.byPlayer[playerID] {
 		c.trySend(msg)
 	}
+}
+
+// notifyPresence runs a presence lifecycle call asynchronously with its own
+// short-lived context. Async + fresh context means the closing connection's
+// cancelled context cannot cancel the call, and a slow Presence Service cannot
+// block WS connect/disconnect handling. Failures are logged, never fatal —
+// presence is re-derived from the next heartbeat.
+func (h *Hub) notifyPresence(op, playerID string, fn func(context.Context, string) error) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := fn(ctx, playerID); err != nil {
+			h.log.Warn("presence notify failed",
+				zap.String("op", op), zap.String("player_id", playerID), zap.Error(err))
+		}
+	}()
+}
+
+// RunHeartbeat refreshes presence for every locally-connected player every
+// interval, keeping their presence:{id} TTL alive. It runs until ctx is
+// cancelled. One ticker for the whole replica (rather than per-connection)
+// keeps the load proportional to distinct players, not connections. Any WS
+// replica can heartbeat any of its players — no sticky sessions required.
+func (h *Hub) RunHeartbeat(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, playerID := range h.connectedPlayers() {
+				h.notifyPresence("heartbeat", playerID, h.presence.Heartbeat)
+			}
+		}
+	}
+}
+
+// connectedPlayers snapshots the distinct player IDs with at least one live
+// connection on this replica.
+func (h *Hub) connectedPlayers() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	ids := make([]string, 0, len(h.byPlayer))
+	for id := range h.byPlayer {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func playerData(playerID string) json.RawMessage {

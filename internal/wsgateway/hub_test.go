@@ -20,7 +20,7 @@ func newHubClient(hub *Hub, playerID string) *Client {
 }
 
 func newTestHub() *Hub {
-	return NewHub(zap.NewNop(), metrics.New("ws-hub-test"))
+	return NewHub(zap.NewNop(), metrics.New("ws-hub-test"), nil)
 }
 
 func drain(c *Client) []Message {

@@ -20,3 +20,6 @@ coverage.html
 
 # k6 reports
 scripts/k6/reports/
+
+# Graphify knowledge-graph output — local-only, never expose publicly
+graphify-out/

@@ -1,0 +1,59 @@
+# The Presence Service is stateless: all presence lives in Redis keyed by
+# playerID, so any replica can serve any read or update. No sticky sessions and
+# no leader election — scale horizontally by raising replicas.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presence
+  namespace: gamemesh
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: presence
+  template:
+    metadata:
+      labels:
+        app: presence
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8086"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: presence
+          image: gamemesh/presence:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8086
+          env:
+            - name: HTTP_PORT
+              value: "8086"
+          envFrom:
+            - configMapRef:
+                name: gamemesh-config
+            - secretRef:
+                name: gamemesh-secrets
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8086 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8086 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presence
+  namespace: gamemesh
+spec:
+  selector:
+    app: presence
+  ports:
+    - port: 8086
+      targetPort: 8086

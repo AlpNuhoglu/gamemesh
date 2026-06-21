@@ -63,6 +63,14 @@ type Config struct {
 	MatchMaxQueueAge time.Duration
 	RoomTTL          time.Duration
 
+	// Presence tuning. PresenceTTL is the expiry on presence:{id}; if heartbeats
+	// stop for longer, the key vanishes and the player is OFFLINE. The heartbeat
+	// interval is advisory for WS replicas (the source of heartbeats) and kept at
+	// ~1/3 of the TTL so two missed beats still leave the player online.
+	PresenceServiceURL        string
+	PresenceTTL               time.Duration
+	PresenceHeartbeatInterval time.Duration
+
 	AutoMigrate bool
 
 	ServiceVersion string
@@ -108,6 +116,7 @@ func Load(serviceName string) *Config {
 		MatchmakingServiceURL: getEnv("MATCHMAKING_SERVICE_URL", "http://localhost:8082"),
 		LeaderboardServiceURL: getEnv("LEADERBOARD_SERVICE_URL", "http://localhost:8083"),
 		WebsocketServiceURL:   getEnv("WEBSOCKET_SERVICE_URL", "http://localhost:8084"),
+		PresenceServiceURL:    getEnv("PRESENCE_SERVICE_URL", "http://localhost:8086"),
 
 		RateLimitRPS:   getEnvFloat("RATE_LIMIT_RPS", 50),
 		RateLimitBurst: getEnvInt("RATE_LIMIT_BURST", 100),
@@ -119,6 +128,9 @@ func Load(serviceName string) *Config {
 		MatchBatchSize:   int64(getEnvInt("MATCH_BATCH_SIZE", 1000)),
 		MatchMaxQueueAge: getEnvDuration("MATCH_MAX_QUEUE_AGE", 5*time.Minute),
 		RoomTTL:          getEnvDuration("ROOM_TTL", time.Hour),
+
+		PresenceTTL:               getEnvDuration("PRESENCE_TTL", 45*time.Second),
+		PresenceHeartbeatInterval: getEnvDuration("PRESENCE_HEARTBEAT_INTERVAL", 15*time.Second),
 
 		AutoMigrate: getEnvBool("AUTO_MIGRATE", true),
 
@@ -150,6 +162,8 @@ func defaultPort(serviceName string) string {
 		return "8084"
 	case "outbox-relay":
 		return "8085"
+	case "presence":
+		return "8086"
 	default:
 		return "8080"
 	}

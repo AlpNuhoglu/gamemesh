@@ -22,7 +22,7 @@ import (
 func newWSServer(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub) {
 	t.Helper()
 	tokens := auth.NewTokenManager("ws-test-secret", time.Hour, "gamemesh")
-	hub := NewHub(zap.NewNop(), metrics.New("ws-handler-test"))
+	hub := NewHub(zap.NewNop(), metrics.New("ws-handler-test"), nil)
 	handler := NewHandler(hub, tokens, []string{"*"}, zap.NewNop())
 
 	gin.SetMode(gin.TestMode)

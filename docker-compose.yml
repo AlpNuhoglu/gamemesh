@@ -172,6 +172,10 @@ services:
     environment:
       <<: *service-env
       HTTP_PORT: "8084"
+      # Feed presence over HTTP; the heartbeat interval also paces the WS replica's
+      # presence-refresh ticker.
+      PRESENCE_SERVICE_URL: http://presence:8086
+      PRESENCE_HEARTBEAT_INTERVAL: ${PRESENCE_HEARTBEAT_INTERVAL:-15s}
     ports:
       - "8084:8084"
     depends_on:
@@ -184,6 +188,31 @@ services:
     healthcheck:
       <<: *svc-healthcheck
       test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
+
+  # Presence Service: tracks player presence (online/in-queue/in-match/away) in
+  # Redis with TTL-based self-healing and publishes presence transitions to NATS.
+  # Stateless and horizontally scalable — all state is in Redis keyed by playerID.
+  presence:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.presence
+    environment:
+      <<: *service-env
+      HTTP_PORT: "8086"
+      PRESENCE_TTL: ${PRESENCE_TTL:-45s}
+      PRESENCE_HEARTBEAT_INTERVAL: ${PRESENCE_HEARTBEAT_INTERVAL:-15s}
+    ports:
+      - "8086:8086"
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      <<: *svc-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8086/healthz"]
 
   # Transactional outbox relay: the publish side of the outbox pattern. It polls
   # outbox_events (written by the player service in the same Postgres transaction
