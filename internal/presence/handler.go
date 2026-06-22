@@ -32,6 +32,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/presence/connect", h.connect)
 	r.POST("/presence/disconnect", h.disconnect)
 	r.POST("/presence/heartbeat", h.heartbeat)
+	r.POST("/presence/heartbeat/bulk", h.heartbeatBulk)
 }
 
 type playerRequest struct {
@@ -46,6 +47,12 @@ type stateRequest struct {
 type friendsRequest struct {
 	// IDs is the friend list to look up. POST (not GET) so large lists are not
 	// constrained by URL length limits.
+	IDs []string `json:"ids" binding:"required"`
+}
+
+type bulkHeartbeatRequest struct {
+	// IDs are the players a WS replica currently holds connections for. POST so a
+	// large batch is not constrained by URL length limits.
 	IDs []string `json:"ids" binding:"required"`
 }
 
@@ -98,6 +105,22 @@ func (h *Handler) setState(c *gin.Context) {
 func (h *Handler) connect(c *gin.Context)    { h.lifecycle(c, h.svc.Connect) }
 func (h *Handler) disconnect(c *gin.Context) { h.lifecycle(c, h.svc.Disconnect) }
 func (h *Handler) heartbeat(c *gin.Context)  { h.lifecycle(c, h.svc.Heartbeat) }
+
+// heartbeatBulk refreshes presence for a whole batch of players in one call —
+// the bulk fast-path that lets a WS replica heartbeat all its players with a
+// single request instead of one per player.
+func (h *Handler) heartbeatBulk(c *gin.Context) {
+	var req bulkHeartbeatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if err := h.svc.HeartbeatMany(c.Request.Context(), req.IDs); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "failed to refresh presence")
+		return
+	}
+	httpx.OK(c, gin.H{"refreshed": len(req.IDs)})
+}
 
 // lifecycle is the shared body for connect/disconnect/heartbeat: bind the
 // player id, run the op, return the resulting record. All three ops share the
