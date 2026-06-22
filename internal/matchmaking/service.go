@@ -127,8 +127,11 @@ func (s *Service) MatchOnce(ctx context.Context) (int, error) {
 	)
 	pairSpan.End()
 
-	for _, pair := range pairs {
-		s.createRoom(ctx, pair)
+	if len(pairs) > 0 {
+		if err := s.createRooms(ctx, pairs); err != nil {
+			tracing.RecordError(span, err)
+			s.log.Error("batch room creation failed", zap.Error(err))
+		}
 	}
 
 	span.SetAttributes(attribute.Int("matchmaking.matches", len(pairs)))
@@ -139,49 +142,69 @@ func (s *Service) MatchOnce(ctx context.Context) (int, error) {
 	return len(pairs), nil
 }
 
-// createRoom persists a room for one matched pair, dequeues the players and
-// publishes MatchFound. Errors are logged and the room is skipped (the next
-// tick re-pairs the still-queued players).
-func (s *Service) createRoom(ctx context.Context, pair [2]Ticket) {
-	ctx, span := tracing.Tracer().Start(ctx, "matchmaking.create_room")
+// createRooms persists all matched rooms, dequeues all matched players and
+// publishes MatchFound for each — in a fixed, small number of round trips per
+// tick instead of two per pair. This is the hot path's core optimization:
+// O(pairs) sequential round trips collapse into O(1) pipelined batches, and the
+// per-pair span is replaced by one span for the whole batch.
+//
+// Partial-failure is tolerated by design (Cluster-ready, non-atomic): if the
+// dequeue fails after rooms are saved, the still-queued players are simply
+// re-paired on the next tick and the orphaned rooms are reclaimed by their TTL.
+// A "ghost room" is far cheaper than a failed match.
+func (s *Service) createRooms(ctx context.Context, pairs [][2]Ticket) error {
+	ctx, span := tracing.Tracer().Start(ctx, "matchmaking.create_rooms")
 	defer span.End()
+	span.SetAttributes(attribute.Int("matchmaking.pairs", len(pairs)))
 
-	room := &Room{
-		ID:      uuid.NewString(),
-		Players: []string{pair[0].PlayerID, pair[1].PlayerID},
-		Ranks: map[string]int{
-			pair[0].PlayerID: pair[0].Rank,
-			pair[1].PlayerID: pair[1].Rank,
-		},
-		Status:    "waiting",
-		CreatedAt: time.Now().UTC(),
-	}
-	if err := s.rooms.Save(ctx, room); err != nil {
-		tracing.RecordError(span, err)
-		s.log.Error("failed to save room", zap.Error(err), zap.String("room_id", room.ID))
-		return
-	}
-	if err := s.queue.RemoveBatch(ctx, room.Players); err != nil {
-		tracing.RecordError(span, err)
-		s.log.Error("failed to dequeue matched players", zap.Error(err))
-		return
-	}
-	s.m.MatchesCreated.Inc()
+	// Pre-allocate to exact final sizes (no growth/realloc inside the loop):
+	// rooms is one per pair, dequeue is two players per pair.
+	rooms := make([]*Room, len(pairs))
+	dequeue := make([]string, 0, len(pairs)*2)
+	createdAt := time.Now().UTC()
 
-	e, err := events.New(events.TypeMatchFound, events.MatchFoundPayload{
-		RoomID:  room.ID,
-		Players: room.Players,
-	})
-	if err == nil {
-		err = s.pub.Publish(ctx, events.TopicMatchmaking, e)
+	for i, pair := range pairs {
+		room := &Room{
+			ID:      uuid.NewString(),
+			Players: []string{pair[0].PlayerID, pair[1].PlayerID},
+			Ranks: map[string]int{
+				pair[0].PlayerID: pair[0].Rank,
+				pair[1].PlayerID: pair[1].Rank,
+			},
+			Status:    "waiting",
+			CreatedAt: createdAt,
+		}
+		rooms[i] = room
+		dequeue = append(dequeue, room.Players[0], room.Players[1])
 	}
-	if err != nil {
-		tracing.RecordError(span, err)
-		s.log.Warn("failed to publish MatchFound", zap.Error(err), zap.String("room_id", room.ID))
+
+	// 1) Persist all rooms in one pipeline.
+	if err := s.rooms.SaveMany(ctx, rooms); err != nil {
+		return err
 	}
-	s.log.Info("match created",
-		append([]zap.Field{
-			zap.String("room_id", room.ID),
-			zap.Strings("players", room.Players),
-		}, tracing.LogFields(ctx)...)...)
+	// 2) Dequeue all matched players in one pipeline. If this fails the rooms are
+	// already saved (ghost rooms, reclaimed by TTL); the still-queued players are
+	// re-paired next tick — idempotent, matching the old per-room behaviour.
+	if err := s.queue.RemoveBatch(ctx, dequeue); err != nil {
+		return err
+	}
+
+	// 3) Metrics + events. Count once for the whole batch (one atomic Add instead
+	// of N Inc), then publish per room since each match is a distinct downstream
+	// notification.
+	s.m.MatchesCreated.Add(float64(len(rooms)))
+	for _, room := range rooms {
+		e, err := events.New(events.TypeMatchFound, events.MatchFoundPayload{
+			RoomID:  room.ID,
+			Players: room.Players,
+		})
+		if err != nil {
+			s.log.Warn("failed to build MatchFound", zap.Error(err), zap.String("room_id", room.ID))
+			continue
+		}
+		if err := s.pub.Publish(ctx, events.TopicMatchmaking, e); err != nil {
+			s.log.Warn("failed to publish MatchFound", zap.Error(err), zap.String("room_id", room.ID))
+		}
+	}
+	return nil
 }

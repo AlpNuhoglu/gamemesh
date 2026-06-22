@@ -86,6 +86,40 @@ func (s *Service) Heartbeat(ctx context.Context, playerID string) (Record, error
 	return mut.Current, nil
 }
 
+// HeartbeatMany refreshes presence for a batch of players — the bulk fast-path
+// for the WS replica's heartbeat ticker. It counts the heartbeats once for the
+// whole batch and publishes PresenceOnline only for players whose record had
+// expired and was re-created; the steady-state majority refresh silently.
+func (s *Service) HeartbeatMany(ctx context.Context, playerIDs []string) error {
+	if len(playerIDs) == 0 {
+		return nil
+	}
+	ctx, span := tracing.Tracer().Start(ctx, "presence.heartbeat")
+	defer span.End()
+	span.SetAttributes(attribute.Int("presence.batch_size", len(playerIDs)))
+
+	healed, err := s.repo.HeartbeatMany(ctx, playerIDs)
+	if err != nil {
+		tracing.RecordError(span, err)
+		return err
+	}
+
+	if s.m != nil {
+		// One Add for the whole batch instead of N Inc.
+		s.m.PresenceHeartbeatTotal.Add(float64(len(playerIDs)))
+	}
+
+	// Only re-created (OFFLINE->ONLINE) players changed state → publish those.
+	nowSec := now().Unix()
+	for _, id := range healed {
+		s.publishTransition(ctx, id, mutation{
+			Previous: Record{State: StateOffline},
+			Current:  Record{State: StateOnline, ConnectionCount: 1, LastSeen: nowSec},
+		})
+	}
+	return nil
+}
+
 // SetState applies an explicit transition (e.g. ONLINE->IN_QUEUE,
 // IN_QUEUE->IN_MATCH). The rule is permissive (see CanTransition); only
 // OFFLINE->IN_QUEUE / OFFLINE->IN_MATCH are rejected.

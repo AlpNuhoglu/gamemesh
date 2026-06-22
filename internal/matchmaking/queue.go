@@ -45,8 +45,14 @@ func NewQueue(rdb *redis.Client) *Queue {
 
 // Enqueue adds (or re-ranks) a player. Idempotent: re-joining just refreshes
 // rank and join time.
+//
+// Cluster-ready: uses the non-transactional Pipeline() (not TxPipeline). ZADD
+// (queueKey) and HSET (joinedKey) hash to different slots under Redis Cluster,
+// where a TxPipeline would fail cross-slot; Pipeline() lets a ClusterClient
+// split them. The two writes are independent, so dropping atomicity is safe — a
+// re-join overwrites both anyway.
 func (q *Queue) Enqueue(ctx context.Context, playerID string, rank int) error {
-	pipe := q.rdb.TxPipeline()
+	pipe := q.rdb.Pipeline()
 	pipe.ZAdd(ctx, queueKey, redis.Z{Score: float64(rank), Member: playerID})
 	pipe.HSet(ctx, joinedKey, playerID, time.Now().Unix())
 	_, err := pipe.Exec(ctx)
@@ -66,20 +72,27 @@ func (q *Queue) Remove(ctx context.Context, playerID string) error {
 	return nil
 }
 
-// RemoveBatch deletes multiple players atomically (used after a match tick).
+// RemoveBatch deletes multiple players from the queue (used after a match tick).
+//
+// Cluster-ready: it uses the non-transactional Pipeline() (not TxPipeline). The
+// ZREM (queueKey) and HDEL (joinedKey) hash to different slots under Redis
+// Cluster, so a TxPipeline would error as a cross-slot transaction; Pipeline()
+// lets a ClusterClient split them safely. Atomicity is intentionally traded
+// away — a player left half-removed is simply re-paired on the next tick
+// (self-correcting), and an orphaned room is reclaimed by its TTL.
+//
+// Allocation-free argument passing: ZRem is variadic (...interface{}) but
+// go-redis special-cases a single []string argument (appendArgs -> appendArg),
+// boxing the strings itself — so passing playerIDs as one []string avoids
+// building an intermediate []any and the per-element heap escape. HDel already
+// takes ...string, so playerIDs flows through with no boxing at all.
 func (q *Queue) RemoveBatch(ctx context.Context, playerIDs []string) error {
 	if len(playerIDs) == 0 {
 		return nil
 	}
-	members := make([]any, len(playerIDs))
-	fields := make([]string, len(playerIDs))
-	for i, id := range playerIDs {
-		members[i] = id
-		fields[i] = id
-	}
-	pipe := q.rdb.TxPipeline()
-	pipe.ZRem(ctx, queueKey, members...)
-	pipe.HDel(ctx, joinedKey, fields...)
+	pipe := q.rdb.Pipeline()
+	pipe.ZRem(ctx, queueKey, playerIDs)
+	pipe.HDel(ctx, joinedKey, playerIDs...)
 	_, err := pipe.Exec(ctx)
 	return err
 }

@@ -33,6 +33,14 @@ func (p *capturingPublisher) Publish(_ context.Context, _ string, e events.Event
 
 func (p *capturingPublisher) Close() error { return nil }
 
+// reset clears recorded events so a test can assert only on events that occur
+// after setup (e.g. after the initial connects).
+func (p *capturingPublisher) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = nil
+}
+
 func (p *capturingPublisher) types() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -51,6 +59,17 @@ func newTestService(t *testing.T) (*Service, *capturingPublisher, *miniredis.Min
 	pub := &capturingPublisher{}
 	svc := NewService(NewRepository(rdb, testTTL), pub, nil, zap.NewNop())
 	return svc, pub, mr
+}
+
+// mustConnect connects each player once, failing the test on any error.
+func mustConnect(ctx context.Context, t *testing.T, svc *Service, ids ...string) error {
+	t.Helper()
+	for _, id := range ids {
+		if _, err := svc.Connect(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func TestConnectGoesOnlineAndEmitsOnline(t *testing.T) {
@@ -146,6 +165,54 @@ func TestHeartbeatRecreatesExpiredRecord(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StateOnline, rec.State)
 	assert.Equal(t, 1, rec.ConnectionCount)
+}
+
+func TestHeartbeatManyRefreshesTTLWithoutEvents(t *testing.T) {
+	svc, pub, mr := newTestService(t)
+	ctx := context.Background()
+
+	require.NoError(t, mustConnect(ctx, t, svc, "a", "b", "c"))
+	pub.reset()
+
+	// Age all keys partway, then bulk-heartbeat and confirm TTLs are reset and
+	// no events fire (steady-state refresh of existing records).
+	mr.FastForward(30 * time.Second)
+	require.NoError(t, svc.HeartbeatMany(ctx, []string{"a", "b", "c"}))
+
+	for _, id := range []string{"a", "b", "c"} {
+		assert.InDelta(t, testTTL.Seconds(), mr.TTL(key(id)).Seconds(), 1)
+	}
+	assert.Empty(t, pub.types(), "refreshing live records must not publish")
+}
+
+func TestHeartbeatManyHealsExpiredRecords(t *testing.T) {
+	svc, pub, mr := newTestService(t)
+	ctx := context.Background()
+
+	require.NoError(t, mustConnect(ctx, t, svc, "alive", "crashed"))
+	pub.reset()
+
+	// "crashed" expires (heartbeats stopped); "alive" stays within TTL by being
+	// re-created just before expiry below.
+	mr.FastForward(testTTL + time.Second) // both keys gone now
+
+	// Bulk heartbeat must re-create BOTH as ONLINE (heal pass) and publish a
+	// PresenceOnline for each, since both had expired.
+	require.NoError(t, svc.HeartbeatMany(ctx, []string{"alive", "crashed"}))
+
+	for _, id := range []string{"alive", "crashed"} {
+		rec, err := svc.Get(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, StateOnline, rec.State)
+	}
+	// Two heals → two PresenceOnline events.
+	assert.Equal(t, []string{events.TypePresenceOnline, events.TypePresenceOnline}, pub.types())
+}
+
+func TestHeartbeatManyEmptyIsNoop(t *testing.T) {
+	svc, pub, _ := newTestService(t)
+	require.NoError(t, svc.HeartbeatMany(context.Background(), nil))
+	assert.Empty(t, pub.types())
 }
 
 func TestSetStateAllowsQueueAndMatchTransitions(t *testing.T) {

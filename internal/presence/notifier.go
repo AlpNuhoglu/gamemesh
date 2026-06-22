@@ -20,6 +20,9 @@ type Notifier interface {
 	Connect(ctx context.Context, playerID string) error
 	Disconnect(ctx context.Context, playerID string) error
 	Heartbeat(ctx context.Context, playerID string) error
+	// HeartbeatMany refreshes presence for many players in one call — the bulk
+	// fast-path for the WS replica's heartbeat ticker (one request, not N).
+	HeartbeatMany(ctx context.Context, playerIDs []string) error
 }
 
 // HTTPNotifier calls the Presence Service over HTTP. It propagates the W3C trace
@@ -58,11 +61,29 @@ func (n *HTTPNotifier) Heartbeat(ctx context.Context, playerID string) error {
 	return n.post(ctx, "/presence/heartbeat", playerID)
 }
 
+// HeartbeatMany refreshes presence for a batch of players in a single HTTP call.
+func (n *HTTPNotifier) HeartbeatMany(ctx context.Context, playerIDs []string) error {
+	if len(playerIDs) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(bulkHeartbeatRequest{IDs: playerIDs})
+	if err != nil {
+		return err
+	}
+	return n.postBody(ctx, "/presence/heartbeat/bulk", body)
+}
+
 func (n *HTTPNotifier) post(ctx context.Context, path, playerID string) error {
 	body, err := json.Marshal(playerRequest{PlayerID: playerID})
 	if err != nil {
 		return err
 	}
+	return n.postBody(ctx, path, body)
+}
+
+// postBody POSTs a raw JSON body with trace propagation. Shared by the single
+// and bulk notifier calls so the request/trace plumbing lives in one place.
+func (n *HTTPNotifier) postBody(ctx context.Context, path string, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -98,3 +119,6 @@ func (NoopNotifier) Disconnect(context.Context, string) error { return nil }
 
 // Heartbeat does nothing and returns nil.
 func (NoopNotifier) Heartbeat(context.Context, string) error { return nil }
+
+// HeartbeatMany does nothing and returns nil.
+func (NoopNotifier) HeartbeatMany(context.Context, []string) error { return nil }

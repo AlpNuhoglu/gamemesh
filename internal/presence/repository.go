@@ -178,6 +178,85 @@ func (r *Repository) setState(ctx context.Context, playerID string, to State) (m
 	return r.runMutation(ctx, scriptSetState, playerID, string(to))
 }
 
+// HeartbeatMany refreshes the TTL for a batch of players in a single pipelined
+// round trip — the bulk fast-path behind the WS replica's heartbeat ticker.
+// Instead of one Lua EVAL per player, the common case (the key still exists) is
+// one EXPIRE per player, all flushed in ONE Pipeline().
+//
+// Cluster-ready: uses the non-transactional Pipeline() (not TxPipeline), so a
+// go-redis ClusterClient can transparently split the per-key EXPIREs across the
+// slots they hash to. Every command is single-key, so there is no cross-slot
+// assumption and no hash tag.
+//
+// Self-heal: EXPIRE on a missing key is a no-op (returns false) — it cannot
+// resurrect a record that expired between beats (e.g. after a crash). Those
+// misses are collected and re-created as ONLINE in a second, still-pipelined
+// pass that runs the same single-key heartbeat Lua script. In steady state the
+// second pass is empty, so the hot path stays at one round trip.
+//
+// Returns the player IDs that were re-created (OFFLINE->ONLINE) so the caller
+// can publish PresenceOnline for them; refreshed-but-unchanged players produce
+// no event.
+func (r *Repository) HeartbeatMany(ctx context.Context, playerIDs []string) ([]string, error) {
+	if len(playerIDs) == 0 {
+		return nil, nil
+	}
+
+	// Pass 1: one EXPIRE per player, all in a single non-transactional pipeline.
+	pipe := r.rdb.Pipeline()
+	cmds := make([]*redis.BoolCmd, len(playerIDs))
+	for i, id := range playerIDs {
+		cmds[i] = pipe.Expire(ctx, key(id), r.ttl)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+
+	// Collect misses (EXPIRE false → key absent → needs re-create). Zero-length
+	// with no capacity: in steady state there are no misses, so this never
+	// allocates a backing array on the hot path.
+	missed := make([]string, 0)
+	for i, id := range playerIDs {
+		ok, err := cmds[i].Result()
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			missed = append(missed, id)
+		}
+	}
+	if len(missed) == 0 {
+		return nil, nil
+	}
+
+	// Pass 2: re-create the expired records as ONLINE. Still pipelined and still
+	// single-key Lua EVALs (Cluster-safe); runs only for the rare crash-recovery
+	// minority.
+	healPipe := r.rdb.Pipeline()
+	healCmds := make([]*redis.Cmd, len(missed))
+	nowSec := now().Unix()
+	ttlSec := r.ttlSeconds()
+	for i, id := range missed {
+		// Use Eval (full EVAL with source), not Run: Run's EVALSHA->EVAL fallback
+		// on NOSCRIPT cannot work inside a pipeline (the error is not seen until
+		// Exec), and a fresh Cluster connection may not have the script cached.
+		// This pass is the rare crash-recovery minority, so the extra bytes are
+		// off the hot path.
+		healCmds[i] = scriptHeartbeat.Eval(ctx, healPipe, []string{key(id)}, nowSec, ttlSec)
+	}
+	if _, err := healPipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	healed := make([]string, 0, len(missed))
+	for i, id := range missed {
+		if err := healCmds[i].Err(); err != nil {
+			return nil, err
+		}
+		healed = append(healed, id)
+	}
+	return healed, nil
+}
+
 // Get returns the player's current record. A missing key reads as OFFLINE. This
 // is a pure read with no side effects — no events are emitted here.
 func (r *Repository) Get(ctx context.Context, playerID string) (Record, error) {

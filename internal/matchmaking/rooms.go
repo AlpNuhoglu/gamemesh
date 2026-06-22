@@ -44,6 +44,30 @@ func (s *RoomStore) Save(ctx context.Context, room *Room) error {
 	return s.rdb.Set(ctx, roomKey(room.ID), raw, s.ttl).Err()
 }
 
+// SaveMany writes many rooms in a single pipelined round trip — the batch
+// fast-path for a match tick, replacing one SET round trip per room.
+//
+// Cluster-ready: it uses the non-transactional Pipeline() (not TxPipeline), so a
+// go-redis ClusterClient can split the per-room SETs across the slots their keys
+// hash to. Every SET is single-key, so there is no cross-slot assumption and no
+// hash tag is needed.
+func (s *RoomStore) SaveMany(ctx context.Context, rooms []*Room) error {
+	if len(rooms) == 0 {
+		return nil
+	}
+	pipe := s.rdb.Pipeline()
+	// Marshal up front so a JSON error fails before any network work is queued.
+	for _, room := range rooms {
+		raw, err := json.Marshal(room)
+		if err != nil {
+			return err
+		}
+		pipe.Set(ctx, roomKey(room.ID), raw, s.ttl)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
 // Get fetches a room by ID.
 func (s *RoomStore) Get(ctx context.Context, id string) (*Room, error) {
 	raw, err := s.rdb.Get(ctx, roomKey(id)).Result()

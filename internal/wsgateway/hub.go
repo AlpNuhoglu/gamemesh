@@ -193,9 +193,24 @@ func (h *Hub) RunHeartbeat(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, playerID := range h.connectedPlayers() {
-				h.notifyPresence("heartbeat", playerID, h.presence.Heartbeat)
+			ids := h.connectedPlayers()
+			if len(ids) == 0 {
+				continue
 			}
+			// One bulk call for the whole replica instead of a goroutine + HTTP
+			// request per player. Fire async with a bounded timeout derived from
+			// the loop ctx, so a slow Presence Service cannot stall the ticker yet
+			// in-flight beats are cancelled on shutdown. Failures are logged, not
+			// fatal — presence self-heals from the next beat / TTL. The closure
+			// captures the batch once per tick, not once per player.
+			go func(batch []string) {
+				cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				if err := h.presence.HeartbeatMany(cctx, batch); err != nil {
+					h.log.Warn("bulk presence heartbeat failed",
+						zap.Int("count", len(batch)), zap.Error(err))
+				}
+			}(ids)
 		}
 	}
 }
