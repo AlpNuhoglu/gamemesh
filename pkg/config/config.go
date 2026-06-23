@@ -80,6 +80,17 @@ type Config struct {
 	OTelEndpoint     string
 	OTelSampler      string
 	OTelSamplerRatio float64
+
+	// Observability sampling. Logs and traces are both observability load, so
+	// their sampling knobs live together. Logger sampling thins the flood of
+	// successful/fast 2xx access logs (errors and slow requests always bypass the
+	// sampler); high-volume trace sampling drops most consumer spans for chatty
+	// event types while ALWAYS keeping the trace-context propagation intact.
+	LogSampleInitial           int           // first N identical entries/sec logged in full
+	LogSampleThereafter        int           // then 1 in M of the rest
+	LogSlowRequestThreshold    time.Duration // requests slower than this always log
+	TraceHighVolumeEvents      []string      // event types whose consumer spans are sampled down
+	TraceHighVolumeSampleRatio float64       // keep-ratio for those high-volume spans
 }
 
 // Load reads configuration for the named service from the environment.
@@ -145,6 +156,13 @@ func Load(serviceName string) *Config {
 		OTelEndpoint:     getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
 		OTelSampler:      getEnv("OTEL_TRACES_SAMPLER", "parentbased_always_on"),
 		OTelSamplerRatio: getEnvFloat("OTEL_TRACES_SAMPLER_ARG", 1.0),
+
+		// Observability sampling (logs + traces, kept side by side).
+		LogSampleInitial:           getEnvInt("LOG_SAMPLE_INITIAL", 100),
+		LogSampleThereafter:        getEnvInt("LOG_SAMPLE_THEREAFTER", 100),
+		LogSlowRequestThreshold:    getEnvDuration("LOG_SLOW_REQUEST_THRESHOLD", time.Second),
+		TraceHighVolumeEvents:      splitCSV(getEnv("TRACE_HIGHVOLUME_EVENTS", "LeaderboardUpdated")),
+		TraceHighVolumeSampleRatio: getEnvFloat("TRACE_HIGHVOLUME_SAMPLE_RATIO", 0.01),
 	}
 }
 

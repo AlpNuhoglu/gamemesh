@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
@@ -42,10 +44,44 @@ func TestRequestIDGeneratedAndPropagated(t *testing.T) {
 }
 
 func TestLoggerDoesNotInterfere(t *testing.T) {
-	r := newEngine(RequestID(), Logger(zap.NewNop()))
+	r := newEngine(RequestID(), Logger(zap.NewNop(), time.Second))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/test", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestLoggerLevelRouting verifies the sampler-bypass contract at the middleware
+// layer: a 2xx logs at Info (sampler-eligible), a 5xx at Error and a slow 2xx at
+// Warn (both sampler-bypassed).
+func TestLoggerLevelRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name      string
+		path      string
+		slowAfter time.Duration
+		handler   gin.HandlerFunc
+		wantLevel zapcore.Level
+	}{
+		{"ok 2xx", "/ok", time.Second, func(c *gin.Context) { c.JSON(200, gin.H{}) }, zapcore.InfoLevel},
+		{"server 5xx", "/err", time.Second, func(c *gin.Context) { c.JSON(500, gin.H{}) }, zapcore.ErrorLevel},
+		{"slow 2xx", "/slow", time.Nanosecond, func(c *gin.Context) { time.Sleep(time.Millisecond); c.JSON(200, gin.H{}) }, zapcore.WarnLevel},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs, logs := observer.New(zapcore.DebugLevel)
+			log := zap.New(obs)
+			r := gin.New()
+			r.Use(RequestID(), Logger(log, tc.slowAfter))
+			r.GET(tc.path, tc.handler)
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))
+
+			require.Equal(t, 1, logs.Len())
+			assert.Equal(t, tc.wantLevel, logs.All()[0].Level)
+		})
+	}
 }
 
 func TestMetricsCountsRequests(t *testing.T) {

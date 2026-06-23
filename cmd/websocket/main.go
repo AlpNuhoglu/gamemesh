@@ -22,17 +22,22 @@ import (
 
 func main() {
 	cfg := config.Load("websocket")
-	log := logger.Must(cfg.ServiceName, cfg.Env)
+	log := logger.Must(cfg.ServiceName, cfg.Env, logger.SampleConfig{
+		Initial:    cfg.LogSampleInitial,
+		Thereafter: cfg.LogSampleThereafter,
+	})
 	defer func() { _ = log.Sync() }()
 
 	shutdownTracing := tracing.MustInit(context.Background(), tracing.Config{
-		Enabled:      cfg.OTelEnabled,
-		ServiceName:  cfg.OTelServiceName,
-		Endpoint:     cfg.OTelEndpoint,
-		Env:          cfg.Env,
-		Version:      cfg.ServiceVersion,
-		Sampler:      cfg.OTelSampler,
-		SamplerRatio: cfg.OTelSamplerRatio,
+		Enabled:          cfg.OTelEnabled,
+		ServiceName:      cfg.OTelServiceName,
+		Endpoint:         cfg.OTelEndpoint,
+		Env:              cfg.Env,
+		Version:          cfg.ServiceVersion,
+		Sampler:          cfg.OTelSampler,
+		SamplerRatio:     cfg.OTelSamplerRatio,
+		HighVolumeEvents: cfg.TraceHighVolumeEvents,
+		HighVolumeRatio:  cfg.TraceHighVolumeSampleRatio,
 	}, log)
 	defer func() { _ = shutdownTracing(context.Background()) }()
 

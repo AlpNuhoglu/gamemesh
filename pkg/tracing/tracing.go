@@ -38,6 +38,13 @@ type Config struct {
 	// spec so production can be tuned purely via env.
 	Sampler      string
 	SamplerRatio float64 // used by the ratio-based samplers
+
+	// HighVolumeEvents lists event types (e.g. "LeaderboardUpdated") whose
+	// consumer spans are sampled down to HighVolumeRatio. The trace context is
+	// ALWAYS propagated regardless — only the recording span is sampled. See
+	// StartConsumerSpan.
+	HighVolumeEvents []string
+	HighVolumeRatio  float64
 }
 
 // Init configures global tracing and returns a shutdown function that flushes
@@ -50,6 +57,8 @@ func Init(ctx context.Context, cfg Config, log *zap.Logger) (func(context.Contex
 		propagation.TraceContext{},
 		propagation.Baggage{},
 	))
+
+	configureHighVolume(cfg.HighVolumeEvents, cfg.HighVolumeRatio)
 
 	if !cfg.Enabled || cfg.Endpoint == "" {
 		// No-op provider: otel.Tracer(...).Start returns non-recording spans.
@@ -125,6 +134,69 @@ func MustInit(ctx context.Context, cfg Config, log *zap.Logger) func(context.Con
 // tracing is disabled, so callers never need to nil-check.
 func Tracer() trace.Tracer {
 	return otel.Tracer(tracerName)
+}
+
+// highVolume holds the event-type span-sampling policy. It is written once by
+// Init (before any consumer runs) and only read afterwards, so no lock is
+// needed. nil ratioSampler means "no high-volume sampling configured".
+var (
+	highVolumeEvents map[string]struct{}
+	highVolumeRatio  sdktrace.Sampler
+)
+
+// configureHighVolume records which event types get their consumer spans
+// sampled down and at what ratio. A ratio >= 1 or an empty list disables it.
+func configureHighVolume(events []string, ratio float64) {
+	if len(events) == 0 || ratio >= 1.0 {
+		highVolumeEvents = nil
+		highVolumeRatio = nil
+		return
+	}
+	set := make(map[string]struct{}, len(events))
+	for _, e := range events {
+		set[e] = struct{}{}
+	}
+	highVolumeEvents = set
+	highVolumeRatio = sdktrace.TraceIDRatioBased(ratio)
+}
+
+// StartConsumerSpan starts a consumer span for a freshly-extracted context,
+// applying high-volume sampling by event type.
+//
+// CRITICAL — propagation vs. sampling: ctx is assumed to already carry the
+// upstream trace context (the caller extracts the Carrier first). For a
+// high-volume eventType whose trace_id falls outside HighVolumeRatio, this does
+// NOT open a new recording span — it returns the context unchanged and the
+// span already in context (a non-recording span still carries the SpanContext,
+// so any downstream Inject keeps the trace chain intact). Otherwise it starts a
+// normal recording span. Either way the returned span is non-nil and safe to
+// End()/RecordError().
+func StartConsumerSpan(ctx context.Context, name, eventType string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	if highVolumeEvents != nil {
+		if _, hot := highVolumeEvents[eventType]; hot && !sampleHighVolume(ctx) {
+			// Drop the recording span; keep the (propagating) context + span.
+			return ctx, trace.SpanFromContext(ctx)
+		}
+	}
+	return Tracer().Start(ctx, name, opts...)
+}
+
+// sampleHighVolume returns true when this trace should keep a recording span for
+// a high-volume event, using the same deterministic trace_id ratio the SDK uses
+// — so a sampled-in trace is recorded consistently at every hop.
+func sampleHighVolume(ctx context.Context) bool {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		// No upstream trace context → fall back to recording (rare; lets a
+		// locally-rooted trace still be observed).
+		return true
+	}
+	res := highVolumeRatio.ShouldSample(sdktrace.SamplingParameters{
+		ParentContext: ctx,
+		TraceID:       sc.TraceID(),
+		Name:          "events.consume",
+	})
+	return res.Decision == sdktrace.RecordAndSample
 }
 
 // LogFields returns zap fields carrying the active trace/span IDs, or nil when
