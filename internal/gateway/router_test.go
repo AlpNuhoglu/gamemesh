@@ -43,7 +43,7 @@ func newGatewayUnderTest(t *testing.T, upstreamURL string) (*httptest.Server, *a
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.RequestID())
-	RegisterRoutes(r, cfg, tokens, zap.NewNop())
+	RegisterRoutes(r, cfg, tokens, nil, zap.NewNop()) // nil sessions → JWT-only
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)

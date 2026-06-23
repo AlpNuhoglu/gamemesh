@@ -12,13 +12,17 @@ import (
 // RegisterRoutes wires every public route to its upstream service.
 // Routes are declared explicitly (no blanket wildcards) so the gateway is
 // also the authoritative, reviewable map of the public API surface.
-func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager, log *zap.Logger) {
+//
+// sessions enforces server-side revocation on protected routes; pass a
+// cache-backed checker so the per-request check stays off the Redis hot path. A
+// nil sessions disables revocation (JWT-only) — handy for tests.
+func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager, sessions middleware.SessionChecker, log *zap.Logger) {
 	playerProxy := newProxy(cfg.PlayerServiceURL, log)
 	matchProxy := newProxy(cfg.MatchmakingServiceURL, log)
 	lbProxy := newProxy(cfg.LeaderboardServiceURL, log)
 	wsProxy := newProxy(cfg.WebsocketServiceURL, log)
 
-	authRequired := middleware.Auth(tokens)
+	authRequired := middleware.Auth(tokens, sessions)
 
 	v1 := r.Group("/api/v1")
 

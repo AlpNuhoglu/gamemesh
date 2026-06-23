@@ -91,6 +91,14 @@ type Config struct {
 	LogSlowRequestThreshold    time.Duration // requests slower than this always log
 	TraceHighVolumeEvents      []string      // event types whose consumer spans are sampled down
 	TraceHighVolumeSampleRatio float64       // keep-ratio for those high-volume spans
+
+	// Session revocation cache. The gateway checks the session store on every
+	// authenticated request to honour server-side logout; an in-process positive
+	// cache keeps that off the Redis hot path. SessionCacheTTL is how long a
+	// "valid" verdict is trusted before re-checking Redis — i.e. the worst-case
+	// window a revoked token stays usable (eventual consistency, accepted).
+	SessionCacheEnabled bool
+	SessionCacheTTL     time.Duration
 }
 
 // Load reads configuration for the named service from the environment.
@@ -163,6 +171,9 @@ func Load(serviceName string) *Config {
 		LogSlowRequestThreshold:    getEnvDuration("LOG_SLOW_REQUEST_THRESHOLD", time.Second),
 		TraceHighVolumeEvents:      splitCSV(getEnv("TRACE_HIGHVOLUME_EVENTS", "LeaderboardUpdated")),
 		TraceHighVolumeSampleRatio: getEnvFloat("TRACE_HIGHVOLUME_SAMPLE_RATIO", 0.01),
+
+		SessionCacheEnabled: getEnvBool("SESSION_CACHE_ENABLED", true),
+		SessionCacheTTL:     getEnvDuration("SESSION_CACHE_TTL", 5*time.Second),
 	}
 }
 

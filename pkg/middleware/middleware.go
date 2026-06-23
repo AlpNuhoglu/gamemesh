@@ -4,6 +4,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -209,10 +210,25 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	}
 }
 
+// SessionChecker reports whether a session (by JWT ID / JTI) is still active.
+// It is a minimal, locally-defined interface so this package depends on a
+// behaviour, not on internal/player — Go structural typing lets the player
+// SessionStore satisfy it for free. A *cached* checker should be passed so this
+// per-request call does not hit Redis every time.
+type SessionChecker interface {
+	Exists(ctx context.Context, jti string) (bool, error)
+}
+
 // Auth validates the Bearer token and stores the caller identity in the
 // context. Used by the gateway (and the WebSocket service directly, since
 // browsers cannot set headers on WS upgrade requests).
-func Auth(tm *auth.TokenManager) gin.HandlerFunc {
+//
+// When sessions is non-nil, Auth also enforces server-side revocation: after
+// the JWT is cryptographically valid, the session (by JTI) must still exist, so
+// a logged-out token is rejected at the gateway before reaching any upstream.
+// A nil sessions disables the check (JWT-only), preserving the previous
+// behaviour for callers/tests that do not wire a store.
+func Auth(tm *auth.TokenManager, sessions SessionChecker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		const prefix = "Bearer "
@@ -225,6 +241,24 @@ func Auth(tm *auth.TokenManager) gin.HandlerFunc {
 			httpx.Error(c, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
+
+		// Enforce server-side revocation (logout) when a session store is wired.
+		// The store is expected to be cache-backed, so this is normally an
+		// in-process lookup, not a Redis round trip. On a store error we reject
+		// rather than fail open: a revocation check that cannot run must not let
+		// a possibly-revoked token through.
+		if sessions != nil {
+			active, serr := sessions.Exists(c.Request.Context(), claims.ID)
+			if serr != nil {
+				httpx.Error(c, http.StatusServiceUnavailable, "session check unavailable")
+				return
+			}
+			if !active {
+				httpx.Error(c, http.StatusUnauthorized, "token revoked")
+				return
+			}
+		}
+
 		c.Set(CtxUserID, claims.PlayerID)
 		c.Set(CtxUsername, claims.Username)
 		c.Set(CtxTokenJTI, claims.ID)
