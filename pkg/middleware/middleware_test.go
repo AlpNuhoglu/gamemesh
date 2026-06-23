@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -169,7 +171,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(Auth(tm))
+	r.Use(Auth(tm, nil)) // nil sessions → JWT-only (revocation check disabled)
 	r.GET("/protected", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"user_id": c.GetString(CtxUserID),
@@ -204,4 +206,40 @@ func TestAuthMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), playerID.String())
 	assert.Contains(t, w.Body.String(), jti)
+}
+
+// stubSessions is a fixed-verdict SessionChecker for the revocation tests.
+type stubSessions struct {
+	active bool
+	err    error
+}
+
+func (s stubSessions) Exists(context.Context, string) (bool, error) { return s.active, s.err }
+
+func TestAuthMiddlewareRevocation(t *testing.T) {
+	tm := auth.NewTokenManager("test-secret", time.Hour, "gamemesh")
+	token, _, err := tm.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req
+	}
+	run := func(sessions SessionChecker) int {
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(Auth(tm, sessions))
+		r.GET("/protected", func(c *gin.Context) { c.JSON(200, gin.H{}) })
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, newReq())
+		return w.Code
+	}
+
+	// Active session → allowed.
+	assert.Equal(t, http.StatusOK, run(stubSessions{active: true}))
+	// Revoked (logged-out) session → 401, even though the JWT is cryptographically valid.
+	assert.Equal(t, http.StatusUnauthorized, run(stubSessions{active: false}))
+	// Store unavailable → fail closed (503), never let a possibly-revoked token through.
+	assert.Equal(t, http.StatusServiceUnavailable, run(stubSessions{err: errors.New("redis down")}))
 }
