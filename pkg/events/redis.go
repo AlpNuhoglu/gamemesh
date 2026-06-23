@@ -74,8 +74,11 @@ func (b *RedisBus) Publish(ctx context.Context, topic string, e Event) error {
 // distributed trace. Returns the new context and span; the caller must End the
 // span. Transport-agnostic: relies only on the OTel propagator and the Carrier.
 func ReceiveSpan(ctx context.Context, e Event, name string) (context.Context, trace.Span) {
+	// Extract unconditionally (no span here) so propagation survives even when
+	// the consumer span is sampled out for a high-volume event type, then let
+	// StartConsumerSpan apply the per-event-type sampling.
 	ctx = tracing.ResumeFromCarrier(ctx, e.Carrier)
-	return tracing.Tracer().Start(ctx, name,
+	return tracing.StartConsumerSpan(ctx, name, e.Type,
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String("redis"),

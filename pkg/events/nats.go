@@ -317,10 +317,15 @@ func (b *NATSBus) process(ctx context.Context, topic string, handler Handler, ms
 		return
 	}
 
-	// Continue the producer's trace across the async boundary (same mechanism
-	// as RedisBus / ReceiveSpan, just inlined so we can wrap ACK timing).
+	// Continue the producer's trace across the async boundary. The context is
+	// extracted UNCONDITIONALLY (this never opens a span), so trace propagation
+	// is preserved even when the consumer span below is sampled out for a
+	// high-volume event type. StartConsumerSpan then either opens a recording
+	// span or, for a sampled-out high-volume event, returns the propagating
+	// context + (non-recording) span — keeping the trace chain intact while
+	// dropping the exporter cost. See tracing.StartConsumerSpan.
 	hctx := tracing.ResumeFromCarrier(ctx, e.Carrier)
-	hctx, span := tracing.Tracer().Start(hctx, "events.consume "+topic,
+	hctx, span := tracing.StartConsumerSpan(hctx, "events.consume "+topic, e.Type,
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(
 			semconv.MessagingSystemKey.String("nats"),

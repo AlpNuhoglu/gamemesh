@@ -37,7 +37,7 @@ func NewEngine(cfg *config.Config, log *zap.Logger, m *metrics.Metrics) *gin.Eng
 		// request with http.method, http.route (low-cardinality template),
 		// status and latency.
 		otelgin.Middleware(cfg.OTelServiceName),
-		middleware.Logger(log),
+		middleware.Logger(log, cfg.LogSlowRequestThreshold),
 		middleware.Metrics(m),
 		middleware.CORS(cfg.AllowedOrigins),
 	)

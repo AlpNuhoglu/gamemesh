@@ -49,19 +49,30 @@ func RequestID() gin.HandlerFunc {
 
 // Logger emits one structured log line per request with request ID, user ID
 // (when authenticated), latency and error details.
-func Logger(log *zap.Logger) gin.HandlerFunc {
+//
+// Sampling: the *successful, fast* request flood is thinned by the zap sampler
+// installed in logger.New (these go out at Info). Errors (status >= 400) and
+// slow requests (latency >= slowThreshold) are logged at Warn/Error, which the
+// sampler leaves untouched — so the rare, valuable lines always survive while
+// the high-volume 2xx noise is sampled. slowThreshold <= 0 disables the slow
+// bypass (every 2xx is sampled).
+func Logger(log *zap.Logger, slowThreshold time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
+		latency := time.Since(start)
 
-		fields := []zap.Field{
+		// Pre-allocate to the worst-case field count (6 base + user_id + 2 trace
+		// + error) so the appends below never grow/realloc the backing array.
+		fields := make([]zap.Field, 0, 10)
+		fields = append(fields,
 			zap.String("request_id", c.GetString(CtxRequestID)),
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.Request.URL.Path),
 			zap.Int("status", c.Writer.Status()),
-			zap.Duration("latency", time.Since(start)),
+			zap.Duration("latency", latency),
 			zap.String("client_ip", c.ClientIP()),
-		}
+		)
 		if uid := c.GetString(CtxUserID); uid != "" {
 			fields = append(fields, zap.String("user_id", uid))
 		} else if uid := c.GetHeader(HeaderUserID); uid != "" {
@@ -71,12 +82,22 @@ func Logger(log *zap.Logger) gin.HandlerFunc {
 		// span is active (otelgin runs before this middleware), so operators
 		// can pivot from a log line straight to the trace in Jaeger.
 		fields = append(fields, tracing.LogFields(c.Request.Context())...)
-		if len(c.Errors) > 0 {
+
+		// Errors and slow requests bypass the sampler (logged at Error/Warn);
+		// successful, fast requests go at Info where the sampler thins them.
+		switch {
+		case len(c.Errors) > 0:
 			fields = append(fields, zap.String("error", c.Errors.String()))
 			log.Error("http request", fields...)
-			return
+		case c.Writer.Status() >= http.StatusInternalServerError:
+			log.Error("http request", fields...)
+		case c.Writer.Status() >= http.StatusBadRequest:
+			log.Warn("http request", fields...)
+		case slowThreshold > 0 && latency >= slowThreshold:
+			log.Warn("slow http request", fields...)
+		default:
+			log.Info("http request", fields...)
 		}
-		log.Info("http request", fields...)
 	}
 }
 
