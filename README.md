@@ -283,6 +283,75 @@ make k6-websocket       # 1,000 concurrent WebSocket clients
 
 JSON summaries land in `scripts/k6/reports/`.
 
+Each script provisions a pool of real accounts in `setup()` (register + login,
+in parallel batches of 25 — login is bcrypt-bound, so larger batches only queue
+behind the same cores). **`POOL` must be >= the VU count:**
+
+```bash
+POOL=500 k6 run --vus 500 --duration 1m scripts/k6/matchmaking.js
+```
+
+Matchmaking identity comes from the JWT and the queue is a Redis ZSET keyed by
+player ID, so two VUs sharing a token are the *same* queue member — one VU's
+`DELETE /queue` would evict the other's ticket and the run would measure a
+self-inflicted race rather than the system.
+
+### Two things to know before citing numbers
+
+**The gateway rate-limits per client IP** (`RATE_LIMIT_RPS`, default 50). k6
+generates all traffic from one IP, so the entire load generator shares a single
+50 rps budget — a test-harness artifact, since real players arrive from distinct
+IPs. Above ~50 rps an unmodified run measures the rate limiter, not the system:
+at 500 VUs (204 rps offered) it returns **80% HTTP 429** with sub-5ms rejects.
+Raise the limit *for the load-test run only* to measure the services:
+
+```bash
+RATE_LIMIT_RPS=20000 RATE_LIMIT_BURST=40000 docker compose up -d --no-deps gateway
+# ... run k6 ...
+docker compose up -d --no-deps gateway   # restore committed defaults
+```
+
+**This is a realistic-usage scenario, not a throughput benchmark.** Each
+matchmaking iteration includes ~7s of sleep modelling a player waiting for the
+5s match tick, so offered load is roughly VUs/7 iterations per second. The
+numbers below describe how the system behaves under a realistic arrival pattern;
+they are *not* a maximum-throughput figure and should not be quoted as one.
+
+### Measured results
+
+At 500 VUs, `POOL=500`, rate limit raised as above:
+
+| scenario | VUs | iterations | reqs/s | p95 | errors | host CPU (avg of 1400%) |
+|---|---|---|---|---|---|---|
+| matchmaking | 500 | 6,500 | 193 | 112 ms | 0.00% | 238% |
+| leaderboard | 500 | 4,000 | 133 | 208 ms | 0.00% | 508% |
+| websocket | 500 | 549 | — | 35.7 ms *(`ws_connecting`)* | 0.00% | 203% |
+
+Matchmaking matched 100% of players before timeout. WebSocket held 549 sessions
+averaging 44.3s with 100% of checks passing — `ws_connecting` is the meaningful
+latency there, not `http_req_*`, which covers only setup traffic.
+
+**500 VUs is the honest level to cite on this hardware.** Above it the host, not
+the system, is what's being measured — at 1000 VUs a Jaeger trace shows the
+server spending **21 ms** at p95 while k6 observes **204 ms**, and the slowest of
+800 traces spends **99.2% of its wall clock in gaps between spans** (queueing)
+against **267 µs** of actual Redis work. The load generator's own `setup()` is a
+large part of that: `POOL` scales with VUs, and hashing that many passwords at
+`bcryptCost=12` keeps the player service at ~505% CPU for the whole run. At
+2,000 VUs throughput inverts outright (266 → 250 req/s, p95 5.65 s, host CPU
+1506% of 1400%).
+
+Environment: a single laptop (14 CPU / 24 GB, Docker VM 14 CPU / 8 GB) running
+**everything at once** — the k6 load generator, all seven services, Redis,
+PostgreSQL, NATS, Prometheus and Jaeger. The load generator competes with the
+system under test for the same cores, so these figures are a lower bound on
+what dedicated hosts would show, not a capacity limit.
+
+> When investigating a suspected Redis pool bottleneck, read
+> `rdb.PoolStats()` — `Timeouts` and `WaitCount` say directly whether callers
+> ever *waited* for a connection. Counting open connections (via `CLIENT LIST`)
+> does not: a pool sitting near its ceiling is not evidence of contention.
+
 ## Observability
 
 Three signals, wired into every service:
@@ -338,12 +407,7 @@ Everything is env-driven with working dev defaults — see
 | `OTEL_ENABLED` / `OTEL_EXPORTER_OTLP_ENDPOINT` | `true` / `otel-collector:4317` | Tracing on/off and destination |
 | `TRACE_HIGHVOLUME_EVENTS` / `TRACE_HIGHVOLUME_SAMPLE_RATIO` | `LeaderboardUpdated` / `0.01` | Per-event-type consumer-span sampling |
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `50` / `100` | Gateway rate limiting |
-
-## Screenshots
-
-| | |
-|---|---|
-| ![Grafana dashboard](docs/img/grafana-dashboard.png) *(placeholder)* | ![k6 run](docs/img/k6-report.png) *(placeholder)* |
+| `REDIS_POOL_SIZE` | `0` | go-redis pool cap; `0` keeps go-redis's own sizing (10×GOMAXPROCS, so it tracks available cores) |
 
 ## Documentation
 

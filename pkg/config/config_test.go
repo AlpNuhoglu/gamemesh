@@ -20,6 +20,18 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 100, cfg.MatchRankWindow)
 	assert.Equal(t, []string{"*"}, cfg.AllowedOrigins)
 	assert.True(t, cfg.AutoMigrate)
+	// 0 means "let go-redis size the pool" (10*GOMAXPROCS) — the default must
+	// not silently change the client's own behaviour.
+	assert.Equal(t, 0, cfg.RedisPoolSize)
+}
+
+// TestRedisPoolSizeOptIn pins that the pool is only overridden when explicitly
+// configured: unset or malformed leaves go-redis's own sizing in place.
+func TestRedisPoolSizeOptIn(t *testing.T) {
+	assert.Equal(t, 0, Load("matchmaking").RedisPoolSize)
+
+	t.Setenv("REDIS_POOL_SIZE", "512")
+	assert.Equal(t, 512, Load("matchmaking").RedisPoolSize)
 }
 
 func TestDefaultPortsPerService(t *testing.T) {
@@ -59,10 +71,12 @@ func TestMalformedEnvFallsBackToDefaults(t *testing.T) {
 	t.Setenv("JWT_EXPIRY", "not-a-duration")
 	t.Setenv("RATE_LIMIT_RPS", "NaNish")
 	t.Setenv("AUTO_MIGRATE", "maybe")
+	t.Setenv("REDIS_POOL_SIZE", "lots")
 
 	cfg := Load("gateway")
 	assert.Equal(t, 100, cfg.RateLimitBurst)
 	assert.Equal(t, 24*time.Hour, cfg.JWTExpiry)
 	assert.Equal(t, float64(50), cfg.RateLimitRPS)
 	assert.True(t, cfg.AutoMigrate)
+	assert.Equal(t, 0, cfg.RedisPoolSize)
 }
