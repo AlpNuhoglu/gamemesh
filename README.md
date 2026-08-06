@@ -283,6 +283,59 @@ make k6-websocket       # 1,000 concurrent WebSocket clients
 
 JSON summaries land in `scripts/k6/reports/`.
 
+Each script provisions a pool of real accounts in `setup()` (register + login,
+in parallel batches of 25 — login is bcrypt-bound, so larger batches only queue
+behind the same cores). **`POOL` must be >= the VU count:**
+
+```bash
+POOL=500 k6 run --vus 500 --duration 1m scripts/k6/matchmaking.js
+```
+
+Matchmaking identity comes from the JWT and the queue is a Redis ZSET keyed by
+player ID, so two VUs sharing a token are the *same* queue member — one VU's
+`DELETE /queue` would evict the other's ticket and the run would measure a
+self-inflicted race rather than the system.
+
+### Two things to know before citing numbers
+
+**The gateway rate-limits per client IP** (`RATE_LIMIT_RPS`, default 50). k6
+generates all traffic from one IP, so the entire load generator shares a single
+50 rps budget — a test-harness artifact, since real players arrive from distinct
+IPs. Above ~50 rps an unmodified run measures the rate limiter, not the system:
+at 500 VUs (204 rps offered) it returns **80% HTTP 429** with sub-5ms rejects.
+Raise the limit *for the load-test run only* to measure the services:
+
+```bash
+RATE_LIMIT_RPS=20000 RATE_LIMIT_BURST=40000 docker compose up -d --no-deps gateway
+# ... run k6 ...
+docker compose up -d --no-deps gateway   # restore committed defaults
+```
+
+**This is a realistic-usage scenario, not a throughput benchmark.** Each
+matchmaking iteration includes ~7s of sleep modelling a player waiting for the
+5s match tick, so offered load is roughly VUs/7 iterations per second. The
+numbers below describe how the system behaves under a realistic arrival pattern;
+they are *not* a maximum-throughput figure and should not be quoted as one.
+
+### Measured results
+
+Matchmaking, 500 VUs / 1 min, `POOL=500`, rate limit raised as above:
+
+| metric | value |
+|---|---|
+| iterations | 6,500 |
+| requests | 20,000 (193 req/s) |
+| p95 latency | 112 ms |
+| error rate | 0.00% |
+| players matched before timeout | 100% |
+| host CPU | ~514% peak of 1400% available |
+
+Environment: a single laptop (14 CPU / 24 GB, Docker VM 14 CPU / 8 GB) running
+**everything at once** — the k6 load generator, all seven services, Redis,
+PostgreSQL, NATS, Prometheus and Jaeger. The load generator competes with the
+system under test for the same cores, so these figures are a lower bound on
+what dedicated hosts would show, not a capacity limit.
+
 ## Observability
 
 Three signals, wired into every service:
@@ -338,12 +391,6 @@ Everything is env-driven with working dev defaults — see
 | `OTEL_ENABLED` / `OTEL_EXPORTER_OTLP_ENDPOINT` | `true` / `otel-collector:4317` | Tracing on/off and destination |
 | `TRACE_HIGHVOLUME_EVENTS` / `TRACE_HIGHVOLUME_SAMPLE_RATIO` | `LeaderboardUpdated` / `0.01` | Per-event-type consumer-span sampling |
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `50` / `100` | Gateway rate limiting |
-
-## Screenshots
-
-| | |
-|---|---|
-| ![Grafana dashboard](docs/img/grafana-dashboard.png) *(placeholder)* | ![k6 run](docs/img/k6-report.png) *(placeholder)* |
 
 ## Documentation
 
