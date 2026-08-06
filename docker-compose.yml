@@ -136,6 +136,7 @@ services:
       MATCH_BATCH_SIZE: ${MATCH_BATCH_SIZE:-1000}
       MATCH_MAX_QUEUE_AGE: ${MATCH_MAX_QUEUE_AGE:-5m}
       ROOM_TTL: ${ROOM_TTL:-1h}
+      REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-0}
     depends_on:
       redis:
         condition: service_healthy

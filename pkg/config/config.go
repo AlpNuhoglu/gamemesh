@@ -23,6 +23,14 @@ type Config struct {
 	RedisAddr     string
 	RedisPassword string
 	RedisDB       int
+	// RedisPoolSize caps the go-redis connection pool. 0 (the default) keeps
+	// go-redis's own sizing of 10*GOMAXPROCS, which scales the pool with the
+	// cores available to the process — deliberate on go-redis's part, and
+	// usually what you want, since a smaller pod also serves proportionally less
+	// traffic. Worth knowing when tuning: the effective pool therefore differs
+	// between a 14-core host (140) and a 2-core CPU limit (20), so set this
+	// explicitly if a deployment needs a pool decoupled from its core count.
+	RedisPoolSize int
 
 	// Event transport selection. EventBus picks the messaging implementation
 	// ("redis" or "nats") at startup; services keep depending only on the
@@ -114,6 +122,11 @@ func Load(serviceName string) *Config {
 		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvInt("REDIS_DB", 0),
+		// 0 hands sizing back to go-redis (10*GOMAXPROCS). Measured at 250/500/
+		// 1000 VUs, an explicit 256 changed neither throughput nor p95, and the
+		// pool never exceeded 135 connections — so this is a tuning knob for
+		// deployments that need it, not a default worth overriding.
+		RedisPoolSize: getEnvInt("REDIS_POOL_SIZE", 0),
 
 		// Default to redis so a bare `go run` of a single service keeps working
 		// without NATS; docker-compose sets EVENT_BUS=nats explicitly.

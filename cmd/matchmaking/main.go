@@ -42,10 +42,12 @@ func main() {
 		Addr:     cfg.RedisAddr,
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
+		PoolSize: cfg.RedisPoolSize,
 	})
 	if err := tracing.InstrumentRedis(rdb); err != nil {
 		log.Fatal("failed to instrument redis", zap.Error(err))
 	}
+	log.Info("redis pool configured", zap.Int("pool_size", cfg.RedisPoolSize))
 
 	m := metrics.New(cfg.ServiceName)
 	bus, err := events.NewBus(events.Config{

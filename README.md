@@ -336,6 +336,11 @@ PostgreSQL, NATS, Prometheus and Jaeger. The load generator competes with the
 system under test for the same cores, so these figures are a lower bound on
 what dedicated hosts would show, not a capacity limit.
 
+> When investigating a suspected Redis pool bottleneck, read
+> `rdb.PoolStats()` — `Timeouts` and `WaitCount` say directly whether callers
+> ever *waited* for a connection. Counting open connections (via `CLIENT LIST`)
+> does not: a pool sitting near its ceiling is not evidence of contention.
+
 ## Observability
 
 Three signals, wired into every service:
@@ -391,6 +396,7 @@ Everything is env-driven with working dev defaults — see
 | `OTEL_ENABLED` / `OTEL_EXPORTER_OTLP_ENDPOINT` | `true` / `otel-collector:4317` | Tracing on/off and destination |
 | `TRACE_HIGHVOLUME_EVENTS` / `TRACE_HIGHVOLUME_SAMPLE_RATIO` | `LeaderboardUpdated` / `0.01` | Per-event-type consumer-span sampling |
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `50` / `100` | Gateway rate limiting |
+| `REDIS_POOL_SIZE` | `0` | go-redis pool cap; `0` keeps go-redis's own sizing (10×GOMAXPROCS, so it tracks available cores) |
 
 ## Documentation
 
