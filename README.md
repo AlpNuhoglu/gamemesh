@@ -319,16 +319,27 @@ they are *not* a maximum-throughput figure and should not be quoted as one.
 
 ### Measured results
 
-Matchmaking, 500 VUs / 1 min, `POOL=500`, rate limit raised as above:
+At 500 VUs, `POOL=500`, rate limit raised as above:
 
-| metric | value |
-|---|---|
-| iterations | 6,500 |
-| requests | 20,000 (193 req/s) |
-| p95 latency | 112 ms |
-| error rate | 0.00% |
-| players matched before timeout | 100% |
-| host CPU | ~514% peak of 1400% available |
+| scenario | VUs | iterations | reqs/s | p95 | errors | host CPU (avg of 1400%) |
+|---|---|---|---|---|---|---|
+| matchmaking | 500 | 6,500 | 193 | 112 ms | 0.00% | 238% |
+| leaderboard | 500 | 4,000 | 133 | 208 ms | 0.00% | 508% |
+| websocket | 500 | 549 | — | 35.7 ms *(`ws_connecting`)* | 0.00% | 203% |
+
+Matchmaking matched 100% of players before timeout. WebSocket held 549 sessions
+averaging 44.3s with 100% of checks passing — `ws_connecting` is the meaningful
+latency there, not `http_req_*`, which covers only setup traffic.
+
+**500 VUs is the honest level to cite on this hardware.** Above it the host, not
+the system, is what's being measured — at 1000 VUs a Jaeger trace shows the
+server spending **21 ms** at p95 while k6 observes **204 ms**, and the slowest of
+800 traces spends **99.2% of its wall clock in gaps between spans** (queueing)
+against **267 µs** of actual Redis work. The load generator's own `setup()` is a
+large part of that: `POOL` scales with VUs, and hashing that many passwords at
+`bcryptCost=12` keeps the player service at ~505% CPU for the whole run. At
+2,000 VUs throughput inverts outright (266 → 250 req/s, p95 5.65 s, host CPU
+1506% of 1400%).
 
 Environment: a single laptop (14 CPU / 24 GB, Docker VM 14 CPU / 8 GB) running
 **everything at once** — the k6 load generator, all seven services, Redis,
