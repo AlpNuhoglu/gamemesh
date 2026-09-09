@@ -109,10 +109,21 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+      # govulncheck runs on a newer toolchain than the rest of the pipeline:
+      # golang.org/x/vuln v1.8.0+ requires Go >= 1.26, and the action installs
+      # @latest under GOTOOLCHAIN=local, so a 1.25 input fails to install the
+      # tool at all. Services are still built and shipped on 1.25 (see
+      # deployments/docker/*); only the scanner's own toolchain moves.
+      #
+      # Keep this as the major version "1.26", not a pinned patch: govulncheck
+      # reports stdlib vulnerabilities against the toolchain it runs on, so a
+      # stale patch fails the job for CVEs that are not in this codebase (1.26.4
+      # reports 8 such findings, all fixed by 1.26.6). "1.26" resolves to the
+      # latest patch, which is the state that reports honestly.
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: "1.25"
+          go-version-input: "1.26"
 
   deploy:
     # Example deploy stage: validates the manifests and shows what a real
