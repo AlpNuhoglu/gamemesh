@@ -57,7 +57,7 @@ Her adım şu yapıda:
 
 ### A2. `.dockerignore` ekle
 
-- [ ] **Ne:** Build context'ten `.git`, `.env`, `graphify-out/`, `coverage.out`, `bin/`,
+- [x] **Ne:** Build context'ten `.git`, `.env`, `graphify-out/`, `coverage.out`, `bin/`,
   `docs/` ve `scripts/k6/reports/` dizinlerini dışlamak.
 - **Neden:** Dockerfile'lardaki `COPY . .` repodaki her şeyi build aşamasına kopyalıyor.
   `.env` (gerçek secret'lar) build cache'ine giriyor. Final imaja girmiyor, çünkü
@@ -75,6 +75,17 @@ Her adım şu yapıda:
   Final imaj 40,6 MB. Doğrulama komutu:
   `docker build --target build -f deployments/docker/Dockerfile.gateway -t gm-buildstage .`
   ve ardından `docker run --rm --entrypoint ls gm-buildstage -A /src`.
+- **Sonuç (2026-10-13):** Denylist yerine **allowlist** seçildi (fail-closed): `*`, ardından
+  `go.mod`, `go.sum`, `cmd/`, `internal/`, `pkg/` geri açılıyor; `**/*_test.go` hariç.
+  Build context **4,55 MB → 254 kB**. Ölçüm yeni bir path'ten yapıldı, çünkü BuildKit
+  context'i incremental gönderiyor (aynı dizinde ikinci build 173 kB gösterdi). `/src` 22
+  girişten 5'e indi; `.env` ve `.git` yok; 48 üretim `.go` dosyasının 48'i var, `_test.go`
+  0. `docs/` ya da yalnızca bir `_test.go` değişince `go build` artık yeniden çalışmıyor
+  (8,6 sn → CACHED); gerçek kaynak değişince çalışıyor (kontrol). Not: 1.064 MB olan build
+  stage **imajı**; çoğu Go toolchain'i ve modül cache'i, bu adım onu değiştirmiyor. Ayrıca
+  ölçüldü: build reproducible (aynı kaynak → aynı binary hash'i), imajda `git` olmadığı için
+  binary'ye VCS bilgisi gömülmüyor (`vcs.*` 0 satır; SHA'yı A4'te `ARG VERSION` ile vermek
+  şart). 7 servis build oluyor, stack healthy.
 
 ### A2a. Yerel geliştirme ortamının hijyeni *(incelemeden eklendi)*
 
@@ -867,7 +878,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 
 | # | Bulgu | Kaynak | Kanıt | Adım |
 |---|---|---|---|---|
-| 1 | `.dockerignore` yok; `.env` ve `.git` build aşamasına giriyor | M1 | Ölçüldü | A2 |
+| 1 | `.dockerignore` yok; `.env` ve `.git` build aşamasına giriyor | M1 | Ölçüldü | A2 (çözüldü) |
 | 2 | Dockerfile yorumu "~15 MB" diyor; gerçek 40–45 MB | M1 | Ölçüldü | A2a |
 | 3 | Go 1.25 desteklenmiyor; Alpine 3.20 destek süresi doğrulanmalı | M1, M7 | Kod / sürüm | A4 |
 | 4 | Go sürümleri her yerde farklı (1.25 / 1.26 / 1.27) | M7 | Ölçüldü | A4 |
