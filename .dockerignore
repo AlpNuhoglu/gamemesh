@@ -1,0 +1,14 @@
+# Allowlist: exclude everything, then re-include only what `go build` needs.
+# Fail-closed — a new file at the repo root (a key, a .env variant, a report)
+# stays out of the build context unless it is added here on purpose.
+# Rules are evaluated in order and the last match wins.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/
+
+# Tests are never compiled into a service binary; keeping them out means a
+# test-only change does not invalidate the `COPY . .` layer and rebuild images.
+**/*_test.go
