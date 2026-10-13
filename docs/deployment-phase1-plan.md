@@ -93,7 +93,11 @@ Her adım şu yapıda:
   1. **Compose'da portları sadece localhost'a bağlamak (M2):** `"5432:5432"` →
      `"127.0.0.1:5432:5432"`. Aynısı Redis (6379), NATS (4222/8222), Prometheus (9090),
      Grafana (3000), Jaeger (16686) ve OTel (4317/4318) için de geçerli. Gateway (8080)
-     da isteğe bağlı olarak localhost'a bağlanabilir.
+     da isteğe bağlı olarak localhost'a bağlanabilir. **Presence (8086) ve websocket
+     (8084) da listeye girmeli (Bulgu #55):** presence kimlik doğrulaması olmayan bir iç
+     API; 2026-10-13'te token'sız `POST /presence/connect` 200 döndü ve rastgele bir
+     oyuncu `ONLINE` oldu. README'deki `curl localhost:8086/presence/<id>` örneği çalışmaya
+     devam etsin diye yayını kaldırmak yerine `127.0.0.1`'e bağlamak yeterli.
   2. **Redis'e şifre koymak (M2, isteğe bağlı):** `--requirepass ${REDIS_PASSWORD}`.
      `REDIS_PASSWORD` değişkeni config'te zaten var.
   3. **`.env`'i yenilemek (M8):** Senin `.env` dosyan `.env.example`'ın eski bir kopyası;
@@ -107,6 +111,13 @@ Her adım şu yapıda:
      yok. Docker Desktop yeniden başladığında stack geri gelmiyor (2026-10-08'de
      gözlemlendi). Seçenekler: bilinçli olarak böyle bırakmak (çöken servisi fark etmek
      için) ya da `restart: unless-stopped`. Kararı verip dokümana yazmak.
+     *Veri (2026-10-13):* Docker VM'i (7,7 GiB) stack açıkken paralel build'ler sırasında
+     belleği tüketti; Grafana, Prometheus, Jaeger ve OTel Collector `OOMKilled` (137) ile
+     öldü. Jaeger ve OTel Collector 12 dk sonra elle kaldırılana kadar trace toplanmadı
+     (gateway logunda 48 export hatası), Grafana ve Prometheus hiç geri gelmedi. Aynı gün
+     Docker Desktop kapanınca 14 container'ın hiçbiri geri gelmedi. Bilgi (A2a'da
+     doğrulanacak): `unless-stopped`, OOM kill'den sonra container'ı yeniden başlatır,
+     çünkü OOM kill elle durdurma sayılmaz.
 - **Neden:**
   - Ölçüm (M2, 2026-10-10): `lsof` 5432'yi `*:5432` adresinde gösterdi. Mac'in yerel ağ
     IP'si (172.20.10.2, iPhone hotspot ağı) üzerinden 5432 ve 6379'a bağlanılabildi;
@@ -205,6 +216,9 @@ Her adım şu yapıda:
   6. **Doğrulanması gereken (M4):** Matchmaking döngüsü kuyruktan oyuncu alıp oda
      oluştururken yarıda kesilirse ne oluyor? İşlemin atomik olup olmadığı kodda
      doğrulanmadı.
+  7. **Gözlem (2026-10-13, incelenmedi):** Docker Desktop kapanırken 14 container'dan
+     yalnızca NATS **exit 1** ile çıktı, diğerleri 0. JetStream'in temiz kapanıp
+     kapanmadığı ve k8s'te bunun bir etkisi olup olmadığı incelenmeli.
 - **Neden:**
   - Ölçüm (M4, 2026-10-11): Websocket container'ı durdurulduğunda sunucu 0,19 sn'de exit 0
     ile kapandı, ama bağlı istemci **1006 (Abnormal Closure)** aldı. Her deploy'da o
@@ -491,6 +505,13 @@ Her adım şu yapıda:
   5. Numaralı dosya sırası (`00-`, `01-`...) yerine Kustomize'ın kaynak türüne göre
      sıralaması (M5).
   6. *(Küçük)* Önerilen etiketler (`app.kubernetes.io/name`, `.../part-of`) (M5).
+  7. **Gateway için `TRUSTED_PROXIES` (Bulgu #52):** Prod overlay'inde gateway'e
+     `TRUSTED_PROXIES=10.42.0.0/16` (k3s'in varsayılan pod CIDR'ı; Traefik pod'ları
+     buradan gelir). Verilmezse gateway Traefik'in IP'sini istemci sanar ve **bütün
+     kullanıcılar tek bir rate-limit bucket'ını paylaşır**; tek bir istemci herkesi 429'a
+     sokar. Diğer servislerde boş kalır (karar, 2026-10-13: gateway dışında hiçbir servis
+     proxy'ye güvenmez). Downstream loglarında `client_ip` gateway'in IP'sidir; gerçek IP
+     aynı `request_id` ile gateway logunda bulunur.
 
 ### A9. Secret'ları repodan çıkar
 
@@ -563,6 +584,13 @@ Her adım şu yapıda:
      takılıyor ve eski pod'lar trafik almaya devam ediyor.
   7. **Drain:** `kubectl drain` PDB yüzünden takılmıyor (A8 ek madde 1).
   8. **WS oturum güvenliği:** Logout yapılmış token ile `/ws` 401 alıyor (A3b).
+  9. **Gerçek istemci IP'si gateway'e ulaşıyor (Bulgu #52):** İki farklı kaynaktan gelen
+     istekler gateway logunda farklı `client_ip` ile görünmeli ve ayrı rate-limit
+     bucket'larına düşmeli. Bilgi, test edilmedi: ServiceLB ve Traefik Service'inin
+     varsayılan `externalTrafficPolicy: Cluster` ayarı paketleri SNAT'layabilir; o zaman
+     Traefik herkesi aynı iç IP olarak görür. Çözüm adayı, `HelmChartConfig` ile
+     `externalTrafficPolicy: Local`. k3d'de node'un önünde k3d'nin kendi proxy'si de
+     olduğu için kesin sonuç B4'te, VPS üzerinde gerçek bir dış istemciyle alınmalı.
 
 ---
 
@@ -929,6 +957,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 49 | Secret'lar env çıktılarında düz metin | M8 | Ölçüldü | Faz 1 sonrası |
 | 50 | Prometheus `ClusterRole` kullanıyor | M5 | Kod | Faz 1 sonrası |
 | 51 | Yeni CVE-2026-78669 (`x/net` v0.58.0, HIGH) bütün PR'larda security job'unu kırıyor; düzeltmesi Go 1.26 istiyor | M7 | Ölçüldü (CI run 38411117929, yerel Trivy) | `fix/deps-x-net` (çözüldü), kalıcı çözüm A5a |
-| 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (A2a öncesi) |
-| 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` |
+| 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (çözüldü: sahte XFF ile 200×200 → 119×200/81×429); prod ayarı A8, doğrulama A10/B4 |
+| 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` (çözüldü) |
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
+| 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a |
