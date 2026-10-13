@@ -19,6 +19,8 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, 5*time.Second, cfg.MatchInterval)
 	assert.Equal(t, 100, cfg.MatchRankWindow)
 	assert.Equal(t, []string{"*"}, cfg.AllowedOrigins)
+	// No proxy is trusted unless configured: the peer address is the client.
+	assert.Empty(t, cfg.TrustedProxies)
 	assert.True(t, cfg.AutoMigrate)
 	// 0 means "let go-redis size the pool" (10*GOMAXPROCS) — the default must
 	// not silently change the client's own behaviour.
@@ -55,6 +57,7 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("RATE_LIMIT_BURST", "7")
 	t.Setenv("AUTO_MIGRATE", "false")
 	t.Setenv("ALLOWED_ORIGINS", "https://a.example.com, https://b.example.com")
+	t.Setenv("TRUSTED_PROXIES", "10.42.0.0/16, 192.0.2.10")
 
 	cfg := Load("player")
 	assert.Equal(t, "9999", cfg.HTTPPort)
@@ -64,6 +67,7 @@ func TestEnvOverrides(t *testing.T) {
 	assert.Equal(t, 7, cfg.RateLimitBurst)
 	assert.False(t, cfg.AutoMigrate)
 	assert.Equal(t, []string{"https://a.example.com", "https://b.example.com"}, cfg.AllowedOrigins)
+	assert.Equal(t, []string{"10.42.0.0/16", "192.0.2.10"}, cfg.TrustedProxies)
 }
 
 func TestMalformedEnvFallsBackToDefaults(t *testing.T) {
