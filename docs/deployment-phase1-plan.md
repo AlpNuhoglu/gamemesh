@@ -331,6 +331,11 @@ Her adım şu yapıda:
      `latest` sürüm, checksum kontrolü olmadan `curl` ile indiriliyor.
   8. **Secret taraması:** CI'a gitleaks eklemek ve GitHub'da secret scanning + push
      protection'ı açmak (public repolar için ücretsiz). Bkz. A9.
+  9. **Bir taramanın başarısızlığı diğerini gizlememeli (Bulgu #54):** Trivy ve
+     govulncheck aynı job'da sırayla çalışıyor. 2026-10-13'te Trivy kırmızıyken
+     govulncheck hiç çalışmadı ve erişilebilir bir açık (GO-2026-6505) Trivy düzeltilene
+     kadar görünmedi. Taramalar ayrı job'lara bölünmeli ya da `if: always()` ile hepsi
+     çalıştırılmalı.
 - **Öğrenilecek:** Tedarik zinciri güvenliği, reachability analizi ile sürüm eşleştirme
   farkı, güvenlik kapılarının zamana bağlı doğası.
 - **Bitti sayılır:** `security` job'u docker'ı beklemiyor; imaj taraması çalışıyor; bütün
@@ -915,3 +920,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 51 | Yeni CVE-2026-78669 (`x/net` v0.58.0, HIGH) bütün PR'larda security job'unu kırıyor; düzeltmesi Go 1.26 istiyor | M7 | Ölçüldü (CI run 38411117929, yerel Trivy) | `fix/deps-x-net` (çözüldü), kalıcı çözüm A5a |
 | 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (A2a öncesi) |
 | 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` |
+| 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
