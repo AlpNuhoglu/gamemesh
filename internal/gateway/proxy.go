@@ -33,8 +33,11 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 	// shows up as a single distributed trace.
 	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
 
-	director := proxy.Director
-	proxy.Director = func(r *http.Request) {
+	// Director is deprecated since Go 1.26 but still supported. Moving to
+	// Rewrite changes X-Forwarded-For and Host handling, so it is done
+	// together with the trusted-proxies fix rather than in a dependency bump.
+	director := proxy.Director               //nolint:staticcheck // SA1019, see above
+	proxy.Director = func(r *http.Request) { //nolint:staticcheck // SA1019, see above
 		director(r)
 		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api/v1")
 		if r.URL.Path == "" {

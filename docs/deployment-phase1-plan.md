@@ -265,6 +265,10 @@ Her adım şu yapıda:
      derlendiği **Go 1.25 artık desteklenmiyor.** Alpine 3.20'nin destek süresinin de 2026
      baharında dolmuş olması beklenir; resmi takvimden doğrulanmalı. Servisler desteklenen
      bir Go sürümüne (1.26 ya da 1.27) ve desteklenen bir Alpine sürümüne taşınmalı.
+     *Ara not (2026-10-13):* Go 1.26 geçişi Bulgu #51 yüzünden `fix/deps-x-net` ile öne
+     çekildi: `go.mod` `go 1.26.0`, Dockerfile'lar `golang:1.26-alpine`, CI ve govulncheck
+     `GO_VERSION: "1.26"`. A4'te kalanlar: `toolchain` direktifi, 1.26 mı 1.27 mi kararı,
+     Alpine sürümü, digest pinleme.
   2. **Go sürümünü her yerde hizalamak (M7):** Şu an `go.mod` 1.25.0, CI "1.25",
      Dockerfile `golang:1.25-alpine` (1.25.14), govulncheck "1.26", Mac 1.27.1. `go.mod`'a
      `toolchain` direktifi eklenip CI ve Dockerfile aynı sürüme sabitlenmeli. Bu, A5a'daki
@@ -327,6 +331,11 @@ Her adım şu yapıda:
      `latest` sürüm, checksum kontrolü olmadan `curl` ile indiriliyor.
   8. **Secret taraması:** CI'a gitleaks eklemek ve GitHub'da secret scanning + push
      protection'ı açmak (public repolar için ücretsiz). Bkz. A9.
+  9. **Bir taramanın başarısızlığı diğerini gizlememeli (Bulgu #54):** Trivy ve
+     govulncheck aynı job'da sırayla çalışıyor. 2026-10-13'te Trivy kırmızıyken
+     govulncheck hiç çalışmadı ve erişilebilir bir açık (GO-2026-6505) Trivy düzeltilene
+     kadar görünmedi. Taramalar ayrı job'lara bölünmeli ya da `if: always()` ile hepsi
+     çalıştırılmalı.
 - **Öğrenilecek:** Tedarik zinciri güvenliği, reachability analizi ile sürüm eşleştirme
   farkı, güvenlik kapılarının zamana bağlı doğası.
 - **Bitti sayılır:** `security` job'u docker'ı beklemiyor; imaj taraması çalışıyor; bütün
@@ -841,7 +850,8 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   arasındaki etkileşim (ölüm sarmalı riski) throughput post-mortem'üyle birlikte
   değerlendirilmeli.
 - **CI'a eklenebilecekler (M7):** Uçtan uca (e2e) test, k6 ile performans regresyon testi,
-  Dockerfile lint'i (hadolint).
+  Dockerfile lint'i (hadolint), `gofmt -l` kontrolü (`internal/player/model.go` `main`'de
+  formatsız; golangci-lint'te `gofmt` formatter'ı açık değil, 2026-10-13'te fark edildi).
 - **İstemci tarafı (M4):** WS istemcisinde jitter'lı yeniden bağlanma ve bağlandıktan
   sonra durumu yeniden çekme (resync).
 - **Outbox tüketicilerinin idempotent olduğunun doğrulanması (M4):** Relay at-least-once
@@ -907,3 +917,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 48 | HS256: üç servis token üretebilir | M8 | Kod | Faz 1 sonrası |
 | 49 | Secret'lar env çıktılarında düz metin | M8 | Ölçüldü | Faz 1 sonrası |
 | 50 | Prometheus `ClusterRole` kullanıyor | M5 | Kod | Faz 1 sonrası |
+| 51 | Yeni CVE-2026-78669 (`x/net` v0.58.0, HIGH) bütün PR'larda security job'unu kırıyor; düzeltmesi Go 1.26 istiyor | M7 | Ölçüldü (CI run 38411117929, yerel Trivy) | `fix/deps-x-net` (çözüldü), kalıcı çözüm A5a |
+| 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (A2a öncesi) |
+| 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` |
+| 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |

@@ -117,7 +117,7 @@ Full discussion: [docs/architecture.md](docs/architecture.md)
 
 ## Tech stack
 
-Go 1.25 · Gin · GORM · PostgreSQL 16 · Redis 7 · NATS JetStream ·
+Go 1.26 · Gin · GORM · PostgreSQL 16 · Redis 7 · NATS JetStream ·
 Gorilla WebSocket · golang-jwt v5 · zap · Prometheus · Grafana ·
 OpenTelemetry · Jaeger · Docker Compose · Kubernetes (Minikube) ·
 Testcontainers · k6 · GitHub Actions
