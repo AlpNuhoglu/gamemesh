@@ -26,23 +26,25 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 	if err != nil {
 		log.Fatal("invalid upstream URL", zap.String("target", target), zap.Error(err))
 	}
-	proxy := httputil.NewSingleHostReverseProxy(u)
-	// Wrap the transport so the outbound request to the downstream service is a
-	// client span and the W3C traceparent header is injected automatically.
-	// Combined with otelgin on the downstream, gateway -> service -> store
-	// shows up as a single distributed trace.
-	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
-
-	// Director is deprecated since Go 1.26 but still supported. Moving to
-	// Rewrite changes X-Forwarded-For and Host handling, so it is done
-	// together with the trusted-proxies fix rather than in a dependency bump.
-	director := proxy.Director               //nolint:staticcheck // SA1019, see above
-	proxy.Director = func(r *http.Request) { //nolint:staticcheck // SA1019, see above
-		director(r)
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api/v1")
-		if r.URL.Path == "" {
-			r.URL.Path = "/"
-		}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(u)
+			// SetURL points Host at the upstream; keep the inbound Host, as
+			// NewSingleHostReverseProxy did.
+			r.Out.Host = r.In.Host
+			r.Out.URL.Path = strings.TrimPrefix(r.Out.URL.Path, "/api/v1")
+			if r.Out.URL.Path == "" {
+				r.Out.URL.Path = "/"
+			}
+			// Rewrite has already dropped the client's Forwarded and
+			// X-Forwarded-* headers; forward the client IP the handler resolved.
+			r.Out.Header.Set("X-Forwarded-For", r.In.Header.Get("X-Forwarded-For"))
+		},
+		// Wrap the transport so the outbound request to the downstream service
+		// is a client span and the W3C traceparent header is injected
+		// automatically. Combined with otelgin on the downstream, gateway ->
+		// service -> store shows up as a single distributed trace.
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Error("upstream unavailable",
@@ -68,6 +70,11 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 		if rid := c.GetString(middleware.CtxRequestID); rid != "" {
 			c.Request.Header.Set(middleware.HeaderRequestID, rid)
 		}
+		// The same goes for the client address: forward the IP resolved
+		// against TRUSTED_PROXIES (see server.NewEngine), never the
+		// client's own X-Forwarded-For / X-Real-IP.
+		c.Request.Header.Del("X-Real-IP")
+		c.Request.Header.Set("X-Forwarded-For", c.ClientIP())
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }
