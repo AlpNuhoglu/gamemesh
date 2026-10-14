@@ -7,13 +7,17 @@
 # tools; binding them to 0.0.0.0 would expose the dev databases and the
 # unauthenticated internal APIs (e.g. presence) to the whole LAN.
 
+# One definition for the Redis password: the server's --requirepass, its
+# healthcheck and every client below all read this value.
+x-redis-password: &redis-password ${REDIS_PASSWORD:-gamemesh-dev-redis-password}
+
 x-service-env: &service-env
   APP_ENV: ${APP_ENV:-development}
   JWT_SECRET: ${JWT_SECRET:-insecure-dev-secret-do-not-use-in-prod}
   JWT_EXPIRY: ${JWT_EXPIRY:-24h}
   JWT_ISSUER: ${JWT_ISSUER:-gamemesh}
   REDIS_ADDR: redis:6379
-  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_PASSWORD: *redis-password
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
   # Empty = trust no proxy's X-Forwarded-For; the gateway is the edge here.
   TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
@@ -54,10 +58,17 @@ services:
 
   redis:
     image: redis:7-alpine
+    # The first argument must stay redis-server: the image's entrypoint only
+    # drops root for that command.
+    command: ["redis-server", "--requirepass", *redis-password]
+    environment:
+      # redis-cli inside the container (healthcheck, `docker compose exec
+      # redis redis-cli ...`) authenticates with this.
+      REDISCLI_AUTH: *redis-password
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
