@@ -1,6 +1,11 @@
 # GameMesh full local stack: `docker compose up --build` starts everything.
 # Secrets come from .env (copy .env.example); every variable has a dev
 # default so the stack also boots with no .env present.
+#
+# Published ports bind to 127.0.0.1 only. Containers reach each other by
+# service name on the compose network, so host ports exist only for local
+# tools; binding them to 0.0.0.0 would expose the dev databases and the
+# unauthenticated internal APIs (e.g. presence) to the whole LAN.
 
 x-service-env: &service-env
   APP_ENV: ${APP_ENV:-development}
@@ -35,7 +40,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gamemesh-dev-password}
       POSTGRES_DB: ${POSTGRES_DB:-gamemesh}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Schema + seed run automatically on first boot.
@@ -50,7 +55,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -66,8 +71,8 @@ services:
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4222:4222" # client
-      - "8222:8222" # monitoring
+      - "127.0.0.1:4222:4222" # client
+      - "127.0.0.1:8222:8222" # monitoring
     volumes:
       - natsdata:/data
     healthcheck:
@@ -90,7 +95,7 @@ services:
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-50}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-100}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       player:
         condition: service_healthy
@@ -180,7 +185,7 @@ services:
       PRESENCE_SERVICE_URL: http://presence:8086
       PRESENCE_HEARTBEAT_INTERVAL: ${PRESENCE_HEARTBEAT_INTERVAL:-15s}
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     depends_on:
       redis:
         condition: service_healthy
@@ -205,7 +210,7 @@ services:
       PRESENCE_TTL: ${PRESENCE_TTL:-45s}
       PRESENCE_HEARTBEAT_INTERVAL: ${PRESENCE_HEARTBEAT_INTERVAL:-15s}
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     depends_on:
       redis:
         condition: service_healthy
@@ -255,7 +260,7 @@ services:
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "16686:16686" # Jaeger UI
+      - "127.0.0.1:16686:16686" # Jaeger UI
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:16686/"]
       interval: 5s
@@ -272,8 +277,8 @@ services:
     volumes:
       - ./config/otel/collector.yaml:/etc/otel/collector.yaml:ro
     ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
     depends_on:
       jaeger:
         condition: service_healthy
@@ -283,7 +288,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       # Mount the whole dir so prometheus.yml and alerts.yml are both available.
       - ./config/prometheus:/etc/prometheus:ro
@@ -296,7 +301,7 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
