@@ -27,6 +27,13 @@ func NewEngine(cfg *config.Config, log *zap.Logger, m *metrics.Metrics) *gin.Eng
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
+	// gin trusts every proxy by default, so ClientIP() returns whatever the
+	// client wrote into X-Forwarded-For / X-Real-IP — and the per-IP rate
+	// limiter and access logs key on it. Trust only the configured proxies.
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		log.Fatal("invalid TRUSTED_PROXIES",
+			zap.Strings("trusted_proxies", cfg.TrustedProxies), zap.Error(err))
+	}
 	r.Use(
 		gin.Recovery(),
 		middleware.RequestID(),

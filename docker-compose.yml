@@ -10,6 +10,8 @@ x-service-env: &service-env
   REDIS_ADDR: redis:6379
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+  # Empty = trust no proxy's X-Forwarded-For; the gateway is the edge here.
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
   # Event transport. Redis stays the system of record (sessions, queue,
   # leaderboard, room cache); NATS JetStream carries inter-service events with
   # durability, replay and at-least-once delivery. Set EVENT_BUS=redis to fall

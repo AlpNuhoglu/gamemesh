@@ -63,6 +63,13 @@ type Config struct {
 	RateLimitRPS   float64
 	RateLimitBurst int
 
+	// TrustedProxies lists the proxies (IPs or CIDRs) whose X-Forwarded-For /
+	// X-Real-IP headers are believed when resolving the client IP that rate
+	// limiting and access logs key on. Empty (the default) trusts no proxy, so
+	// the peer address is the client. Behind an ingress, set it to the ingress
+	// pods' range (k3s: 10.42.0.0/16), or every client shares one IP.
+	TrustedProxies []string
+
 	AllowedOrigins []string
 
 	MatchInterval    time.Duration
@@ -152,6 +159,8 @@ func Load(serviceName string) *Config {
 
 		RateLimitRPS:   getEnvFloat("RATE_LIMIT_RPS", 50),
 		RateLimitBurst: getEnvInt("RATE_LIMIT_BURST", 100),
+
+		TrustedProxies: splitCSV(getEnv("TRUSTED_PROXIES", "")),
 
 		AllowedOrigins: splitCSV(getEnv("ALLOWED_ORIGINS", "*")),
 
