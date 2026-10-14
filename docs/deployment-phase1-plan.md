@@ -89,7 +89,7 @@ Her adım şu yapıda:
 
 ### A2a. Yerel geliştirme ortamının hijyeni *(incelemeden eklendi)*
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. **Compose'da portları sadece localhost'a bağlamak (M2):** `"5432:5432"` →
      `"127.0.0.1:5432:5432"`. Aynısı Redis (6379), NATS (4222/8222), Prometheus (9090),
      Grafana (3000), Jaeger (16686) ve OTel (4317/4318) için de geçerli. Gateway (8080)
@@ -129,6 +129,30 @@ Her adım şu yapıda:
   `0.0.0.0` bağlamanın anlamı.
 - **Bitti sayılır:** `lsof -nP -iTCP:5432 -sTCP:LISTEN` çıktısında `127.0.0.1:5432`
   görünüyor; LAN IP'si üzerinden bağlantı reddediliyor; stack hâlâ healthy.
+- **Sonuç (2026-10-14):** Beş madde de yapıldı.
+  1. 12 port `127.0.0.1`'e bağlandı (presence ve websocket dahil). Dinleyiciler 12/12
+     `*:` → 12/12 `127.0.0.1:`; ev ağında (192.168.1.73) LAN'dan erişim 12/12 → 0/12.
+     `localhost` çalışmaya devam ediyor (curl ve nc önce `::1`'i deniyor, reddedilince
+     `127.0.0.1`'e düşüyor); README'deki presence `curl`'ü 200.
+  2. Redis'e şifre: tek bir anchor (`x-redis-password`) sunucuyu, healthcheck'i
+     (`REDISCLI_AUTH`) ve 7 istemciyi besliyor. Şifresiz `PING`/`CONFIG` `+PONG` →
+     `-NOAUTH`. Redis kullanan her servis API'si üzerinden denendi (oturum, leaderboard,
+     kuyruk, presence, WS); loglarda auth hatası 0. `redis-server` hâlâ `redis`
+     kullanıcısıyla çalışıyor.
+  3. `.env`: değerlerin hiçbiri özelleştirilmemişti. `.env.bak` (600) yedeği alındıktan
+     sonra örnekten yeniden kopyalandı: 25/39 → 39/39 anahtar, izin 644 → 600; compose
+     sonucu değişmedi (yeniden oluşturulan container 0). Not: eksik anahtar sayısı
+     yeniden ölçülünce 13 çıktı (+ PR #16'da eklenen `TRUSTED_PROXIES`); plandaki 15
+     muhtemelen farklı bir sayımdı.
+  4. Yorum: gateway imajı 40,5 MB (binary 31,7 + Alpine 8,8).
+  5. Karar: 14 serviste `restart: unless-stopped`. Ölçüldü: kendi kendine çıkan
+     gateway 0,22 sn'de geri geldi; OOM kill (137, `OOMKilled=true`) ve `exit 3`
+     yeniden başlatıldı (ikiye katlanan backoff: +0 +0 +0 +1 +2 +3 +7 +13 sn);
+     `docker stop` ve `docker kill` container'ı durdurulmuş bıraktı. Gerekçe: iki günde
+     stack üç kez geri gelmedi (4 container OOM; iki Docker Desktop kapanışından sonra
+     6 sa ve 11 sa kapalı kaldı). Not: Docker healthcheck'i "unhealthy" container'ı
+     **yeniden başlatmaz**, sadece process çıkınca devreye girer; k8s'te bu iş liveness
+     probe'unun (A7).
 
 ### A3. Health endpoint'lerini ayır: liveness ≠ readiness
 
@@ -216,9 +240,10 @@ Her adım şu yapıda:
   6. **Doğrulanması gereken (M4):** Matchmaking döngüsü kuyruktan oyuncu alıp oda
      oluştururken yarıda kesilirse ne oluyor? İşlemin atomik olup olmadığı kodda
      doğrulanmadı.
-  7. **Gözlem (2026-10-13, incelenmedi):** Docker Desktop kapanırken 14 container'dan
-     yalnızca NATS **exit 1** ile çıktı, diğerleri 0. JetStream'in temiz kapanıp
-     kapanmadığı ve k8s'te bunun bir etkisi olup olmadığı incelenmeli.
+  7. **Gözlem (2026-10-13/14, incelenmedi):** Docker Desktop kapanırken 14 container'dan
+     yalnızca NATS **exit 1** ile çıktı, diğerleri 0; üç kapanışın üçünde de (3/3)
+     tekrarlandı. JetStream'in temiz kapanıp kapanmadığı ve k8s'te bunun bir etkisi
+     olup olmadığı incelenmeli.
 - **Neden:**
   - Ölçüm (M4, 2026-10-11): Websocket container'ı durdurulduğunda sunucu 0,19 sn'de exit 0
     ile kapandı, ama bağlı istemci **1006 (Abnormal Closure)** aldı. Her deploy'da o
@@ -543,6 +568,11 @@ Her adım şu yapıda:
      commit'te var; private key, GitHub token ya da AWS anahtarı deseni **0**.
   3. **Prod secret'ları:** `openssl rand -hex 32` ile üretilecek. Grafana admin şifresi
      manifest'te düz bir env değişkeni; monitoring prod'a taşındığında Secret'a alınmalı.
+  4. **k8s'te Redis'e şifre (Bulgu #56):** Manifest'lerde `requirepass` ya da
+     `REDIS_PASSWORD` yok ve Faz 1'de NetworkPolicy de yok; cluster'daki herhangi bir
+     pod (ele geçirilmiş biri de) Redis'e tam erişir. Compose'daki gibi
+     (`redis-server --requirepass`, A2a) şifre prod Secret'ından gelmeli; servisler
+     `REDIS_PASSWORD`'ü zaten okuyor.
 
 ### A10. Prova: yerel k3s (k3d) üzerinde prod'a en yakın deploy
 
@@ -907,13 +937,13 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | # | Bulgu | Kaynak | Kanıt | Adım |
 |---|---|---|---|---|
 | 1 | `.dockerignore` yok; `.env` ve `.git` build aşamasına giriyor | M1 | Ölçüldü | A2 (çözüldü) |
-| 2 | Dockerfile yorumu "~15 MB" diyor; gerçek 40–45 MB | M1 | Ölçüldü | A2a |
+| 2 | Dockerfile yorumu "~15 MB" diyor; gerçek 40–45 MB | M1 | Ölçüldü | A2a (çözüldü) |
 | 3 | Go 1.25 desteklenmiyor; Alpine 3.20 destek süresi doğrulanmalı | M1, M7 | Kod / sürüm | A4 |
 | 4 | Go sürümleri her yerde farklı (1.25 / 1.26 / 1.27) | M7 | Ölçüldü | A4 |
 | 5 | `USER app` sayısal değil (`runAsNonRoot` doğrulayamaz) | M1 | Kod | A4 |
-| 6 | Portlar `0.0.0.0`'a bağlı; LAN'dan Postgres'e ve şifresiz Redis'e erişilebiliyor | M2 | Ölçüldü | A2a |
-| 7 | Compose'da `restart:` politikası yok | M2 | Ölçüldü | A2a |
-| 8 | `.env` eski (15 anahtar eksik), izinleri 644 | M8 | Ölçüldü | A2a |
+| 6 | Portlar `0.0.0.0`'a bağlı; LAN'dan Postgres'e ve şifresiz Redis'e erişilebiliyor | M2 | Ölçüldü | A2a (çözüldü) |
+| 7 | Compose'da `restart:` politikası yok | M2 | Ölçüldü | A2a (çözüldü: `unless-stopped`) |
+| 8 | `.env` eski (15 anahtar eksik), izinleri 644 | M8 | Ölçüldü | A2a (çözüldü) |
 | 9 | Healthcheck "healthy" derken istekler 500 dönüyor (shallow) | M2, M3 | Ölçüldü | A3 |
 | 10 | Liveness ve readiness aynı endpoint'i kullanıyor | M3, M6 | Kod | A3, A7 |
 | 11 | Health ve metrics istekleri log, metrik ve trace üretiyor | M3 | Ölçüldü | A3 |
@@ -960,4 +990,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (çözüldü: sahte XFF ile 200×200 → 119×200/81×429); prod ayarı A8, doğrulama A10/B4 |
 | 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` (çözüldü) |
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
-| 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a |
+| 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
+| 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
