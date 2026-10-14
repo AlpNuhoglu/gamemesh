@@ -6,6 +6,11 @@
 # service name on the compose network, so host ports exist only for local
 # tools; binding them to 0.0.0.0 would expose the dev databases and the
 # unauthenticated internal APIs (e.g. presence) to the whole LAN.
+#
+# Every service uses `restart: unless-stopped`: the stack comes back after a
+# crash, an OOM kill or a Docker Desktop restart, while `docker compose stop`
+# still sticks. A crash loop stays visible as "Restarting" in `docker compose
+# ps` and as a rising RestartCount.
 
 # One definition for the Redis password: the server's --requirepass, its
 # healthcheck and every client below all read this value.
@@ -38,6 +43,7 @@ x-service-env: &service-env
 
 services:
   postgres:
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gamemesh}
@@ -57,6 +63,7 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     # The first argument must stay redis-server: the image's entrypoint only
     # drops root for that command.
@@ -79,6 +86,7 @@ services:
   # enabling replay and at-least-once redelivery. :8222 serves the monitoring
   # endpoint used for the healthcheck.
   nats:
+    restart: unless-stopped
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
@@ -93,6 +101,7 @@ services:
       retries: 10
 
   gateway:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.gateway
@@ -123,6 +132,7 @@ services:
       retries: 10
 
   player:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.player
@@ -143,6 +153,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
 
   matchmaking:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.matchmaking
@@ -167,6 +178,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8082/healthz"]
 
   leaderboard:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.leaderboard
@@ -185,6 +197,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8083/healthz"]
 
   websocket:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.websocket
@@ -212,6 +225,7 @@ services:
   # Redis with TTL-based self-healing and publishes presence transitions to NATS.
   # Stateless and horizontally scalable — all state is in Redis keyed by playerID.
   presence:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.presence
@@ -239,6 +253,7 @@ services:
   # dedicated process so it scales/restarts independently of the player API and
   # keeps the player service free of any NATS dependency.
   outbox-relay:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.outbox-relay
@@ -267,6 +282,7 @@ services:
   # Jaeger all-in-one: receives OTLP directly (v1.35+) and serves the trace UI
   # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.
   jaeger:
+    restart: unless-stopped
     image: jaegertracing/all-in-one:1.62.0
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -283,6 +299,7 @@ services:
   # Jaeger. Keeping the backend behind the collector means Jaeger can be swapped
   # for Tempo/Datadog by editing config/otel/collector.yaml — no service rebuilds.
   otel-collector:
+    restart: unless-stopped
     image: otel/opentelemetry-collector-contrib:0.111.0
     command: ["--config=/etc/otel/collector.yaml"]
     volumes:
@@ -295,6 +312,7 @@ services:
         condition: service_healthy
 
   prometheus:
+    restart: unless-stopped
     image: prom/prometheus:v2.54.1
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -307,6 +325,7 @@ services:
       - gateway
 
   grafana:
+    restart: unless-stopped
     image: grafana/grafana:11.2.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
