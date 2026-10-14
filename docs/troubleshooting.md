@@ -56,8 +56,9 @@ pings every 54s.
 - Ranks must be within `MATCH_RANK_WINDOW` (default 100) of an adjacent
   queued player.
 - The loop ticks every `MATCH_INTERVAL_SECONDS` (default 5) — wait one tick.
-- Inspect the queue directly:
-  `redis-cli zrange matchmaking:queue 0 -1 WITHSCORES`.
+- Inspect the queue directly (the container's redis-cli is already
+  authenticated):
+  `docker compose exec redis redis-cli zrange matchmaking:queue 0 -1 WITHSCORES`.
 - Tickets older than `MATCH_MAX_QUEUE_AGE` (default 5m) are evicted as
   presumed disconnects.
 

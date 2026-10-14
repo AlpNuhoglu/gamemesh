@@ -1,6 +1,20 @@
 # GameMesh full local stack: `docker compose up --build` starts everything.
 # Secrets come from .env (copy .env.example); every variable has a dev
 # default so the stack also boots with no .env present.
+#
+# Published ports bind to 127.0.0.1 only. Containers reach each other by
+# service name on the compose network, so host ports exist only for local
+# tools; binding them to 0.0.0.0 would expose the dev databases and the
+# unauthenticated internal APIs (e.g. presence) to the whole LAN.
+#
+# Every service uses `restart: unless-stopped`: the stack comes back after a
+# crash, an OOM kill or a Docker Desktop restart, while `docker compose stop`
+# still sticks. A crash loop stays visible as "Restarting" in `docker compose
+# ps` and as a rising RestartCount.
+
+# One definition for the Redis password: the server's --requirepass, its
+# healthcheck and every client below all read this value.
+x-redis-password: &redis-password ${REDIS_PASSWORD:-gamemesh-dev-redis-password}
 
 x-service-env: &service-env
   APP_ENV: ${APP_ENV:-development}
@@ -8,7 +22,7 @@ x-service-env: &service-env
   JWT_EXPIRY: ${JWT_EXPIRY:-24h}
   JWT_ISSUER: ${JWT_ISSUER:-gamemesh}
   REDIS_ADDR: redis:6379
-  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_PASSWORD: *redis-password
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
   # Empty = trust no proxy's X-Forwarded-For; the gateway is the edge here.
   TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
@@ -29,13 +43,14 @@ x-service-env: &service-env
 
 services:
   postgres:
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gamemesh}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gamemesh-dev-password}
       POSTGRES_DB: ${POSTGRES_DB:-gamemesh}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Schema + seed run automatically on first boot.
@@ -48,11 +63,19 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
+    # The first argument must stay redis-server: the image's entrypoint only
+    # drops root for that command.
+    command: ["redis-server", "--requirepass", *redis-password]
+    environment:
+      # redis-cli inside the container (healthcheck, `docker compose exec
+      # redis redis-cli ...`) authenticates with this.
+      REDISCLI_AUTH: *redis-password
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -63,11 +86,12 @@ services:
   # enabling replay and at-least-once redelivery. :8222 serves the monitoring
   # endpoint used for the healthcheck.
   nats:
+    restart: unless-stopped
     image: nats:2.10-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "4222:4222" # client
-      - "8222:8222" # monitoring
+      - "127.0.0.1:4222:4222" # client
+      - "127.0.0.1:8222:8222" # monitoring
     volumes:
       - natsdata:/data
     healthcheck:
@@ -77,6 +101,7 @@ services:
       retries: 10
 
   gateway:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.gateway
@@ -90,7 +115,7 @@ services:
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-50}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-100}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       player:
         condition: service_healthy
@@ -107,6 +132,7 @@ services:
       retries: 10
 
   player:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.player
@@ -127,6 +153,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
 
   matchmaking:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.matchmaking
@@ -151,6 +178,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8082/healthz"]
 
   leaderboard:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.leaderboard
@@ -169,6 +197,7 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:8083/healthz"]
 
   websocket:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.websocket
@@ -180,7 +209,7 @@ services:
       PRESENCE_SERVICE_URL: http://presence:8086
       PRESENCE_HEARTBEAT_INTERVAL: ${PRESENCE_HEARTBEAT_INTERVAL:-15s}
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     depends_on:
       redis:
         condition: service_healthy
@@ -196,6 +225,7 @@ services:
   # Redis with TTL-based self-healing and publishes presence transitions to NATS.
   # Stateless and horizontally scalable — all state is in Redis keyed by playerID.
   presence:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.presence
@@ -205,7 +235,7 @@ services:
       PRESENCE_TTL: ${PRESENCE_TTL:-45s}
       PRESENCE_HEARTBEAT_INTERVAL: ${PRESENCE_HEARTBEAT_INTERVAL:-15s}
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     depends_on:
       redis:
         condition: service_healthy
@@ -223,6 +253,7 @@ services:
   # dedicated process so it scales/restarts independently of the player API and
   # keeps the player service free of any NATS dependency.
   outbox-relay:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deployments/docker/Dockerfile.outbox-relay
@@ -251,11 +282,12 @@ services:
   # Jaeger all-in-one: receives OTLP directly (v1.35+) and serves the trace UI
   # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.
   jaeger:
+    restart: unless-stopped
     image: jaegertracing/all-in-one:1.62.0
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "16686:16686" # Jaeger UI
+      - "127.0.0.1:16686:16686" # Jaeger UI
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:16686/"]
       interval: 5s
@@ -267,23 +299,25 @@ services:
   # Jaeger. Keeping the backend behind the collector means Jaeger can be swapped
   # for Tempo/Datadog by editing config/otel/collector.yaml — no service rebuilds.
   otel-collector:
+    restart: unless-stopped
     image: otel/opentelemetry-collector-contrib:0.111.0
     command: ["--config=/etc/otel/collector.yaml"]
     volumes:
       - ./config/otel/collector.yaml:/etc/otel/collector.yaml:ro
     ports:
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
     depends_on:
       jaeger:
         condition: service_healthy
 
   prometheus:
+    restart: unless-stopped
     image: prom/prometheus:v2.54.1
     command:
       - --config.file=/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       # Mount the whole dir so prometheus.yml and alerts.yml are both available.
       - ./config/prometheus:/etc/prometheus:ro
@@ -291,12 +325,13 @@ services:
       - gateway
 
   grafana:
+    restart: unless-stopped
     image: grafana/grafana:11.2.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
