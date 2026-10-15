@@ -101,5 +101,15 @@ be sent as an `Authorization: Bearer` header (non-browser clients).
 
 ## Operational endpoints (every service)
 
-- `GET /healthz` → `{ "status": "ok", "service": "<name>" }`
+Internal only: never route these from the internet.
+
+- `GET /livez` → liveness: the process serves and its background loops are
+  alive. No dependency checks, so a database outage never restarts the pod.
+  `200 { "status": "ok", "service": "<name>" }` or `503` with the failing
+  check under `checks`.
+- `GET /readyz` → readiness: the service's own required dependencies answer
+  within 1 s. `503 { "status": "unavailable", "service": "<name>",
+  "checks": { "redis": "<error>" } }` takes the pod out of rotation without
+  restarting it.
+- `GET /healthz` → alias of `/livez`, kept for existing callers.
 - `GET /metrics` → Prometheus exposition format
