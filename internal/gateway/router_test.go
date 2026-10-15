@@ -213,6 +213,20 @@ func TestWebSocketUpgradeIsProxied(t *testing.T) {
 	assert.Equal(t, "ping", string(msg))
 }
 
+func TestPublicHealthShowsOnlyStatusAndVersion(t *testing.T) {
+	t.Setenv("SERVICE_VERSION", "abc1234")
+	gw, _ := newGatewayUnderTest(t, newEchoUpstream(t).URL)
+
+	resp, err := http.Get(gw.URL + "/health")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"status":"ok","version":"abc1234"}`, string(body))
+}
+
 func TestUpstreamDownReturns502(t *testing.T) {
 	// Point every route at a port nothing listens on.
 	gw, _ := newGatewayUnderTest(t, "http://127.0.0.1:1")

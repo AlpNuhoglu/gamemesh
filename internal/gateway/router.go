@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
@@ -23,6 +25,13 @@ func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager
 	wsProxy := newProxy(cfg.WebsocketServiceURL, log)
 
 	authRequired := middleware.Auth(tokens, sessions)
+
+	// Public health check for the outside world (api.<domain>/health): only the
+	// status and the running version, never dependency details. Internal
+	// probes use /livez and /readyz, which must not be routed from outside.
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": cfg.ServiceVersion})
+	})
 
 	v1 := r.Group("/api/v1")
 
