@@ -125,8 +125,12 @@ services:
         condition: service_healthy
       websocket:
         condition: service_healthy
+    # App healthchecks hit /readyz, so `docker compose ps` shows a service
+    # whose dependency is down as unhealthy and depends_on waits for real
+    # readiness. Docker never restarts an unhealthy container; only k8s
+    # liveness (/livez) does that.
     healthcheck: &svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -150,7 +154,7 @@ services:
         condition: service_started
     healthcheck:
       <<: *svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/readyz"]
 
   matchmaking:
     restart: unless-stopped
@@ -175,7 +179,7 @@ services:
         condition: service_started
     healthcheck:
       <<: *svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8082/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/readyz"]
 
   leaderboard:
     restart: unless-stopped
@@ -194,7 +198,7 @@ services:
         condition: service_started
     healthcheck:
       <<: *svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8083/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/readyz"]
 
   websocket:
     restart: unless-stopped
@@ -219,7 +223,7 @@ services:
         condition: service_started
     healthcheck:
       <<: *svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/readyz"]
 
   # Presence Service: tracks player presence (online/in-queue/in-match/away) in
   # Redis with TTL-based self-healing and publishes presence transitions to NATS.
@@ -245,7 +249,7 @@ services:
         condition: service_started
     healthcheck:
       <<: *svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8086/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8086/readyz"]
 
   # Transactional outbox relay: the publish side of the outbox pattern. It polls
   # outbox_events (written by the player service in the same Postgres transaction
@@ -277,7 +281,7 @@ services:
         condition: service_started
     healthcheck:
       <<: *svc-healthcheck
-      test: ["CMD", "wget", "-qO-", "http://localhost:8085/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/readyz"]
 
   # Jaeger all-in-one: receives OTLP directly (v1.35+) and serves the trace UI
   # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.

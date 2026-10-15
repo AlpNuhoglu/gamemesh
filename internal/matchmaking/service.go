@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/health"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
@@ -18,6 +19,9 @@ type Config struct {
 	RankWindow  int
 	BatchSize   int64
 	MaxQueueAge time.Duration
+	// Heartbeat, when set, is beaten after every match tick (failed or not)
+	// so /livez can tell a stuck loop from a quiet one.
+	Heartbeat *health.Heartbeat
 }
 
 // Service orchestrates the queue, the pairing algorithm and room creation.
@@ -84,6 +88,7 @@ func (s *Service) RunMatchLoop(ctx context.Context, interval time.Duration) {
 			if _, err := s.MatchOnce(ctx); err != nil {
 				s.log.Error("match tick failed", zap.Error(err))
 			}
+			s.cfg.Heartbeat.Beat()
 		}
 	}
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -36,6 +38,81 @@ func TestNewEngineHealthAndMetrics(t *testing.T) {
 	engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "go_goroutines")
+}
+
+func TestHealthEndpointsWithoutChecks(t *testing.T) {
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-health"))
+	for _, path := range []string{"/livez", "/readyz", "/healthz"} {
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		assert.Equal(t, http.StatusOK, w.Code, path)
+		assert.JSONEq(t, `{"status":"ok","service":"testsvc"}`, w.Body.String(), path)
+	}
+}
+
+// probe returns the status code of each path and the body of the last one.
+func probe(engine *gin.Engine, paths ...string) (map[string]int, string) {
+	codes := make(map[string]int, len(paths))
+	var body string
+	for _, path := range paths {
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		codes[path], body = w.Code, w.Body.String()
+	}
+	return codes, body
+}
+
+// A failing dependency takes the pod out of rotation (/readyz 503) but must
+// not get it restarted (/livez and /healthz stay 200).
+func TestFailingReadinessKeepsLiveness(t *testing.T) {
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-ready"),
+		WithReadiness("redis", func(context.Context) error { return errors.New("dial tcp: connection refused") }),
+		WithReadiness("postgres", func(context.Context) error { return nil }))
+
+	codes, body := probe(engine, "/livez", "/healthz", "/readyz")
+	assert.Equal(t, map[string]int{"/livez": 200, "/healthz": 200, "/readyz": 503}, codes)
+	assert.JSONEq(t, `{"status":"unavailable","service":"testsvc",
+		"checks":{"redis":"dial tcp: connection refused","postgres":"ok"}}`, body)
+}
+
+func TestFailingLivenessFailsLivez(t *testing.T) {
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-live"),
+		WithLiveness("match-loop", func(context.Context) error { return errors.New("no heartbeat for 45s") }))
+
+	codes, _ := probe(engine, "/readyz", "/healthz", "/livez")
+	assert.Equal(t, map[string]int{"/readyz": 200, "/healthz": 503, "/livez": 503}, codes)
+}
+
+// A check that ignores its context must not hang the probe.
+func TestHealthCheckTimesOut(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-stuck"),
+		WithReadiness("stuck", func(context.Context) error { <-block; return nil }))
+
+	start := time.Now()
+	codes, body := probe(engine, "/readyz")
+	assert.Less(t, time.Since(start), 2*checkTimeout)
+	assert.Equal(t, http.StatusServiceUnavailable, codes["/readyz"])
+	assert.Contains(t, body, `"stuck":"timed out after 1s"`)
+}
+
+// Checks run concurrently: two that each take most of the shared budget
+// still both pass.
+func TestHealthChecksRunConcurrently(t *testing.T) {
+	slow := func(ctx context.Context) error {
+		select {
+		case <-time.After(600 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-parallel"),
+		WithReadiness("a", slow), WithReadiness("b", slow))
+
+	codes, _ := probe(engine, "/readyz")
+	assert.Equal(t, http.StatusOK, codes["/readyz"])
 }
 
 // TestHTTPTracePropagation asserts that trace context survives the
@@ -167,4 +244,23 @@ func TestShutdownContext(t *testing.T) {
 		t.Fatal("context must not be cancelled before a signal")
 	default:
 	}
+}
+
+// TestProbesAreNotTraced: probes and /metrics scrapes produced a trace per
+// request (hundreds every 10 minutes for one service); only real work should.
+func TestProbesAreNotTraced(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr)))
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-traces"))
+	engine.GET("/work", func(c *gin.Context) { c.Status(http.StatusOK) })
+	for _, p := range []string{"/livez", "/readyz", "/healthz", "/metrics", "/work"} {
+		engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, p, nil))
+	}
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	assert.Contains(t, spans[0].Name(), "/work")
 }

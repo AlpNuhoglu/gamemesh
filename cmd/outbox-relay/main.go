@@ -17,6 +17,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/internal/outbox"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/health"
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
@@ -53,6 +54,10 @@ func main() {
 	if err := tracing.InstrumentGorm(db); err != nil {
 		log.Fatal("failed to instrument gorm", zap.Error(err))
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("failed to get sql.DB", zap.Error(err))
+	}
 
 	m := metrics.New(cfg.ServiceName)
 
@@ -69,11 +74,13 @@ func main() {
 	defer func() { _ = bus.Close() }()
 
 	store := outbox.NewStore(db)
+	relayBeat := health.NewHeartbeat()
 	relay := outbox.NewRelay(store, bus, outbox.RelayConfig{
 		BatchSize:    cfg.OutboxBatchSize,
 		PollInterval: cfg.OutboxPollInterval,
 		Workers:      cfg.OutboxWorkers,
 		MaxAttempts:  cfg.OutboxMaxAttempts,
+		Heartbeat:    relayBeat,
 	}, m, log)
 
 	ctx, stop := server.ShutdownContext()
@@ -89,9 +96,17 @@ func main() {
 		}()
 	}
 
-	// Serve /metrics (and /healthz via the shared engine) so Prometheus can scrape
-	// the relay and Compose/K8s health checks work like every other service.
-	engine := server.NewEngine(cfg, log, m)
+	// Serve /metrics and the health endpoints like every other service. The
+	// relay takes no client traffic, so readiness only gates rollouts: a
+	// version that cannot reach Postgres or NATS never becomes ready.
+	opts := []server.Option{
+		server.WithReadiness("postgres", sqlDB.PingContext),
+		server.WithReadiness("nats", bus.Ping),
+	}
+	if cfg.OutboxEnabled { // an idle relay never beats
+		opts = append(opts, server.WithLiveness("relay-loop", relayBeat.Check(health.StallAfter(cfg.OutboxPollInterval))))
+	}
+	engine := server.NewEngine(cfg, log, m, opts...)
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
 		log.Fatal("server exited", zap.Error(err))
 	}

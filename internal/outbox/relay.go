@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/health"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
@@ -41,6 +42,9 @@ type RelayConfig struct {
 	// reach this count, so a poison row stops being retried forever. 0 disables
 	// dead-lettering and rows retry indefinitely (the original behaviour).
 	MaxAttempts int
+	// Heartbeat, when set, is beaten after every poll (failed or not) so
+	// /livez can tell a stuck relay from an idle one.
+	Heartbeat *health.Heartbeat
 }
 
 func (c RelayConfig) withDefaults() RelayConfig {
@@ -100,6 +104,7 @@ func (r *Relay) Run(ctx context.Context) error {
 			r.log.Warn("outbox poll failed", zap.Error(err))
 		}
 		r.updatePendingGauge(ctx)
+		r.cfg.Heartbeat.Beat()
 
 		// Busy-loop while draining a backlog; otherwise wait a tick.
 		if n >= r.cfg.BatchSize {

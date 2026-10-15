@@ -33,6 +33,20 @@ const (
 	HeaderUserID    = "X-User-ID"
 )
 
+// internalProbePaths are polled by the kubelet and Prometheus, never by users.
+var internalProbePaths = map[string]struct{}{
+	"/livez": {}, "/readyz": {}, "/healthz": {}, "/metrics": {},
+}
+
+// IsTelemetryExcluded reports whether requests to path stay out of request
+// metrics and traces, and out of access logs while they succeed: the internal
+// probes plus the public /health smoke check. At probe rates they would
+// dominate all three and skew request rates and latency percentiles.
+func IsTelemetryExcluded(path string) bool {
+	_, probe := internalProbePaths[path]
+	return probe || path == "/health"
+}
+
 // RequestID ensures every request carries an ID, generating one when absent.
 // Downstream services receive it via the X-Request-ID header so a single
 // request can be traced across service boundaries.
@@ -62,6 +76,12 @@ func Logger(log *zap.Logger, slowThreshold time.Duration) gin.HandlerFunc {
 		start := time.Now()
 		c.Next()
 		latency := time.Since(start)
+
+		// Successful probes are noise; a failing one is logged, because its
+		// body (which dependency failed) appears nowhere else.
+		if IsTelemetryExcluded(c.Request.URL.Path) && c.Writer.Status() < http.StatusBadRequest {
+			return
+		}
 
 		// Pre-allocate to the worst-case field count (6 base + user_id + 2 trace
 		// + error) so the appends below never grow/realloc the backing array.
@@ -107,6 +127,10 @@ func Logger(log *zap.Logger, slowThreshold time.Duration) gin.HandlerFunc {
 // label cardinality bounded.
 func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if IsTelemetryExcluded(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
 		start := time.Now()
 		c.Next()
 
@@ -193,6 +217,7 @@ func (l *ipLimiter) janitor() {
 }
 
 // RateLimit rejects clients exceeding rps (with the given burst) per IP.
+// Internal probe paths are exempt.
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	l := &ipLimiter{
 		limiters: make(map[string]*ipEntry),
@@ -202,6 +227,13 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	go l.janitor()
 
 	return func(c *gin.Context) {
+		// Probes and scrapes are never throttled, whatever order the routes
+		// were registered in: a 429 on /readyz would take a healthy pod out of
+		// rotation. The public /health is limited like any other route.
+		if _, probe := internalProbePaths[c.Request.URL.Path]; probe {
+			c.Next()
+			return
+		}
 		if !l.get(c.ClientIP()).Allow() {
 			httpx.Error(c, http.StatusTooManyRequests, "rate limit exceeded")
 			return

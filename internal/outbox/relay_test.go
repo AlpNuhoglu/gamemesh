@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/health"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
@@ -284,4 +286,34 @@ func setupRelayTracing(t *testing.T) *tracetest.SpanRecorder {
 		otel.SetTextMapPropagator(prevProp)
 	})
 	return rec
+}
+
+// failingBatcher models an unreachable database: every poll fails.
+type failingBatcher struct{}
+
+func (failingBatcher) RunBatch(context.Context, int, int, PublishFunc) (int, int, error) {
+	return 0, 0, errors.New("postgres down")
+}
+
+func (failingBatcher) CountPending(context.Context) (int64, error) {
+	return 0, errors.New("postgres down")
+}
+
+// TestRelayBeatsEvenWhenPollsFail mirrors the match loop: with every poll
+// failing, the heartbeat still stays fresh.
+func TestRelayBeatsEvenWhenPollsFail(t *testing.T) {
+	hb := health.NewHeartbeat()
+	relay := NewRelay(failingBatcher{}, &capturingPublisher{},
+		RelayConfig{BatchSize: 10, PollInterval: 5 * time.Millisecond, Heartbeat: hb}, nil, zap.NewNop())
+
+	fresh := hb.Check(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // let the initial beat go stale
+	require.Error(t, fresh(context.Background()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = relay.Run(ctx) }()
+
+	assert.Eventually(t, func() bool { return fresh(context.Background()) == nil },
+		time.Second, 5*time.Millisecond, "the relay beats although its polls fail")
 }

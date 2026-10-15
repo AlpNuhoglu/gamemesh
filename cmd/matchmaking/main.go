@@ -11,6 +11,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/health"
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
@@ -59,6 +60,7 @@ func main() {
 		log.Fatal("failed to init event bus", zap.Error(err))
 	}
 	defer func() { _ = bus.Close() }()
+	loopBeat := health.NewHeartbeat()
 	svc := matchmaking.NewService(
 		matchmaking.NewQueue(rdb),
 		matchmaking.NewRoomStore(rdb, cfg.RoomTTL),
@@ -67,6 +69,7 @@ func main() {
 			RankWindow:  cfg.MatchRankWindow,
 			BatchSize:   cfg.MatchBatchSize,
 			MaxQueueAge: cfg.MatchMaxQueueAge,
+			Heartbeat:   loopBeat,
 		},
 	)
 	handler := matchmaking.NewHandler(svc)
@@ -75,7 +78,11 @@ func main() {
 	defer stop()
 	go svc.RunMatchLoop(ctx, cfg.MatchInterval)
 
-	engine := server.NewEngine(cfg, log, m)
+	// NATS is not a readiness dependency: event publishing here is best effort
+	// and never fails a request.
+	engine := server.NewEngine(cfg, log, m,
+		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }),
+		server.WithLiveness("match-loop", loopBeat.Check(health.StallAfter(cfg.MatchInterval))))
 	handler.RegisterRoutes(engine)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {

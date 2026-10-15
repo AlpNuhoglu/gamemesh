@@ -1,6 +1,7 @@
 package events
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
@@ -17,6 +18,9 @@ import (
 type Bus interface {
 	Publisher
 	Subscriber
+	// Ping reports whether the transport can reach its broker right now. It
+	// backs the readiness check of services whose job is moving events.
+	Ping(ctx context.Context) error
 }
 
 // Config selects and configures the event transport. It deliberately carries

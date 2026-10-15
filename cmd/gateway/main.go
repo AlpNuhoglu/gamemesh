@@ -66,6 +66,11 @@ func main() {
 	}
 	sessions = store
 
+	// No readiness checks on purpose: Redis is only the session store, and
+	// without it protected routes fail closed per request (503) while public
+	// routes and /health keep working. Taking the gateway out of rotation would
+	// turn that partial outage into a total one. Downstream services are never
+	// readiness dependencies.
 	engine := server.NewEngine(cfg, log, m)
 	engine.Use(middleware.RateLimit(cfg.RateLimitRPS, cfg.RateLimitBurst))
 	gateway.RegisterRoutes(engine, cfg, tokens, sessions, log)

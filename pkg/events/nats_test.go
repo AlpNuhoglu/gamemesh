@@ -144,3 +144,27 @@ func TestNATSReplay(t *testing.T) {
 		t.Fatal("timed out waiting for replayed event")
 	}
 }
+
+// TestNATSPing backs the readiness check: a live connection answers, and a
+// lost server is reported within the probe's 1 s budget.
+func TestNATSPing(t *testing.T) {
+	srv, err := natsserver.NewServer(&natsserver.Options{
+		Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	go srv.Start()
+	require.True(t, srv.ReadyForConnections(5*time.Second))
+
+	bus, err := NewNATSBus(srv.ClientURL(), "test", 1, nil, zap.NewNop())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bus.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, bus.Ping(ctx))
+
+	srv.Shutdown()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	assert.Error(t, bus.Ping(ctx))
+}
