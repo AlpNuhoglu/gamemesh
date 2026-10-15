@@ -80,7 +80,10 @@ func main() {
 		}
 	}()
 
-	engine := server.NewEngine(cfg, log, m)
+	// Delivering events is this service's job, so the bus is its readiness
+	// dependency. Presence is another application service and never is.
+	engine := server.NewEngine(cfg, log, m,
+		server.WithReadiness(cfg.EventBus, bus.Ping))
 	handler.RegisterRoutes(engine)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {

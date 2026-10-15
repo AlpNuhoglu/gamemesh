@@ -364,6 +364,15 @@ func (b *NATSBus) process(ctx context.Context, topic string, handler Handler, ms
 	}
 }
 
+// Ping reports whether the NATS connection is up. The PING/PONG round trip
+// also catches a connection that died without the client noticing yet.
+func (b *NATSBus) Ping(ctx context.Context) error {
+	if !b.conn.IsConnected() {
+		return fmt.Errorf("nats: %s", b.conn.Status())
+	}
+	return b.conn.FlushWithContext(ctx)
+}
+
 // Close stops all consumers and drains the NATS connection. It is safe to call
 // once; the stop channel signals each consumer's drain goroutine to wind down.
 func (b *NATSBus) Close() error {

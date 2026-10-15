@@ -123,6 +123,11 @@ func (b *RedisBus) Subscribe(ctx context.Context, topics ...string) (<-chan Even
 	return out, nil
 }
 
+// Ping reports whether Redis answers.
+func (b *RedisBus) Ping(ctx context.Context) error {
+	return b.client.Ping(ctx).Err()
+}
+
 // Close terminates all active subscriptions.
 func (b *RedisBus) Close() error {
 	for _, ps := range b.subs {

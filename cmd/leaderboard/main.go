@@ -60,7 +60,10 @@ func main() {
 	svc := leaderboard.NewService(leaderboard.NewStore(rdb), bus, m, log)
 	handler := leaderboard.NewHandler(svc)
 
-	engine := server.NewEngine(cfg, log, m)
+	// NATS is not a readiness dependency: event publishing here is best effort
+	// and never fails a request.
+	engine := server.NewEngine(cfg, log, m,
+		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {

@@ -84,3 +84,12 @@ func TestRedisBusDropsMalformedMessages(t *testing.T) {
 		t.Fatal("timed out waiting for event")
 	}
 }
+
+func TestRedisBusPing(t *testing.T) {
+	mr := miniredis.RunT(t)
+	bus := NewRedisBus(redis.NewClient(&redis.Options{Addr: mr.Addr()}), zap.NewNop(), nil)
+	require.NoError(t, bus.Ping(context.Background()))
+
+	mr.Close()
+	assert.Error(t, bus.Ping(context.Background()))
+}

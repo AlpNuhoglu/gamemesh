@@ -52,6 +52,10 @@ func main() {
 	if err := tracing.InstrumentGorm(db); err != nil {
 		log.Fatal("failed to instrument gorm", zap.Error(err))
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("failed to get sql.DB", zap.Error(err))
+	}
 	// SQL migrations under /migrations are the source of truth; AutoMigrate
 	// is a dev convenience that keeps `docker compose up` zero-step.
 	if cfg.AutoMigrate {
@@ -80,7 +84,9 @@ func main() {
 	handler := player.NewHandler(svc)
 
 	m := metrics.New(cfg.ServiceName)
-	engine := server.NewEngine(cfg, log, m)
+	engine := server.NewEngine(cfg, log, m,
+		server.WithReadiness("postgres", sqlDB.PingContext),
+		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
