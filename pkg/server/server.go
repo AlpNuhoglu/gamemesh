@@ -6,8 +6,10 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -166,9 +168,17 @@ func runChecks(ctx context.Context, checks []namedCheck) (map[string]string, boo
 	return results, ok
 }
 
-// Run serves the engine until SIGINT/SIGTERM, then drains in-flight requests
-// for up to 15 seconds — required for zero-downtime rolling updates in K8s.
-func Run(engine *gin.Engine, port string, log *zap.Logger) error {
+// shutdownTimeout bounds the whole graceful shutdown of the HTTP server and
+// the shutdown hooks. With a 5 s preStop and a few seconds for background
+// workers it fits in Kubernetes' default 30 s termination grace period.
+var shutdownTimeout = 15 * time.Second
+
+// Run serves the engine until SIGINT/SIGTERM, then shuts down gracefully
+// within shutdownTimeout: it stops accepting connections and waits for
+// in-flight requests, and runs the hooks at the same time. Hooks are for what
+// http.Server.Shutdown does not track, such as hijacked WebSocket
+// connections; they must return once their context is done.
+func Run(engine *gin.Engine, port string, log *zap.Logger, hooks ...func(context.Context)) error {
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           engine,
@@ -190,10 +200,20 @@ func Run(engine *gin.Engine, port string, log *zap.Logger) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		log.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		log.Info("shutting down", zap.Duration("timeout", shutdownTimeout))
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		var hooksDone sync.WaitGroup
+		for _, hook := range hooks {
+			hooksDone.Go(func() { hook(shutdownCtx) })
+		}
+		err := srv.Shutdown(shutdownCtx)
+		hooksDone.Wait()
+		if err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		log.Info("http server stopped")
+		return nil
 	}
 }
 

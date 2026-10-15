@@ -3,8 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -227,6 +231,63 @@ func TestNewEngineFailsFastOnInvalidTrustedProxies(t *testing.T) {
 	// Fatal would exit the test binary; make it panic instead.
 	log := zap.NewNop().WithOptions(zap.WithFatalHook(zapcore.WriteThenPanic))
 	assert.Panics(t, func() { NewEngine(cfg, log, metrics.New("testsvc-badproxy")) })
+}
+
+// startRun runs Run on a free port and returns once it accepts connections,
+// so a signal sent afterwards is caught by Run instead of killing the test.
+func startRun(t *testing.T, engine *gin.Engine, hooks ...func(context.Context)) (addr string, done <-chan error) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+
+	ch := make(chan error, 1)
+	go func() { ch <- Run(engine, strconv.Itoa(port), zap.NewNop(), hooks...) }()
+	addr = "127.0.0.1:" + strconv.Itoa(port)
+	require.Eventually(t, func() bool {
+		c, err := net.Dial("tcp", addr)
+		if err == nil {
+			_ = c.Close()
+		}
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	return addr, ch
+}
+
+func TestRunRunsShutdownHooks(t *testing.T) {
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-hooks"))
+	hookRan := make(chan bool, 1)
+	_, done := startRun(t, engine, func(ctx context.Context) {
+		_, hasDeadline := ctx.Deadline()
+		hookRan <- hasDeadline
+	})
+
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
+	require.NoError(t, <-done)
+	assert.True(t, <-hookRan, "the hook gets the shutdown budget as its deadline")
+}
+
+// TestRunReportsShutdownTimeout: when in-flight work outlives the budget, Run
+// returns an error instead of exiting, so main's deferred cleanup still runs.
+func TestRunReportsShutdownTimeout(t *testing.T) {
+	prev := shutdownTimeout
+	shutdownTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { shutdownTimeout = prev })
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-timeout"))
+	engine.GET("/slow", func(*gin.Context) { <-release })
+	addr, done := startRun(t, engine)
+	go func() { _, _ = http.Get("http://" + addr + "/slow") }()
+	time.Sleep(100 * time.Millisecond) // let the request reach the handler
+
+	start := time.Now()
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
+	err := <-done
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(start), time.Second)
 }
 
 func TestRunFailsFastOnBadPort(t *testing.T) {
