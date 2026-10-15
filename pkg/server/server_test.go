@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -243,4 +244,23 @@ func TestShutdownContext(t *testing.T) {
 		t.Fatal("context must not be cancelled before a signal")
 	default:
 	}
+}
+
+// TestProbesAreNotTraced: probes and /metrics scrapes produced a trace per
+// request (hundreds every 10 minutes for one service); only real work should.
+func TestProbesAreNotTraced(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr)))
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	engine := NewEngine(config.Load("testsvc"), zap.NewNop(), metrics.New("testsvc-traces"))
+	engine.GET("/work", func(c *gin.Context) { c.Status(http.StatusOK) })
+	for _, p := range []string{"/livez", "/readyz", "/healthz", "/metrics", "/work"} {
+		engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, p, nil))
+	}
+
+	spans := sr.Ended()
+	require.Len(t, spans, 1)
+	assert.Contains(t, spans[0].Name(), "/work")
 }

@@ -243,3 +243,51 @@ func TestAuthMiddlewareRevocation(t *testing.T) {
 	// Store unavailable → fail closed (503), never let a possibly-revoked token through.
 	assert.Equal(t, http.StatusServiceUnavailable, run(stubSessions{err: errors.New("redis down")}))
 }
+
+// probeEngine serves the probe paths plus /test, with /readyz failing.
+func probeEngine(mw ...gin.HandlerFunc) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(mw...)
+	ok := func(c *gin.Context) { c.Status(http.StatusOK) }
+	for _, p := range []string{"/livez", "/healthz", "/metrics", "/health", "/test"} {
+		r.GET(p, ok)
+	}
+	r.GET("/readyz", func(c *gin.Context) { c.Status(http.StatusServiceUnavailable) })
+	return r
+}
+
+var probeAndWorkPaths = []string{"/livez", "/healthz", "/metrics", "/health", "/readyz", "/test"}
+
+// TestLoggerSkipsSuccessfulProbes: successful probes stay out of the access
+// log; a failing one is still logged, since its body names the broken
+// dependency and appears nowhere else.
+func TestLoggerSkipsSuccessfulProbes(t *testing.T) {
+	obs, logs := observer.New(zapcore.DebugLevel)
+	r := probeEngine(RequestID(), Logger(zap.New(obs), time.Second))
+	for _, p := range probeAndWorkPaths {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, p, nil))
+	}
+
+	var logged []string
+	for _, e := range logs.All() {
+		logged = append(logged, e.ContextMap()["path"].(string))
+	}
+	assert.Equal(t, []string{"/readyz", "/test"}, logged)
+}
+
+func TestMetricsSkipsProbes(t *testing.T) {
+	m := metrics.New("test-middleware-probes")
+	r := probeEngine(Metrics(m))
+	for _, p := range probeAndWorkPaths {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, p, nil))
+	}
+
+	w := httptest.NewRecorder()
+	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := w.Body.String()
+	assert.Contains(t, body, `path="/test"`)
+	for _, p := range probeAndWorkPaths[:5] {
+		assert.NotContains(t, body, `path="`+p+`"`, p)
+	}
+}

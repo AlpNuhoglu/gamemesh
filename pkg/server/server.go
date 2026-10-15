@@ -90,8 +90,10 @@ func NewEngine(cfg *config.Config, log *zap.Logger, m *metrics.Metrics, opts ...
 		// logger reads trace/span IDs). It extracts incoming W3C trace context,
 		// continuing a trace started upstream, and records a server span per
 		// request with http.method, http.route (low-cardinality template),
-		// status and latency.
-		otelgin.Middleware(cfg.OTelServiceName),
+		// status and latency. Probe and /metrics requests are not traced.
+		otelgin.Middleware(cfg.OTelServiceName, otelgin.WithFilter(func(r *http.Request) bool {
+			return !middleware.IsTelemetryExcluded(r.URL.Path)
+		})),
 		middleware.Logger(log, cfg.LogSlowRequestThreshold),
 		middleware.Metrics(m),
 		middleware.CORS(cfg.AllowedOrigins),
