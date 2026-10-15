@@ -217,6 +217,7 @@ func (l *ipLimiter) janitor() {
 }
 
 // RateLimit rejects clients exceeding rps (with the given burst) per IP.
+// Internal probe paths are exempt.
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	l := &ipLimiter{
 		limiters: make(map[string]*ipEntry),
@@ -226,6 +227,13 @@ func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	go l.janitor()
 
 	return func(c *gin.Context) {
+		// Probes and scrapes are never throttled, whatever order the routes
+		// were registered in: a 429 on /readyz would take a healthy pod out of
+		// rotation. The public /health is limited like any other route.
+		if _, probe := internalProbePaths[c.Request.URL.Path]; probe {
+			c.Next()
+			return
+		}
 		if !l.get(c.ClientIP()).Allow() {
 			httpx.Error(c, http.StatusTooManyRequests, "rate limit exceeded")
 			return

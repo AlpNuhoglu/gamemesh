@@ -291,3 +291,33 @@ func TestMetricsSkipsProbes(t *testing.T) {
 		assert.NotContains(t, body, `path="`+p+`"`, p)
 	}
 }
+
+// TestRateLimitExemptsInternalProbes: the exemption used to hold only because
+// the gateway registered /healthz and /metrics before installing the limiter
+// (gin fixes a route's middleware chain when the route is registered). Here
+// the probes are registered after RateLimit and must still never be
+// throttled, while the public /health is limited like any other route.
+func TestRateLimitExemptsInternalProbes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RateLimit(1, 1))
+	paths := []string{"/livez", "/readyz", "/healthz", "/metrics", "/health"}
+	for _, p := range paths {
+		r.GET(p, func(c *gin.Context) { c.Status(http.StatusOK) })
+	}
+
+	got := map[string][]int{}
+	for _, p := range paths {
+		for i := 0; i < 3; i++ {
+			req := httptest.NewRequest(http.MethodGet, p, nil)
+			req.RemoteAddr = "10.0.0.9:1234"
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			got[p] = append(got[p], w.Code)
+		}
+	}
+	for _, p := range paths[:4] {
+		assert.Equal(t, []int{200, 200, 200}, got[p], p)
+	}
+	assert.Equal(t, []int{200, 429, 429}, got["/health"])
+}
