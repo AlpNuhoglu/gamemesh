@@ -12,8 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
+	"github.com/alpnuhoglu/gamemesh/pkg/health"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
@@ -140,4 +143,29 @@ func TestGetRoomNotFound(t *testing.T) {
 	svc, _ := newTestService(t)
 	_, err := svc.GetRoom(context.Background(), "missing-room")
 	assert.ErrorIs(t, err, ErrRoomNotFound)
+}
+
+// TestMatchLoopBeatsEvenWhenTicksFail: liveness follows the loop, not its
+// dependencies. With Redis unreachable every tick fails, yet the heartbeat
+// stays fresh, so /livez never restarts the pod over a Redis outage.
+func TestMatchLoopBeatsEvenWhenTicksFail(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+	obs, logs := observer.New(zapcore.ErrorLevel)
+	hb := health.NewHeartbeat()
+	svc := NewService(NewQueue(rdb), NewRoomStore(rdb, time.Hour), &capturingPublisher{},
+		metrics.New("matchmaking-heartbeat-test"), zap.New(obs),
+		Config{RankWindow: 100, BatchSize: 1000, MaxQueueAge: time.Minute, Heartbeat: hb})
+
+	fresh := hb.Check(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // let the initial beat go stale
+	require.Error(t, fresh(context.Background()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go svc.RunMatchLoop(ctx, 5*time.Millisecond)
+
+	assert.Eventually(t, func() bool { return fresh(context.Background()) == nil },
+		time.Second, 5*time.Millisecond, "the loop beats although its ticks fail")
+	assert.NotZero(t, logs.FilterMessage("match tick failed").Len(), "ticks really did fail")
 }
