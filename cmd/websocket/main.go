@@ -86,7 +86,7 @@ func main() {
 		server.WithReadiness(cfg.EventBus, bus.Ping))
 	handler.RegisterRoutes(engine)
 
-	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
+	if err := server.Run(engine, cfg.HTTPPort, log, hub.CloseAll); err != nil {
 		log.Fatal("server exited", zap.Error(err))
 	}
 }

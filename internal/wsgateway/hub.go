@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
@@ -106,6 +107,57 @@ func (h *Hub) unregister(c *Client) {
 	for _, room := range left {
 		h.BroadcastToRoom(room, marshal(Message{Type: "PlayerLeft", Room: room, Data: playerData(c.playerID)}))
 	}
+}
+
+// CloseAll tells every connected client that the server is going away
+// (close code 1001, "server shutting down") and waits until they have
+// disconnected or ctx is done; connections still open then are closed
+// outright. It runs as a shutdown hook, because http.Server.Shutdown does
+// not track hijacked WebSocket connections and clients would otherwise see
+// 1006 (abnormal closure).
+func (h *Hub) CloseAll(ctx context.Context) {
+	h.mu.RLock()
+	clients := make([]*Client, 0, len(h.clients))
+	for c := range h.clients {
+		if c.conn != nil {
+			clients = append(clients, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(writeWait)
+	}
+	frame := websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutting down")
+	for _, c := range clients {
+		// WriteControl may run concurrently with the client's writePump.
+		_ = c.conn.WriteControl(websocket.CloseMessage, frame, deadline)
+	}
+
+	// Clients answer with their own close frame; readPump then unregisters
+	// them. Poll rather than use a WaitGroup, since a connection still being
+	// upgraded may register while we wait.
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for h.count() > 0 {
+		select {
+		case <-ctx.Done():
+			for _, c := range clients {
+				_ = c.conn.Close() // unblocks readPump, which unregisters
+			}
+			h.log.Warn("websocket clients closed forcibly", zap.Int("clients", len(clients)))
+			return
+		case <-tick.C:
+		}
+	}
+	h.log.Info("websocket clients closed", zap.Int("clients", len(clients)))
+}
+
+func (h *Hub) count() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
 }
 
 func (h *Hub) join(c *Client, room string) {
