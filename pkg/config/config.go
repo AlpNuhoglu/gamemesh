@@ -124,7 +124,7 @@ func Load(serviceName string) *Config {
 		HTTPPort:    getEnv("HTTP_PORT", defaultPort(serviceName)),
 
 		PostgresDSN: getEnv("POSTGRES_DSN",
-			"host=localhost user=gamemesh password=gamemesh-dev-password dbname=gamemesh port=5432 sslmode=disable"),
+			"host=localhost user=gamemesh password=gamemesh-dev-password dbname=gamemesh port=5432 sslmode=disable connect_timeout=5"),
 
 		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),

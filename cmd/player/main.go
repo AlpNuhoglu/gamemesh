@@ -5,11 +5,9 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"go.uber.org/zap"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/redis/go-redis/v9"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
+	"github.com/alpnuhoglu/gamemesh/pkg/database"
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
@@ -49,9 +48,7 @@ func run() int {
 	}, log)
 	defer func() { _ = shutdownTracing(context.Background()) }()
 
-	db, err := gorm.Open(postgres.Open(cfg.PostgresDSN), &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
-	})
+	db, err := database.Open(cfg.PostgresDSN, 30*time.Second, log)
 	if err != nil {
 		log.Fatal("failed to connect to postgres", zap.Error(err))
 	}
