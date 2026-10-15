@@ -325,3 +325,18 @@ func TestProbesAreNotTraced(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Contains(t, spans[0].Name(), "/work")
 }
+
+func TestWorkersWait(t *testing.T) {
+	var w Workers
+	w.Go(func() {})
+	w.Go(func() { time.Sleep(20 * time.Millisecond) })
+	assert.True(t, w.Wait(time.Second))
+
+	var stuck Workers
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	stuck.Go(func() { <-release })
+	start := time.Now()
+	assert.False(t, stuck.Wait(50*time.Millisecond))
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+}

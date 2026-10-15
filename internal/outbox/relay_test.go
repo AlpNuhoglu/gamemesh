@@ -317,3 +317,42 @@ func TestRelayBeatsEvenWhenPollsFail(t *testing.T) {
 	assert.Eventually(t, func() bool { return fresh(context.Background()) == nil },
 		time.Second, 5*time.Millisecond, "the relay beats although its polls fail")
 }
+
+// blockingBatcher holds its first batch until released, standing in for a
+// batch that is mid-flight when shutdown begins.
+type blockingBatcher struct {
+	started chan struct{}
+	release chan struct{}
+	ctxErr  chan error
+	once    sync.Once
+}
+
+func (b *blockingBatcher) RunBatch(ctx context.Context, _, _ int, _ PublishFunc) (int, int, error) {
+	first := false
+	b.once.Do(func() { first = true; close(b.started) })
+	if first {
+		<-b.release
+		b.ctxErr <- ctx.Err()
+	}
+	return 0, 0, nil
+}
+
+func (b *blockingBatcher) CountPending(context.Context) (int64, error) { return 0, nil }
+
+// TestRelayFinishesBatchOnShutdown: a batch in flight when shutdown begins
+// keeps a live context, so its rows get published and marked instead of
+// failing and being re-published after the restart.
+func TestRelayFinishesBatchOnShutdown(t *testing.T) {
+	b := &blockingBatcher{started: make(chan struct{}), release: make(chan struct{}), ctxErr: make(chan error, 1)}
+	relay := NewRelay(b, &capturingPublisher{}, RelayConfig{BatchSize: 10, PollInterval: 5 * time.Millisecond}, nil, zap.NewNop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { _ = relay.Run(ctx); close(stopped) }()
+
+	<-b.started
+	cancel()
+	close(b.release)
+	assert.NoError(t, <-b.ctxErr, "the batch's context is not cancelled by shutdown")
+	<-stopped
+}

@@ -67,9 +67,10 @@ func run() int {
 
 	ctx, stop := server.ShutdownContext()
 	defer stop()
+	var workers server.Workers
 
 	// Refresh presence TTL for every locally-connected player on a ticker.
-	go hub.RunHeartbeat(ctx, cfg.PresenceHeartbeatInterval)
+	workers.Go(func() { hub.RunHeartbeat(ctx, cfg.PresenceHeartbeatInterval) })
 	bus, err := events.NewBus(events.Config{
 		Transport:   cfg.EventBus,
 		DurableName: cfg.ServiceName,
@@ -80,11 +81,11 @@ func run() int {
 	}
 	defer func() { _ = bus.Close() }()
 	bridge := wsgateway.NewBridge(hub, bus, log)
-	go func() {
+	workers.Go(func() {
 		if err := bridge.Run(ctx); err != nil {
 			log.Fatal("event bridge failed", zap.Error(err))
 		}
-	}()
+	})
 
 	// Delivering events is this service's job, so the bus is its readiness
 	// dependency. Presence is another application service and never is.
@@ -92,8 +93,15 @@ func run() int {
 		server.WithReadiness(cfg.EventBus, bus.Ping))
 	handler.RegisterRoutes(engine)
 
-	if err := server.Run(engine, cfg.HTTPPort, log, hub.CloseAll); err != nil {
-		log.Error("server exited", zap.Error(err))
+	runErr := server.Run(engine, cfg.HTTPPort, log, hub.CloseAll)
+	stop() // also stops the workers if Run failed without a signal
+	if workers.Wait(server.WorkerShutdownTimeout) {
+		log.Info("background workers stopped")
+	} else {
+		log.Warn("background workers still running at exit", zap.Duration("waited", server.WorkerShutdownTimeout))
+	}
+	if runErr != nil {
+		log.Error("server exited", zap.Error(runErr))
 		return 1
 	}
 	return 0

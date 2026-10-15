@@ -91,15 +91,16 @@ func run() int {
 
 	ctx, stop := server.ShutdownContext()
 	defer stop()
+	var workers server.Workers
 
 	if !cfg.OutboxEnabled {
 		log.Warn("OUTBOX_ENABLED=false; relay idle, serving metrics only")
 	} else {
-		go func() {
+		workers.Go(func() {
 			if err := relay.Run(ctx); err != nil {
 				log.Fatal("outbox relay failed", zap.Error(err))
 			}
-		}()
+		})
 	}
 
 	// Serve /metrics and the health endpoints like every other service. The
@@ -113,8 +114,15 @@ func run() int {
 		opts = append(opts, server.WithLiveness("relay-loop", relayBeat.Check(health.StallAfter(cfg.OutboxPollInterval))))
 	}
 	engine := server.NewEngine(cfg, log, m, opts...)
-	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
-		log.Error("server exited", zap.Error(err))
+	runErr := server.Run(engine, cfg.HTTPPort, log)
+	stop() // also stops the workers if Run failed without a signal
+	if workers.Wait(server.WorkerShutdownTimeout) {
+		log.Info("background workers stopped")
+	} else {
+		log.Warn("background workers still running at exit", zap.Duration("waited", server.WorkerShutdownTimeout))
+	}
+	if runErr != nil {
+		log.Error("server exited", zap.Error(runErr))
 		return 1
 	}
 	return 0

@@ -79,6 +79,11 @@ func NewRelay(store Batcher, bus BusPublisher, cfg RelayConfig, m *metrics.Metri
 	return &Relay{store: store, bus: bus, cfg: cfg.withDefaults(), m: m, log: log}
 }
 
+// pollTimeout bounds one poll. A poll runs on a context detached from Run's,
+// so a shutdown that starts mid-batch lets the batch finish publishing and
+// marking its rows instead of leaving them to be re-published.
+const pollTimeout = 10 * time.Second
+
 // Run polls until ctx is cancelled, draining the in-flight batch before
 // returning. It loops back-to-back while a poll returns a full batch (catching
 // up a backlog) and otherwise sleeps for PollInterval.
@@ -99,11 +104,13 @@ func (r *Relay) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 
-		n, err := r.processBatch(ctx)
-		if err != nil && ctx.Err() == nil {
+		pollCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pollTimeout)
+		n, err := r.processBatch(pollCtx)
+		if err != nil {
 			r.log.Warn("outbox poll failed", zap.Error(err))
 		}
-		r.updatePendingGauge(ctx)
+		r.updatePendingGauge(pollCtx)
+		cancel()
 		r.cfg.Heartbeat.Beat()
 
 		// Busy-loop while draining a backlog; otherwise wait a tick.

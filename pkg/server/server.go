@@ -217,6 +217,37 @@ func Run(engine *gin.Engine, port string, log *zap.Logger, hooks ...func(context
 	}
 }
 
+// WorkerShutdownTimeout is how long main waits for background workers after
+// the HTTP server has stopped. Kubernetes budget: preStop 5 s + HTTP 15 s +
+// workers 5 s = 25 s, inside the default 30 s grace period.
+const WorkerShutdownTimeout = 5 * time.Second
+
+// Workers tracks background goroutines (match loop, outbox relay, event
+// bridge) so main can wait for an in-flight iteration to finish before the
+// process exits, instead of the goroutines simply vanishing with it.
+type Workers struct {
+	wg sync.WaitGroup
+}
+
+// Go runs fn in a new goroutine.
+func (w *Workers) Go(fn func()) { w.wg.Go(fn) }
+
+// Wait waits for all workers for up to timeout and reports whether they
+// all finished in time.
+func (w *Workers) Wait(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 // ShutdownContext returns a context cancelled on SIGINT/SIGTERM, for
 // background workers (match loop, event bridge) that must stop with the
 // HTTP server.
