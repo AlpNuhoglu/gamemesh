@@ -153,10 +153,17 @@ Her adım şu yapıda:
      6 sa ve 11 sa kapalı kaldı). Not: Docker healthcheck'i "unhealthy" container'ı
      **yeniden başlatmaz**, sadece process çıkınca devreye girer; k8s'te bu iş liveness
      probe'unun (A7).
+     **Düzeltme (2026-10-15, Bulgu #58):** "Docker Desktop yeniden başlayınca
+     `unless-stopped` stack'i geri getirir" iddiası yanlıştı (test edilmeden
+     söylenmişti). 14 container 2026-10-14 23:49'da Docker Desktop'la birlikte durdu ve
+     daemon yeniden başladığında hiçbiri gelmedi; Docker'ın `config.v2.json`'unda 14'ünde
+     de `HasBeenManuallyStopped: true`. Docker Desktop kapanırken container'ları normal
+     bir stop isteğiyle durduruyor, `unless-stopped` da elle durdurulanı geri
+     getirmiyor. Çökme ve OOM'dan kurtarma ölçüldüğü gibi çalışıyor.
 
 ### A3. Health endpoint'lerini ayır: liveness ≠ readiness
 
-- [ ] **Ne:** Şu anki tek `/healthz` yerine üç endpoint:
+- [x] **Ne:** Şu anki tek `/healthz` yerine üç endpoint:
   - `/livez`: process yaşıyor ve event loop'u tıkanmamış. **Bağımlılık kontrolü yapmaz.**
   - `/readyz`: bu pod trafik almaya hazır mı? Servisin **kendi** zorunlu bağımlılıklarını
     kısa timeout'la (~1 sn) pingler: player ve outbox-relay için Postgres, ilgili servisler
@@ -214,6 +221,36 @@ Her adım şu yapıda:
      bu zaman belirli bir eşikten eskiyse 503 döner.
   7. Readiness kontrolleri kısa bir context timeout'u (~1 sn) kullanmalı; yavaş bir
      bağımlılık probe'u asmamalı.
+- **Sonuç (2026-10-15):** Yedi commit, hepsi compose üzerinde ölçüldü.
+  - `/livez` (bağımlılık yok, döngü heartbeat'leri), `/readyz` (servisin kendi
+    bağımlılıkları), `/healthz` = `/livez` alias'ı. Kontroller paralel, tek bir 1 sn
+    bütçesi altında; context'i yok sayan bir kontrol bile probe'u asamıyor (test:
+    1,00 sn'de 503, "timed out").
+  - Readiness tablosu (karar, 2026-10-14): player = Postgres + Redis; matchmaking,
+    leaderboard, presence = Redis; websocket = NATS; outbox-relay = Postgres + NATS;
+    gateway = yok. Planın "NATS kullananlar için NATS" cümlesi daraltıldı: bu üç
+    servisteki NATS publish'leri best-effort (sadece `Warn`), istek başarısız olmuyor.
+  - Redis durdurulunca: 4 servis `/readyz` 503 (hata mesajıyla), `/livez` 200, restart
+    yok; gateway/websocket/outbox 200; Redis dönünce kendiliğinden 200. NATS
+    durdurulunca sadece websocket ve outbox 503 (`nats: RECONNECTING`). Player
+    durdurulunca gateway ready kaldı, leaderboard 200, login 502 (madde 1).
+  - Heartbeat: `StallAfter = max(30 sn, 3 × aralık)` (sabit 30 sn yerine; aralık
+    büyütülürse boşuna restart olmasın). Heartbeat her turda yazılıyor, tur başarısız
+    olsa da: Redis 40 sn kapalıyken 8 eşleştirme turunun 8'i de hata verdi, `/livez` 200
+    kaldı, restart 0.
+  - Telemetri (60 sn, leaderboard): sayaç `/healthz` +12 → +0, `/metrics` +14 → +0;
+    probe log satırı 28 → 0; `/healthz` trace'i 11 → 0; gerçek istekler kayıtlı.
+    Sapma (bildirildi): başarısız probe'lar loglanmaya devam ediyor, çünkü hangi
+    bağımlılığın bozulduğu başka hiçbir yerde görünmüyor. Ölçüm notu: Jaeger API'si
+    `lookback`'i yok sayıyor, pencere `start`/`end` ile verilmeli.
+  - Rate limit: muafiyet `RateLimit` içinde; route'u limiter'dan sonra kaydeden test eski
+    kodda kırmızıydı (`/readyz` 429). Public `/health` bilinçli olarak limitli (300
+    istekte 115×200 / 185×429).
+  - Public `/health`: `{"status":"ok","version":"<SERVICE_VERSION>"}`, başka alan yok.
+  - Compose healthcheck'leri `/readyz`'e geçti: Redis kapalıyken 4 servis 49 sn'de
+    unhealthy, restart yok, Redis dönünce 5 sn'de 11/11 healthy.
+  - k8s manifest'lerindeki probe'lar hâlâ `/healthz` kullanıyor; A7'de `/livez` ve
+    `/readyz`'e taşınacak.
 
 ### A3a. Kapanış davranışını tamamla *(incelemeden eklendi)*
 
@@ -237,11 +274,16 @@ Her adım şu yapıda:
      [cmd/outbox-relay/main.go:51](../cmd/outbox-relay/main.go#L51) Postgres'e ilk
      denemede bağlanamazsa `log.Fatal` ile çıkıyor. Kısa bir backoff ile birkaç deneme,
      k8s'teki CrashLoopBackOff gürültüsünü azaltır.
+     *Ek (Bulgu #57, 2026-10-15):* Postgres DSN'inde `connect_timeout` ve
+     `statement_timeout` yok. Bir ağ bölünmesinde sorgular uzun süre asılı kalabilir:
+     outbox döngüsünün heartbeat'i bayatlar ve container yeniden başlatılır (takılmış bir
+     bağlantı için makul ama sınırı açık değil), açılıştaki bağlantı denemesi de asılı
+     kalabilir. Redis çağrıları go-redis'in varsayılan timeout'larıyla zaten sınırlı.
   6. **Doğrulanması gereken (M4):** Matchmaking döngüsü kuyruktan oyuncu alıp oda
      oluştururken yarıda kesilirse ne oluyor? İşlemin atomik olup olmadığı kodda
      doğrulanmadı.
   7. **Gözlem (2026-10-13/14, incelenmedi):** Docker Desktop kapanırken 14 container'dan
-     yalnızca NATS **exit 1** ile çıktı, diğerleri 0; üç kapanışın üçünde de (3/3)
+     yalnızca NATS **exit 1** ile çıktı, diğerleri 0; dört kapanışın dördünde de (4/4)
      tekrarlandı. JetStream'in temiz kapanıp kapanmadığı ve k8s'te bunun bir etkisi
      olup olmadığı incelenmeli.
 - **Neden:**
@@ -944,12 +986,12 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 6 | Portlar `0.0.0.0`'a bağlı; LAN'dan Postgres'e ve şifresiz Redis'e erişilebiliyor | M2 | Ölçüldü | A2a (çözüldü) |
 | 7 | Compose'da `restart:` politikası yok | M2 | Ölçüldü | A2a (çözüldü: `unless-stopped`) |
 | 8 | `.env` eski (15 anahtar eksik), izinleri 644 | M8 | Ölçüldü | A2a (çözüldü) |
-| 9 | Healthcheck "healthy" derken istekler 500 dönüyor (shallow) | M2, M3 | Ölçüldü | A3 |
-| 10 | Liveness ve readiness aynı endpoint'i kullanıyor | M3, M6 | Kod | A3, A7 |
-| 11 | Health ve metrics istekleri log, metrik ve trace üretiyor | M3 | Ölçüldü | A3 |
-| 12 | Health'in rate limit muafiyeti satır sırasına bağlı, test yok | M3 | Ölçüldü | A3 |
-| 13 | Arka plan döngüsü ölürse `/healthz` yine "ok" der | M3 | Kod | A3 |
-| 14 | Public `/health` route'u yok; yanıtta sürüm bilgisi yok | M3 | Kod | A3, A4 |
+| 9 | Healthcheck "healthy" derken istekler 500 dönüyor (shallow) | M2, M3 | Ölçüldü | A3 (çözüldü, compose dahil) |
+| 10 | Liveness ve readiness aynı endpoint'i kullanıyor | M3, M6 | Kod | A3 (çözüldü), k8s probe'ları A7 |
+| 11 | Health ve metrics istekleri log, metrik ve trace üretiyor | M3 | Ölçüldü | A3 (çözüldü) |
+| 12 | Health'in rate limit muafiyeti satır sırasına bağlı, test yok | M3 | Ölçüldü | A3 (çözüldü) |
+| 13 | Arka plan döngüsü ölürse `/healthz` yine "ok" der | M3 | Kod | A3 (çözüldü) |
+| 14 | Public `/health` route'u yok; yanıtta sürüm bilgisi yok | M3 | Kod | A3 (çözüldü: route), sürüm SHA'sı A4 |
 | 15 | WebSocket istemcileri kapanışta 1006 alıyor; close frame boş (1005) | M4 | Ölçüldü | A3a |
 | 16 | Arka plan işçilerinin bitmesi beklenmiyor | M4 | Kod | A3a |
 | 17 | Shutdown timeout'unda `log.Fatal` `defer`'leri atlıyor | M4 | Kod | A3a |
@@ -992,3 +1034,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
 | 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
+| 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a |
+| 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar bekliyor |
