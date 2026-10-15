@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
@@ -22,7 +23,12 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
-func main() {
+func main() { os.Exit(run()) }
+
+// run holds main's body so its deferred cleanup (closing the event bus,
+// flushing traces, syncing the log) runs before the process exits, which
+// os.Exit and log.Fatal would skip.
+func run() int {
 	cfg := config.Load("player")
 	log := logger.Must(cfg.ServiceName, cfg.Env, logger.SampleConfig{
 		Initial:    cfg.LogSampleInitial,
@@ -90,6 +96,8 @@ func main() {
 	handler.RegisterRoutes(engine)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
-		log.Fatal("server exited", zap.Error(err))
+		log.Error("server exited", zap.Error(err))
+		return 1
 	}
+	return 0
 }
