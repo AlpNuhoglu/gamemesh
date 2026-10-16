@@ -116,6 +116,14 @@ type Config struct {
 	SessionCacheTTL     time.Duration
 }
 
+// version is the commit the binary was built from, set at link time:
+//
+//	go build -ldflags "-X github.com/alpnuhoglu/gamemesh/pkg/config.version=<sha>"
+//
+// The Dockerfile does this from its VERSION build arg. SERVICE_VERSION, when
+// set, still takes precedence.
+var version = "dev"
+
 // Load reads configuration for the named service from the environment.
 func Load(serviceName string) *Config {
 	return &Config{
@@ -175,7 +183,7 @@ func Load(serviceName string) *Config {
 
 		AutoMigrate: getEnvBool("AUTO_MIGRATE", true),
 
-		ServiceVersion: getEnv("SERVICE_VERSION", "dev"),
+		ServiceVersion: getEnv("SERVICE_VERSION", version),
 
 		// Distributed tracing. Defaults target a local OTel Collector
 		// (docker-compose) and always-sample so every dev request is visible.

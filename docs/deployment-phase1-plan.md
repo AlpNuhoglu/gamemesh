@@ -390,7 +390,7 @@ Her adım şu yapıda:
 
 ### A4. Dockerfile'ları üretime hazırla
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. Go build'e BuildKit cache mount'ları eklemek
      (`--mount=type=cache,target=/go/pkg/mod` ve `/root/.cache/go-build`).
   2. `ARG TARGETOS TARGETARCH` ile cross-compile desteği (`GOOS/GOARCH`).
@@ -402,7 +402,7 @@ Her adım şu yapıda:
 - **Neden:**
   - Mac'in **arm64**, Hetzner'in ucuz CX serisi ise **amd64**. Mac'te build edilen imaj
     VPS'te `exec format error` verir. `TARGETARCH` ile Go, emülasyon olmadan doğrudan hedef
-    mimari için derler (QEMU'dan 10 kat hızlı).
+    mimari için derler (planda "QEMU'dan 10 kat hızlı" deniyordu; bu makinede ölçülen 4,3 kat, bkz. Sonuç).
   - Kubernetes'te `runAsNonRoot: true` kullanıldığında kubelet, kullanıcının root olmadığını
     imajdaki **sayısal** UID'den anlayabilir. `USER app` isim olduğu için doğrulayamaz ve
     pod'u reddeder.
@@ -433,6 +433,30 @@ Her adım şu yapıda:
      zaten kendiliğinden kapanıyor, ama açık bayrak, biri ileride gcc eklerse build'in
      sessizce dinamik binary'ye dönmesini önlüyor. (Deneyle gösterildi: Debian'da CGO açık
      derlenen bir binary Alpine'da `exec /app: no such file or directory` ile açılmıyor.)
+- **Sonuç (2026-10-16):** Üç commit. Kararlar (2026-10-16): Go 1.26 + `toolchain` sabiti,
+  Alpine 3.24, sürüm ldflags ile, tek Dockerfile, yerel çok platformlu doğrulama için
+  `docker-container` builder (`gamemesh-multi`), digest sabitleme A5a'ya.
+  1. `go.mod`: `toolchain go1.26.9`; CI `go-version-file: go.mod` ile okuyor. Bunun için
+     `setup-go` v5 → **v6** yükseltildi: v5'in kaynağında `toolchain` hiç geçmiyor (sadece
+     `go 1.26.0` satırını okurdu), v6 okuyup `GOTOOLCHAIN=local` set ediyor. govulncheck de
+     aynı dosyadan okuyor; artık gönderilen toolchain'i denetliyor (yeni bir stdlib yaması
+     job'u kırmızıya çevirir; doğru sinyal). Build imajı `golang:1.26.9-alpine3.24`.
+     Resmi takvim: Go 1.25 desteksiz (1.27.0, 2026-08-19); Alpine 3.20'nin desteği
+     2026-04-01'de bitti, 3.21'inki 2026-11-01'de bitiyor.
+  2. Tek `deployments/docker/Dockerfile` (`--build-arg SERVICE=`), 7 dosya silindi (yorum,
+     ad ve port dışında birebir aynıydı). Build aşaması `$BUILDPLATFORM`'da koşup
+     `GOOS/GOARCH` ile cross-compile ediyor; final aşamada `RUN` yok; `USER 10001:10001`;
+     Alpine 3.24.2. Ölçüldü: amd64 + arm64 build başarılı, OCI index'te iki manifest de
+     `user=10001:10001`; amd64 imajı emülasyonla `x86_64`, uid 10001 olarak çalıştı ve
+     `/livez` 200 (42,7 MB). Soğuk amd64 derleme: QEMU altında 35,3 sn → cross-compile
+     8,2 sn (**4,3×**). Tek satırlık değişiklikten sonra `go build`: 8,1 sn → 0,6 sn.
+  3. Commit SHA `-ldflags -X` ile binary'de; compose `SERVICE_VERSION` vermiyor,
+     `VERSION` build arg'ı veriyor; CI `github.sha` veriyor. `/health` →
+     `{"status":"ok","version":"8aefb98"}`. Sadece `VERSION` değişince `go build` 0,6 sn
+     (sadece link).
+  - A6 için not (bilgi, test edilmedi): BuildKit cache mount'ları `cache-to: type=gha`'ya
+    aktarılmaz; CI'da her koşu temiz bir builder açtığı için cache mount'ların faydası
+    CI'da görünmeyebilir. Katman önbelleği yine çalışır.
 
 ### A5. CI'daki servis listesi tutarsızlığını gider
 
@@ -1056,9 +1080,9 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 |---|---|---|---|---|
 | 1 | `.dockerignore` yok; `.env` ve `.git` build aşamasına giriyor | M1 | Ölçüldü | A2 (çözüldü) |
 | 2 | Dockerfile yorumu "~15 MB" diyor; gerçek 40–45 MB | M1 | Ölçüldü | A2a (çözüldü) |
-| 3 | Go 1.25 desteklenmiyor; Alpine 3.20 destek süresi doğrulanmalı | M1, M7 | Kod / sürüm | A4 |
-| 4 | Go sürümleri her yerde farklı (1.25 / 1.26 / 1.27) | M7 | Ölçüldü | A4 |
-| 5 | `USER app` sayısal değil (`runAsNonRoot` doğrulayamaz) | M1 | Kod | A4 |
+| 3 | Go 1.25 desteklenmiyor; Alpine 3.20 destek süresi doğrulanmalı | M1, M7 | Kod / sürüm | A4 (çözüldü: Go 1.26.9, Alpine 3.24.2; 3.20'nin desteği 2026-04-01'de bitmişti) |
+| 4 | Go sürümleri her yerde farklı (1.25 / 1.26 / 1.27) | M7 | Ölçüldü | A4 (çözüldü: `toolchain go1.26.9` tek kaynak) |
+| 5 | `USER app` sayısal değil (`runAsNonRoot` doğrulayamaz) | M1 | Kod | A4 (çözüldü: `10001:10001`; k8s'te doğrulama A10) |
 | 6 | Portlar `0.0.0.0`'a bağlı; LAN'dan Postgres'e ve şifresiz Redis'e erişilebiliyor | M2 | Ölçüldü | A2a (çözüldü) |
 | 7 | Compose'da `restart:` politikası yok | M2 | Ölçüldü | A2a (çözüldü: `unless-stopped`) |
 | 8 | `.env` eski (15 anahtar eksik), izinleri 644 | M8 | Ölçüldü | A2a (çözüldü) |
@@ -1067,7 +1091,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 11 | Health ve metrics istekleri log, metrik ve trace üretiyor | M3 | Ölçüldü | A3 (çözüldü) |
 | 12 | Health'in rate limit muafiyeti satır sırasına bağlı, test yok | M3 | Ölçüldü | A3 (çözüldü) |
 | 13 | Arka plan döngüsü ölürse `/healthz` yine "ok" der | M3 | Kod | A3 (çözüldü) |
-| 14 | Public `/health` route'u yok; yanıtta sürüm bilgisi yok | M3 | Kod | A3 (çözüldü: route), sürüm SHA'sı A4 |
+| 14 | Public `/health` route'u yok; yanıtta sürüm bilgisi yok | M3 | Kod | A3 (çözüldü: route) + A4 (çözüldü: SHA) |
 | 15 | WebSocket istemcileri kapanışta 1006 alıyor; close frame boş (1005) | M4 | Ölçüldü | A3a (çözüldü: 1001) |
 | 16 | Arka plan işçilerinin bitmesi beklenmiyor | M4 | Kod | A3a (çözüldü) |
 | 17 | Shutdown timeout'unda `log.Fatal` `defer`'leri atlıyor | M4 | Kod | A3a (çözüldü) |
@@ -1078,7 +1102,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 |
 | 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a |
 | 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a |
-| 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Kod | A4, A5a |
+| 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Kod | A4 (çözüldü: aynı `go.mod` toolchain'i) |
 | 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a |
 | 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a |
 | 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 |

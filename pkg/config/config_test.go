@@ -84,3 +84,16 @@ func TestMalformedEnvFallsBackToDefaults(t *testing.T) {
 	assert.True(t, cfg.AutoMigrate)
 	assert.Equal(t, 0, cfg.RedisPoolSize)
 }
+
+// TestServiceVersionFromBuild: the version baked in at link time is the
+// default, and SERVICE_VERSION still overrides it.
+func TestServiceVersionFromBuild(t *testing.T) {
+	prev := version
+	version = "abc1234"
+	t.Cleanup(func() { version = prev })
+
+	assert.Equal(t, "abc1234", Load("gateway").ServiceVersion)
+
+	t.Setenv("SERVICE_VERSION", "override")
+	assert.Equal(t, "override", Load("gateway").ServiceVersion)
+}

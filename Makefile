@@ -34,7 +34,7 @@ k8s-build: ## Build images into Minikube's Docker daemon
 	@eval $$(minikube docker-env) && \
 	for svc in $(SERVICES); do \
 		echo "building gamemesh/$$svc:latest"; \
-		docker build -f deployments/docker/Dockerfile.$$svc -t gamemesh/$$svc:latest .; \
+		docker build -f deployments/docker/Dockerfile --build-arg SERVICE=$$svc -t gamemesh/$$svc:latest .; \
 	done
 
 k8s-apply: ## Deploy everything to the cluster
