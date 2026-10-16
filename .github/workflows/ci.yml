@@ -81,7 +81,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deployments/docker/Dockerfile.${{ matrix.service }}
+          file: deployments/docker/Dockerfile
+          build-args: SERVICE=${{ matrix.service }}
           tags: gamemesh/${{ matrix.service }}:${{ github.sha }}
           push: false # set true with registry credentials to publish
           cache-from: type=gha

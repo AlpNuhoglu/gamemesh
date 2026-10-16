@@ -30,7 +30,7 @@ minikube addons enable ingress
 make k8s-build
 # equivalent to:
 #   eval $(minikube docker-env)
-#   docker build -f deployments/docker/Dockerfile.gateway -t gamemesh/gateway:latest .
+#   docker build -f deployments/docker/Dockerfile --build-arg SERVICE=gateway -t gamemesh/gateway:latest .
 #   ... (player, matchmaking, leaderboard, websocket)
 
 # 3. Deploy everything (namespace, secrets, config, data stores, services,

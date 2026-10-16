@@ -107,7 +107,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.gateway
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: gateway
     environment:
       <<: *service-env
       HTTP_PORT: "8080"
@@ -142,7 +144,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.player
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: player
     environment:
       <<: *service-env
       HTTP_PORT: "8081"
@@ -163,7 +167,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.matchmaking
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: matchmaking
     environment:
       <<: *service-env
       HTTP_PORT: "8082"
@@ -188,7 +194,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.leaderboard
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: leaderboard
     environment:
       <<: *service-env
       HTTP_PORT: "8083"
@@ -207,7 +215,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.websocket
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: websocket
     environment:
       <<: *service-env
       HTTP_PORT: "8084"
@@ -235,7 +245,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.presence
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: presence
     environment:
       <<: *service-env
       HTTP_PORT: "8086"
@@ -263,7 +275,9 @@ services:
     restart: always
     build:
       context: .
-      dockerfile: deployments/docker/Dockerfile.outbox-relay
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        SERVICE: outbox-relay
     environment:
       <<: *service-env
       HTTP_PORT: "8085"
