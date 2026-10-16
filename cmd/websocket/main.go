@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
 	"github.com/alpnuhoglu/gamemesh/internal/wsgateway"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
@@ -51,6 +52,7 @@ func run() int {
 		Addr:     cfg.RedisAddr,
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
+		PoolSize: cfg.RedisPoolSize, // 0 = go-redis default (10 per CPU)
 	})
 	if err := tracing.InstrumentRedis(rdb); err != nil {
 		log.Fatal("failed to instrument redis", zap.Error(err))
@@ -63,7 +65,8 @@ func run() int {
 	notifier := presence.NewHTTPNotifier(cfg.PresenceServiceURL, cfg.PresenceHeartbeatInterval)
 	hub := wsgateway.NewHub(log, m, notifier)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
-	handler := wsgateway.NewHandler(hub, tokens, cfg.AllowedOrigins, log)
+	// Sessions are checked straight against Redis, uncached: once per connection.
+	handler := wsgateway.NewHandler(hub, tokens, player.NewSessionStore(rdb), cfg.AllowedOrigins, log)
 
 	ctx, stop := server.ShutdownContext()
 	defer stop()
@@ -87,10 +90,12 @@ func run() int {
 		}
 	})
 
-	// Delivering events is this service's job, so the bus is its readiness
-	// dependency. Presence is another application service and never is.
+	// Delivering events is this service's job, so the bus is a readiness
+	// dependency, and so is Redis, which every handshake's session check needs.
+	// Presence is another application service and never is.
 	engine := server.NewEngine(cfg, log, m,
-		server.WithReadiness(cfg.EventBus, bus.Ping))
+		server.WithReadiness(cfg.EventBus, bus.Ping),
+		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
 
 	runErr := server.Run(engine, cfg.HTTPPort, log, hub.CloseAll)

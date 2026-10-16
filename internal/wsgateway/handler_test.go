@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,18 +22,48 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
+// fakeSessions is an in-memory SessionChecker: every session exists unless
+// revoked, and err, when set, makes every lookup fail.
+type fakeSessions struct {
+	mu      sync.Mutex
+	revoked map[string]bool
+	err     error
+}
+
+func (f *fakeSessions) Exists(_ context.Context, jti string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return false, f.err
+	}
+	return !f.revoked[jti], nil
+}
+
+func (f *fakeSessions) revoke(jti string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.revoked[jti] = true
+}
+
 func newWSServer(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub) {
+	t.Helper()
+	srv, tokens, hub, _ := newWSServerWithSessions(t)
+	return srv, tokens, hub
+}
+
+func newWSServerWithSessions(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub, *fakeSessions) {
 	t.Helper()
 	tokens := auth.NewTokenManager("ws-test-secret", time.Hour, "gamemesh")
 	hub := NewHub(zap.NewNop(), metrics.New("ws-handler-test"), nil)
-	handler := NewHandler(hub, tokens, []string{"*"}, zap.NewNop())
+	sessions := &fakeSessions{revoked: map[string]bool{}}
+	handler := NewHandler(hub, tokens, sessions, []string{"*"}, zap.NewNop())
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	handler.RegisterRoutes(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return srv, tokens, hub
+	return srv, tokens, hub, sessions
 }
 
 func wsURL(httpURL string) string {
@@ -151,4 +182,34 @@ func TestCloseAllClosesUnresponsiveClients(t *testing.T) {
 	assert.GreaterOrEqual(t, elapsed, 200*time.Millisecond)
 	assert.Less(t, elapsed, time.Second)
 	assert.Eventually(t, func() bool { return hub.count() == 0 }, time.Second, 10*time.Millisecond)
+}
+
+// TestServeWSRejectsRevokedSession: a token whose session was deleted
+// (logout) or never existed (a forged JTI) cannot open a connection, even
+// though its signature and expiry are valid.
+func TestServeWSRejectsRevokedSession(t *testing.T) {
+	srv, tokens, _, sessions := newWSServerWithSessions(t)
+	token, jti, err := tokens.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	sessions.revoke(jti)
+
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL(srv.URL)+"/ws?token="+token, nil)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestServeWSFailsClosedWhenSessionCheckFails: if the session store cannot
+// answer, the handshake is refused (503) rather than let a possibly revoked
+// token through.
+func TestServeWSFailsClosedWhenSessionCheckFails(t *testing.T) {
+	srv, tokens, _, sessions := newWSServerWithSessions(t)
+	sessions.err = errors.New("redis: connection refused")
+	token, _, err := tokens.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL(srv.URL)+"/ws?token="+token, nil)
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
