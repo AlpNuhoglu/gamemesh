@@ -118,6 +118,10 @@ jobs:
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
+          # The action defaults go-version-input to "stable", and setup-go
+          # prefers go-version over go-version-file when both are set, so
+          # without clearing it govulncheck audited the latest Go instead.
+          go-version-input: ""
           go-version-file: go.mod
 
   deploy:
