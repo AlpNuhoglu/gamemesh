@@ -160,6 +160,12 @@ Her adım şu yapıda:
      de `HasBeenManuallyStopped: true`. Docker Desktop kapanırken container'ları normal
      bir stop isteğiyle durduruyor, `unless-stopped` da elle durdurulanı geri
      getirmiyor. Çökme ve OOM'dan kurtarma ölçüldüğü gibi çalışıyor.
+     **Karar (2026-10-15):** `restart: always`. Prod'da compose yok; ama k8s'te
+     "elle durdurulmuş" diye bir durum yoktur, controller istenen durumu sürekli uygular
+     ve node yeniden başlayınca pod'lar geri gelir. Compose'daki en yakın karşılığı
+     `always`; bilerek durdurmak için `docker compose down` (k8s'te `replicas: 0`).
+     Docker Desktop yeniden açıldığında stack'in kendiliğinden kalktığı henüz
+     doğrulanmadı; bir sonraki açılışta kontrol edilecek.
 
 ### A3. Health endpoint'lerini ayır: liveness ≠ readiness
 
@@ -1071,5 +1077,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
 | 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
-| 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a (çözüldü: 75 sn → 5 sn, açılışta retry) |
-| 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar bekliyor |
+| 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a |
+| 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (Docker Desktop yeniden açılışında doğrulanacak) |
