@@ -146,7 +146,7 @@ services:
     environment:
       <<: *service-env
       HTTP_PORT: "8081"
-      POSTGRES_DSN: host=postgres user=${POSTGRES_USER:-gamemesh} password=${POSTGRES_PASSWORD:-gamemesh-dev-password} dbname=${POSTGRES_DB:-gamemesh} port=5432 sslmode=disable
+      POSTGRES_DSN: host=postgres user=${POSTGRES_USER:-gamemesh} password=${POSTGRES_PASSWORD:-gamemesh-dev-password} dbname=${POSTGRES_DB:-gamemesh} port=5432 sslmode=disable connect_timeout=5
       AUTO_MIGRATE: "true"
     depends_on:
       postgres:
@@ -267,7 +267,7 @@ services:
     environment:
       <<: *service-env
       HTTP_PORT: "8085"
-      POSTGRES_DSN: host=postgres user=${POSTGRES_USER:-gamemesh} password=${POSTGRES_PASSWORD:-gamemesh-dev-password} dbname=${POSTGRES_DB:-gamemesh} port=5432 sslmode=disable
+      POSTGRES_DSN: host=postgres user=${POSTGRES_USER:-gamemesh} password=${POSTGRES_PASSWORD:-gamemesh-dev-password} dbname=${POSTGRES_DB:-gamemesh} port=5432 sslmode=disable connect_timeout=5
       OUTBOX_ENABLED: ${OUTBOX_ENABLED:-true}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-100}
       OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-1s}

@@ -260,7 +260,7 @@ Her adım şu yapıda:
 
 ### A3a. Kapanış davranışını tamamla *(incelemeden eklendi)*
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. **WebSocket istemcilerine kapanışı bildirmek (M4):** `srv.RegisterOnShutdown` ile
      `hub.CloseAll()` çağırmak. Bu fonksiyon her istemcinin `send` kanalını kapatır;
      [client.go:98-101](../internal/wsgateway/client.go#L98-L101)'deki mevcut kod
@@ -292,6 +292,11 @@ Her adım şu yapıda:
      yalnızca NATS **exit 1** ile çıktı, diğerleri 0; dört kapanışın dördünde de (4/4)
      tekrarlandı. JetStream'in temiz kapanıp kapanmadığı ve k8s'te bunun bir etkisi
      olup olmadığı incelenmeli.
+     *Çözüldü (2026-10-15):* Tek başına bir NATS container'ıyla denendi: SIGTERM'de
+     loglar "JetStream Shutdown → Server Exiting" gösteriyor (temiz kapanış) ve exit 1;
+     SIGINT'te aynı temiz kapanış exit 0. Bu bir arıza değil, nats-server'ın SIGTERM
+     çıkış kodu. Dev'i prod'dan ayırmamak için compose'a `stop_signal` eklenmedi. k8s
+     için asıl konu NATS'ın lame duck modu (A7).
 - **Neden:**
   - Ölçüm (M4, 2026-10-11): Websocket container'ı durdurulduğunda sunucu 0,19 sn'de exit 0
     ile kapandı, ama bağlı istemci **1006 (Abnormal Closure)** aldı. Her deploy'da o
@@ -308,6 +313,31 @@ Her adım şu yapıda:
 - **İstemci tarafı notu (kapsam dışı):** İstemciler 1001'de rastgele bir beklemeyle
   (jitter) hemen yeniden bağlanmalı ve bağlandıktan sonra durumu yeniden çekmeli (resync,
   örneğin `GET /queue/status`).
+- **Sonuç (2026-10-15):** Beş commit, compose üzerinde ölçüldü.
+  1. `server.Run` kapanış hook'larını `Shutdown` ile birlikte aynı 15 sn bütçesinde
+     çalıştırıp bekliyor (`RegisterOnShutdown`'ın fonksiyonları beklenmediği için
+     yeterli değildi). `hub.CloseAll` (planda var sanılıyordu, yoktu; yazıldı) her
+     istemciye `1001 "server shutting down"` gönderiyor, cevap gelmezse bütçe sonunda
+     bağlantıyı kesiyor. Node istemcisi: **1006 → 1001**, kapanış 0,30 sn.
+  2. Close frame kodu: 1001 artık `WriteControl` ile `CloseAll`'dan gidiyor; writePump'ın
+     boş frame'i sadece istemci zaten gitmişken (unregister) çalışıyor.
+  3. Arka plan işçileri: eşleştirme turu ve outbox poll'u `context.WithoutCancel` + 10 sn
+     ile çalışıyor; kapanış yeni tur başlatmıyor ama devam edeni bitiriyor. `main`
+     işçileri en fazla 5 sn bekliyor (`server.Workers`). Testler tur ortasında iptal
+     ediyor; eski kodda ikisi de `context canceled` ile kırmızıydı. Üç servis 0,16–0,20
+     sn'de exit 0 ile kapandı, son log satırı "background workers stopped". Bütçe:
+     preStop 5 + HTTP 15 + işçiler 5 = 25 sn < 30 sn.
+  4. `main`'ler `os.Exit(run())`: kapanış hatası `defer`'leri atlamıyor, exit kodu yine 1.
+     Açılıştaki `log.Fatal`'lar bilinçli olarak bırakıldı.
+  5. Açılışta bağlantı ve #57: DSN'lere `connect_timeout=5` (ulaşılamayan host'a deneme
+     75,0 sn → 5,0 sn); `database.Open` 30 sn boyunca backoff ile deniyor. Postgres
+     kapalıyken yeniden başlatılan player 5 deneme yapıp Postgres açılınca bağlandı,
+     restart yok. Global `statement_timeout` konmadı (migration'ları keser).
+  6. Matchmaking'in yarıda kesilmesi (kod okuması + test): tur atomik değil ama
+     idempotent tasarlanmış (Snapshot okur, sonra oda kaydet → kuyruktan çıkar → event).
+     En kötü kesilme "çıkarıldı ama bildirilmedi" anı; planlı kapanışta artık olmuyor
+     (madde 3). SIGKILL'de kalan boşluk Faz 1 sonrasına yazıldı.
+  7. NATS exit 1 açıklandı (yukarıda).
 
 ### A3b. WebSocket oturum güvenliği *(incelemeden eklendi, canlıya çıkmadan önce zorunlu)*
 
@@ -515,6 +545,9 @@ Her adım şu yapıda:
      Shutdown başladıktan 100 ms sonra gelen bağlantı `connection refused` aldı;
      ingress'te bu 502 demek. `sleep` Alpine'da var; distroless'a geçilirse k8s'in
      yerleşik `sleep` eylemi kullanılmalı.
+  3a. **NATS için lame duck modu (A3a'dan):** StatefulSet'e
+     `lifecycle.preStop: nats-server --signal ldm` ile istemcilerin bağlantıyı kapanmadan
+     önce başka bir sunucuya taşımasına izin vermek (tek node'da etkisi sınırlı).
   4. **Probe parametreleri (M6):** Şu an sadece `initialDelaySeconds` ve `periodSeconds`
      tanımlı; `timeoutSeconds` 1 sn ve `failureThreshold` 3 varsayılanda. Hedef:
      - `startupProbe` (`/livez`, `periodSeconds: 2`, `failureThreshold: 30`). Uzun bir
@@ -971,6 +1004,10 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   formatsız; golangci-lint'te `gofmt` formatter'ı açık değil, 2026-10-13'te fark edildi).
 - **İstemci tarafı (M4):** WS istemcisinde jitter'lı yeniden bağlanma ve bağlandıktan
   sonra durumu yeniden çekme (resync).
+- **Matchmaking event'leri için outbox (A3a):** Planlı kapanışta tur artık bitiyor, ama
+  SIGKILL ya da OOM'da "oyuncular kuyruktan çıktı, `MatchFound` yayınlanmadı" boşluğu
+  kalıyor. Event'i oda kaydıyla aynı atomik adımda yazmak (Redis'te outbox ya da
+  istemcinin oda durumunu sorgulaması) bunu kapatır.
 - **Outbox tüketicilerinin idempotent olduğunun doğrulanması (M4):** Relay at-least-once
   çalışıyor; kapanış sırasında yayınlanıp işaretlenemeyen satırlar tekrar yayınlanır.
 
@@ -998,10 +1035,10 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 12 | Health'in rate limit muafiyeti satır sırasına bağlı, test yok | M3 | Ölçüldü | A3 (çözüldü) |
 | 13 | Arka plan döngüsü ölürse `/healthz` yine "ok" der | M3 | Kod | A3 (çözüldü) |
 | 14 | Public `/health` route'u yok; yanıtta sürüm bilgisi yok | M3 | Kod | A3 (çözüldü: route), sürüm SHA'sı A4 |
-| 15 | WebSocket istemcileri kapanışta 1006 alıyor; close frame boş (1005) | M4 | Ölçüldü | A3a |
-| 16 | Arka plan işçilerinin bitmesi beklenmiyor | M4 | Kod | A3a |
-| 17 | Shutdown timeout'unda `log.Fatal` `defer`'leri atlıyor | M4 | Kod | A3a |
-| 18 | Matchmaking'in kapanışta yarıda kesilmesinin etkisi doğrulanmadı | M4 | Açık soru | A3a |
+| 15 | WebSocket istemcileri kapanışta 1006 alıyor; close frame boş (1005) | M4 | Ölçüldü | A3a (çözüldü: 1001) |
+| 16 | Arka plan işçilerinin bitmesi beklenmiyor | M4 | Kod | A3a (çözüldü) |
+| 17 | Shutdown timeout'unda `log.Fatal` `defer`'leri atlıyor | M4 | Kod | A3a (çözüldü) |
+| 18 | Matchmaking'in kapanışta yarıda kesilmesinin etkisi doğrulanmadı | M4 | Açık soru | A3a (çözüldü: planlı kapanış; SIGKILL boşluğu Faz 1 sonrası) |
 | 19 | **Websocket oturum kontrolü yapmıyor; logout WS'i kapatmıyor** | M8 | Ölçüldü | A3b |
 | 20 | CI'da 7 servisin 5'i build ediliyor | M7 | Kod | A5 |
 | 21 | `build` job'u gereksiz; docker `.tar` artifact'ları kullanılmıyor | M7 | Kod | A5 |

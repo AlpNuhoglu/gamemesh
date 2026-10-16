@@ -4,11 +4,10 @@ package main
 
 import (
 	"context"
+	"os"
+	"time"
 
 	"go.uber.org/zap"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/redis/go-redis/v9"
 
@@ -16,13 +15,19 @@ import (
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
+	"github.com/alpnuhoglu/gamemesh/pkg/database"
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
-func main() {
+func main() { os.Exit(run()) }
+
+// run holds main's body so its deferred cleanup (closing the event bus,
+// flushing traces, syncing the log) runs before the process exits, which
+// os.Exit and log.Fatal would skip.
+func run() int {
 	cfg := config.Load("player")
 	log := logger.Must(cfg.ServiceName, cfg.Env, logger.SampleConfig{
 		Initial:    cfg.LogSampleInitial,
@@ -43,9 +48,7 @@ func main() {
 	}, log)
 	defer func() { _ = shutdownTracing(context.Background()) }()
 
-	db, err := gorm.Open(postgres.Open(cfg.PostgresDSN), &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
-	})
+	db, err := database.Open(cfg.PostgresDSN, 30*time.Second, log)
 	if err != nil {
 		log.Fatal("failed to connect to postgres", zap.Error(err))
 	}
@@ -90,6 +93,8 @@ func main() {
 	handler.RegisterRoutes(engine)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
-		log.Fatal("server exited", zap.Error(err))
+		log.Error("server exited", zap.Error(err))
+		return 1
 	}
+	return 0
 }

@@ -71,7 +71,14 @@ func (s *Service) GetRoom(ctx context.Context, id string) (*Room, error) {
 	return s.rooms.Get(ctx, id)
 }
 
-// RunMatchLoop ticks every interval until ctx is cancelled. Note: with
+// tickTimeout bounds one match tick. A tick runs on a context detached from
+// the loop's, so a shutdown that starts mid-tick lets the tick finish (rooms
+// saved, players dequeued, MatchFound published) instead of cutting it
+// between steps.
+const tickTimeout = 10 * time.Second
+
+// RunMatchLoop ticks every interval until ctx is cancelled; a tick already
+// running when that happens completes first. Note: with
 // multiple replicas this loop needs a leader lock (e.g. Redis SET NX with
 // TTL); the K8s deployment therefore runs a single matchmaking replica, which
 // comfortably handles thousands of matches per tick.
@@ -85,9 +92,11 @@ func (s *Service) RunMatchLoop(ctx context.Context, interval time.Duration) {
 			s.log.Info("match loop stopped")
 			return
 		case <-ticker.C:
-			if _, err := s.MatchOnce(ctx); err != nil {
+			tickCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tickTimeout)
+			if _, err := s.MatchOnce(tickCtx); err != nil {
 				s.log.Error("match tick failed", zap.Error(err))
 			}
+			cancel()
 			s.cfg.Heartbeat.Beat()
 		}
 	}

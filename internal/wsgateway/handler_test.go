@@ -1,7 +1,9 @@
 package wsgateway
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,4 +88,67 @@ func TestWebSocketAuthorizationHeaderFallback(t *testing.T) {
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(srv.URL)+"/ws", header)
 	require.NoError(t, err)
 	conn.Close()
+}
+
+// dialClients connects one client per name and waits until the hub has them.
+func dialClients(t *testing.T, srv *httptest.Server, tokens *auth.TokenManager, hub *Hub, names ...string) []*websocket.Conn {
+	t.Helper()
+	conns := make([]*websocket.Conn, 0, len(names))
+	for _, name := range names {
+		token, _, err := tokens.Generate(uuid.New(), name)
+		require.NoError(t, err)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(srv.URL)+"/ws?token="+token, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+		conns = append(conns, conn)
+	}
+	require.Eventually(t, func() bool { return hub.count() == len(names) }, time.Second, 10*time.Millisecond)
+	return conns
+}
+
+// TestCloseAllSendsGoingAway: on shutdown every client gets close code 1001
+// with a reason instead of an abrupt 1006, and the hub empties as soon as
+// they answer.
+func TestCloseAllSendsGoingAway(t *testing.T) {
+	srv, tokens, hub := newWSServer(t)
+	conns := dialClients(t, srv, tokens, hub, "alice", "bob")
+
+	closes := make(chan *websocket.CloseError, len(conns))
+	for _, conn := range conns {
+		go func() { // a reading client sees the close frame and answers it
+			_, _, err := conn.ReadMessage()
+			var ce *websocket.CloseError
+			errors.As(err, &ce)
+			closes <- ce
+		}()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	hub.CloseAll(ctx)
+	assert.Less(t, time.Since(start), time.Second, "no need to wait for the deadline")
+	assert.Zero(t, hub.count())
+	for range conns {
+		ce := <-closes
+		require.NotNil(t, ce)
+		assert.Equal(t, websocket.CloseGoingAway, ce.Code)
+		assert.Equal(t, "server shutting down", ce.Text)
+	}
+}
+
+// TestCloseAllClosesUnresponsiveClients: a client that never answers the
+// close frame is cut off when the shutdown budget runs out.
+func TestCloseAllClosesUnresponsiveClients(t *testing.T) {
+	srv, tokens, hub := newWSServer(t)
+	dialClients(t, srv, tokens, hub, "carol") // never reads, so never answers
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	hub.CloseAll(ctx)
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, 200*time.Millisecond)
+	assert.Less(t, elapsed, time.Second)
+	assert.Eventually(t, func() bool { return hub.count() == 0 }, time.Second, 10*time.Millisecond)
 }

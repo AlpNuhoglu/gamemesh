@@ -169,3 +169,55 @@ func TestMatchLoopBeatsEvenWhenTicksFail(t *testing.T) {
 		time.Second, 5*time.Millisecond, "the loop beats although its ticks fail")
 	assert.NotZero(t, logs.FilterMessage("match tick failed").Len(), "ticks really did fail")
 }
+
+// blockingPublisher holds the first Publish until released, standing in for
+// a tick that is mid-flight when shutdown begins.
+type blockingPublisher struct {
+	started chan struct{}
+	release chan struct{}
+	ctxErr  chan error
+	once    sync.Once
+}
+
+func (p *blockingPublisher) Publish(ctx context.Context, _ string, _ events.Event) error {
+	p.once.Do(func() { close(p.started) })
+	<-p.release
+	p.ctxErr <- ctx.Err()
+	return nil
+}
+
+func (p *blockingPublisher) Close() error { return nil }
+
+// TestMatchLoopFinishesTickOnShutdown: cancelling the loop mid-tick must not
+// cut the tick between "players dequeued" and "MatchFound published", which
+// would leave matched players out of the queue and never told.
+func TestMatchLoopFinishesTickOnShutdown(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	pub := &blockingPublisher{started: make(chan struct{}), release: make(chan struct{}), ctxErr: make(chan error, 1)}
+	svc := NewService(NewQueue(rdb), NewRoomStore(rdb, time.Hour), pub,
+		metrics.New("matchmaking-shutdown-test"), zap.NewNop(),
+		Config{RankWindow: 100, BatchSize: 1000, MaxQueueAge: time.Minute})
+	require.NoError(t, svc.JoinQueue(context.Background(), "alice", 1000))
+	require.NoError(t, svc.JoinQueue(context.Background(), "bob", 1050))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { svc.RunMatchLoop(ctx, 5*time.Millisecond); close(stopped) }()
+
+	<-pub.started // the tick is now publishing MatchFound
+	cancel()      // shutdown begins mid-tick
+	select {
+	case <-stopped:
+		t.Fatal("the loop returned before its tick finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(pub.release)
+
+	assert.NoError(t, <-pub.ctxErr, "the tick's context is not cancelled by shutdown")
+	<-stopped
+	_, size, err := svc.QueueStatus(context.Background(), "alice")
+	require.NoError(t, err)
+	assert.Zero(t, size, "both players were dequeued and notified")
+}
