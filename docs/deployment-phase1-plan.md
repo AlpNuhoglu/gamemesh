@@ -465,7 +465,7 @@ Her adım şu yapıda:
 
 ### A5. CI'daki servis listesi tutarsızlığını gider
 
-- [ ] **Ne:** [ci.yml](../.github/workflows/ci.yml) içindeki `build` ve `docker` job'larına
+- [x] **Ne:** [ci.yml](../.github/workflows/ci.yml) içindeki `build` ve `docker` job'larına
   `presence` ve `outbox-relay` servislerini eklemek. Servis listesini tek bir yerde tutmak.
 - **Neden:** Şu an CI 7 servisin 5'ini derliyor. `presence` ya da `outbox-relay` bozulsa CI
   yeşil kalır, hata deploy anında ortaya çıkar. "CI yeşil" bilgisinin anlamlı olması için
@@ -494,6 +494,13 @@ Her adım şu yapıda:
   - Plan maddesi 3'ten sapma: `cancel-in-progress` sadece PR'larda; `main`'de iptal edilen
     bir çalıştırma, aynı workflow'daki deploy'u yarıda kesebilir.
   - #25 düzeltmesi bu adıma alındı (bkz. A4 Sonuç).
+- **Sonuç (2026-10-16), PR #23'ün CI'ı:** 7 `docker` job'unun 7'si yeşil (presence ve
+  outbox-relay dahil); `build` job'u yok; artifact olarak sadece `coverage` var.
+  `security`: `Setup go version spec 1.26.9`, uyarı yok (#25 gerçekten çözüldü). Token
+  yetkileri: `Contents: read`, `Metadata: read`. Toplam süre 338 sn → 280 sn (önceki
+  ölçüm `main`'deydi ve 6 sn'lik deploy'u içeriyordu); `docker` job'ları 91–124 sn → 70–86
+  sn. `concurrency`: PR'a ikinci push gelince ilk çalıştırma `cancelled` oldu (`test`,
+  `docker`, `security` yarıda kesildi).
 
 ### A5a. CI güvenlik taramalarını sıkılaştır *(incelemeden eklendi)*
 
@@ -1113,12 +1120,12 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 17 | Shutdown timeout'unda `log.Fatal` `defer`'leri atlıyor | M4 | Kod | A3a (çözüldü) |
 | 18 | Matchmaking'in kapanışta yarıda kesilmesinin etkisi doğrulanmadı | M4 | Açık soru | A3a (çözüldü: planlı kapanış; SIGKILL boşluğu Faz 1 sonrası) |
 | 19 | **Websocket oturum kontrolü yapmıyor; logout WS'i kapatmıyor** | M8 | Ölçüldü | A3b (çözüldü) |
-| 20 | CI'da 7 servisin 5'i build ediliyor | M7 | Kod | A5 |
-| 21 | `build` job'u gereksiz; docker `.tar` artifact'ları kullanılmıyor | M7 | Kod | A5 |
-| 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 |
+| 20 | CI'da 7 servisin 5'i build ediliyor | M7 | Kod | A5 (çözüldü: matrix `cmd/`'den) |
+| 21 | `build` job'u gereksiz; docker `.tar` artifact'ları kullanılmıyor | M7 | Kod | A5 (çözüldü) |
+| 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 (çözüldü) |
 | 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a |
 | 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a |
-| 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te düzeltildi (`go-version-input: ""`) |
+| 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te çözüldü (`go-version-input: ""`, CI'da 1.26.9) |
 | 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a |
 | 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a |
 | 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 |
