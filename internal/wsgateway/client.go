@@ -21,6 +21,8 @@ const (
 // (writePump) per connection; all sends go through the buffered send channel.
 type Client struct {
 	playerID string
+	jti      string    // session the connection was opened with
+	expires  time.Time // JWT expiry; the connection must not outlive it
 	conn     *websocket.Conn
 	send     chan []byte
 	hub      *Hub
@@ -28,15 +30,26 @@ type Client struct {
 	log      *zap.Logger
 }
 
-func newClient(playerID string, conn *websocket.Conn, hub *Hub, log *zap.Logger) *Client {
+func newClient(playerID, jti string, expires time.Time, conn *websocket.Conn, hub *Hub, log *zap.Logger) *Client {
 	return &Client{
 		playerID: playerID,
+		jti:      jti,
+		expires:  expires,
 		conn:     conn,
 		send:     make(chan []byte, sendBuffer),
 		hub:      hub,
 		rooms:    make(map[string]struct{}),
 		log:      log,
 	}
+}
+
+// closeWith tells the client why it is being disconnected and closes the
+// connection shortly after, leaving it a moment to answer the close frame;
+// readPump then unregisters it. 1008 (policy violation) tells a well-behaved
+// client not to reconnect with the same token.
+func (c *Client) closeWith(code int, reason string) {
+	_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(writeWait))
+	time.AfterFunc(time.Second, func() { _ = c.conn.Close() })
 }
 
 // trySend drops the message if the client's buffer is full — a slow consumer

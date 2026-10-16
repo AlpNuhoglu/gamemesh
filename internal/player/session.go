@@ -18,6 +18,9 @@ type SessionStore interface {
 	Save(ctx context.Context, jti, playerID string, ttl time.Duration) error
 	Delete(ctx context.Context, jti string) error
 	Exists(ctx context.Context, jti string) (bool, error)
+	// ExistsMany reports, in order, whether each session exists, in one round
+	// trip. The WebSocket service uses it to re-check every open connection.
+	ExistsMany(ctx context.Context, jtis []string) ([]bool, error)
 }
 
 type redisSessionStore struct {
@@ -42,6 +45,22 @@ func (s *redisSessionStore) Delete(ctx context.Context, jti string) error {
 func (s *redisSessionStore) Exists(ctx context.Context, jti string) (bool, error) {
 	n, err := s.rdb.Exists(ctx, sessionKey(jti)).Result()
 	return n > 0, err
+}
+
+func (s *redisSessionStore) ExistsMany(ctx context.Context, jtis []string) ([]bool, error) {
+	pipe := s.rdb.Pipeline()
+	cmds := make([]*redis.IntCmd, len(jtis))
+	for i, jti := range jtis {
+		cmds[i] = pipe.Exists(ctx, sessionKey(jti))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]bool, len(jtis))
+	for i, cmd := range cmds {
+		out[i] = cmd.Val() > 0
+	}
+	return out, nil
 }
 
 // cachedSessionStore wraps a SessionStore with a short-lived, in-process
@@ -118,6 +137,11 @@ func (c *cachedSessionStore) Exists(ctx context.Context, jti string) (bool, erro
 	}
 	c.set(jti, exists)
 	return exists, nil
+}
+
+// ExistsMany bypasses the cache: a batch re-check wants Redis' current view.
+func (c *cachedSessionStore) ExistsMany(ctx context.Context, jtis []string) ([]bool, error) {
+	return c.inner.ExistsMany(ctx, jtis)
 }
 
 func (c *cachedSessionStore) get(jti string) (bool, bool) {

@@ -35,10 +35,10 @@ func NewBridge(hub *Hub, sub events.Subscriber, log *zap.Logger) *Bridge {
 func (b *Bridge) Run(ctx context.Context) error {
 	if ack, ok := b.sub.(events.AckSubscriber); ok {
 		b.log.Info("event bridge started", zap.String("mode", "ack"))
-		return ack.SubscribeAck(ctx, b.dispatch, events.TopicMatchmaking, events.TopicLeaderboard)
+		return ack.SubscribeAck(ctx, b.dispatch, events.TopicMatchmaking, events.TopicLeaderboard, events.TopicPlayer)
 	}
 
-	ch, err := b.sub.Subscribe(ctx, events.TopicMatchmaking, events.TopicLeaderboard)
+	ch, err := b.sub.Subscribe(ctx, events.TopicMatchmaking, events.TopicLeaderboard, events.TopicPlayer)
 	if err != nil {
 		return err
 	}
@@ -85,6 +85,15 @@ func (b *Bridge) dispatch(ctx context.Context, e events.Event) error {
 	case events.TypeLeaderboardUpdated:
 		span.SetAttributes(attribute.String("ws.fanout", "broadcast"))
 		b.hub.BroadcastAll(marshal(Message{Type: events.TypeLeaderboardUpdated, Data: e.Payload}))
+	case events.TypeSessionRevoked:
+		var p events.SessionRevokedPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil || p.JTI == "" {
+			tracing.RecordError(span, err)
+			b.log.Warn("malformed SessionRevoked payload", zap.Error(err))
+			return nil // poison message: drop, do not redeliver
+		}
+		closed := b.hub.CloseSession(p.JTI)
+		span.SetAttributes(attribute.Int("ws.closed", closed))
 	default:
 		b.log.Debug("ignoring event", zap.String("type", e.Type))
 	}

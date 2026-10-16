@@ -1,7 +1,9 @@
 package wsgateway
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/httpx"
+	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
 
@@ -17,26 +20,36 @@ import (
 // Unlike REST services, this service validates JWTs itself: browsers cannot
 // set an Authorization header on a WebSocket upgrade, so the token arrives as
 // a ?token= query parameter (an Authorization header is also accepted for
-// non-browser clients).
+// non-browser clients). Like the gateway, it also requires the token's session
+// to still exist, so a logged-out token or one with a forged JTI is refused.
 type Handler struct {
 	hub      *Hub
 	tokens   *auth.TokenManager
+	sessions middleware.SessionChecker
 	upgrader websocket.Upgrader
 	log      *zap.Logger
 }
 
-// NewHandler constructs the handler. allowedOrigins mirrors the HTTP CORS
-// configuration for the upgrade handshake's Origin check.
-func NewHandler(hub *Hub, tokens *auth.TokenManager, allowedOrigins []string, log *zap.Logger) *Handler {
+// sessionCheckTimeout bounds the session lookup during the handshake, so a
+// stalled Redis or an exhausted connection pool answers 503 quickly instead
+// of holding the upgrade open; clients retry with jitter.
+const sessionCheckTimeout = 2 * time.Second
+
+// NewHandler constructs the handler. sessions must not be cached: the lookup
+// happens once per connection, so revocation takes effect immediately.
+// allowedOrigins mirrors the HTTP CORS configuration for the upgrade
+// handshake's Origin check.
+func NewHandler(hub *Hub, tokens *auth.TokenManager, sessions middleware.SessionChecker, allowedOrigins []string, log *zap.Logger) *Handler {
 	allowAll := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
 		allowed[o] = struct{}{}
 	}
 	return &Handler{
-		hub:    hub,
-		tokens: tokens,
-		log:    log,
+		hub:      hub,
+		tokens:   tokens,
+		sessions: sessions,
+		log:      log,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -76,6 +89,20 @@ func (h *Handler) serveWS(c *gin.Context) {
 		httpx.Error(c, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
+	// A valid signature is not enough: the session must still exist. On a
+	// lookup error we reject rather than fail open, as the gateway does.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), sessionCheckTimeout)
+	active, err := h.sessions.Exists(ctx, claims.ID)
+	cancel()
+	if err != nil {
+		h.log.Warn("websocket session check failed", zap.Error(err))
+		httpx.Error(c, http.StatusServiceUnavailable, "session check unavailable")
+		return
+	}
+	if !active {
+		httpx.Error(c, http.StatusUnauthorized, "token revoked")
+		return
+	}
 
 	// Trace connection establishment only — the long-lived read/write pumps are
 	// intentionally NOT traced (per-frame spans would grow without bound).
@@ -90,7 +117,7 @@ func (h *Handler) serveWS(c *gin.Context) {
 		return
 	}
 
-	client := newClient(claims.PlayerID, conn, h.hub, h.log)
+	client := newClient(claims.PlayerID, claims.ID, claims.ExpiresAt.Time, conn, h.hub, h.log)
 	h.hub.register(client)
 	h.log.Info("websocket connected",
 		append([]zap.Field{zap.String("player_id", claims.PlayerID)},

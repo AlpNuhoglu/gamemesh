@@ -341,7 +341,7 @@ Her adım şu yapıda:
 
 ### A3b. WebSocket oturum güvenliği *(incelemeden eklendi, canlıya çıkmadan önce zorunlu)*
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. [internal/wsgateway/handler.go](../internal/wsgateway/handler.go) bağlantı kurulurken
      token'ın imzasına ek olarak oturumun Redis'te aktif olup olmadığını kontrol etmeli
      (gateway'in kullandığı `SessionChecker` ile).
@@ -361,6 +361,32 @@ Her adım şu yapıda:
   savunma derinliği (defense in depth).
 - **Bitti sayılır:** Logout'tan sonra aynı token ile WS bağlantısı 401 alıyor. Açık bir WS
   bağlantısı logout'tan sonra kapanıyor.
+- **Sonuç (2026-10-16):** Üç commit, compose üzerinde ölçüldü. Karar (2026-10-16): event
+  **ve** periyodik tarama birlikte (seçenek c).
+  1. El sıkışmada önbelleksiz Redis oturum kontrolü (fail closed, 2 sn sınır). Logout
+     edilmiş token'la yeni WS: kabul → **401**. Gerçek secret'la imzalanmış ama uydurma
+     `jti`'li token: gateway 401, websocket 401 (secret sızıntısına karşı ikinci hat).
+     Redis kapalıyken el sıkışma 0,15 sn'de 503; websocket `/readyz` artık Redis'i de
+     kontrol ediyor. `REDIS_POOL_SIZE` websocket'e de bağlandı.
+     *Bağlantı fırtınası (kullanıcının işaret ettiği risk):* tek istemciden aynı anda 2000
+     ve 5000 el sıkışma; havuz 140 (varsayılan, 14 CPU), 20 ve 2 ile hepsi açıldı, hata
+     0 (havuz 2'de 5000 el sıkışma 1,21 sn, p95 965 ms; 140'ta 824 ms). Aynı node'daki bir
+     `EXISTS` milisaniyenin altında, yani birkaç bağlantı saniyede binlerce kontrolü
+     taşıyor (Little yasası). Risk, Redis gecikmesinin yükseldiği durumda; 2 sn'lik sınır
+     o zaman hızlı 503 ve istemci jitter'ı sağlıyor.
+  2. Her 10 sn'de tarama (1000'lik Redis pipeline'ları): oturumu silinmiş ya da JWT'si
+     süresi dolmuş (Bulgu #59) bağlantılar `1008` ile kapanıyor. Redis hatasında **fail
+     open** (bağlantılar korunuyor). Logout sonrası açık WS: 8 sn sonra hâlâ açık →
+     **7,5–7,7 sn**'de `1008 "session revoked"`.
+  3. Logout outbox'a `SessionRevoked{jti}` yazıyor; bridge sadece o `jti`'nin bağlantısını
+     kapatıyor (oyuncunun diğer cihazları açık kalıyor). Logout → kapanış **0,3–0,9 sn**.
+     Event yazılamazsa logout yine başarılı, tarama 10 sn içinde kapatıyor.
+  - İstemci sözleşmesi `docs/api.md`'de: 1001 → jitter'la yeniden bağlan; 1008 → aynı
+    token'la bağlanma, tekrar login ol.
+  - Gözlem: gateway logout'tan hemen sonra hâlâ 200, 6 sn sonra 401 (belgelenmiş 5 sn'lik
+    önbellek). Faz 1 sonrasına iyileştirme olarak yazıldı.
+  - Birden fazla websocket replica'sında event bunlardan sadece birine gider (Bulgu #29);
+    A7'ye kadar diğerlerini tarama kapsıyor.
 
 ### A4. Dockerfile'ları üretime hazırla
 
@@ -531,7 +557,8 @@ Her adım şu yapıda:
      websocket için pod başına consumer (pod adını içeren bir isim ya da ephemeral
      consumer) ve `DeliverPolicy: DeliverNew` (şu anki `DeliverAll` ile her yeni pod
      stream geçmişini istemcilere tekrar oynatır). Diğer servisler için paylaşılan durable
-     doğru davranış.
+     doğru davranış. *A3b'den ek:* websocket artık PLAYER stream'ini de dinliyor
+     (`SessionRevoked`); aynı paylaşım sorunu logout kapatmalarını da bölüyor.
   2. **Matchmaking için `strategy: Recreate` (M5, yeni bulgu):**
      [12-matchmaking.yaml](../deployments/k8s/12-matchmaking.yaml) "single replica by
      design" diyor, ama varsayılan RollingUpdate (`maxSurge` 1'e yuvarlanır) deploy
@@ -994,6 +1021,12 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   binary'ye `/service healthcheck` alt komutu gerekir; preStop için k8s'in yerleşik
   `sleep` eylemi.
 - **Prometheus için `ClusterRole` yerine namespace'e sınırlı `Role`** (least privilege, M5).
+- **Gateway, başarılı logout'ta kendi oturum önbelleğindeki `jti`'yi silsin (A3b):** Bugün
+  logout'tan sonra 5 sn boyunca gateway'de token hâlâ geçerli (ölçüldü: hemen 200, 6 sn
+  sonra 401). Logout isteği zaten gateway'den geçtiği için yanıt başarılıysa yerel girdi
+  silinebilir.
+- **go-redis havuz metrikleri (A3b):** `PoolStats` (`Timeouts`, `TotalConns`, `Hits`)
+  Prometheus'a aktarılsın; havuz tükenmesi prod'da tahminle değil ölçümle görülsün.
 - **Gateway'de upstream başına circuit breaker** (M3, Soru 2): Sürekli hata veren bir
   upstream'e bir süre hiç istek göndermeden anında 503 dönmek.
 - **CPU limiti stratejisi (M6):** CPU limitleri, CFS throttling ve probe timeout'ları
@@ -1039,7 +1072,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 16 | Arka plan işçilerinin bitmesi beklenmiyor | M4 | Kod | A3a (çözüldü) |
 | 17 | Shutdown timeout'unda `log.Fatal` `defer`'leri atlıyor | M4 | Kod | A3a (çözüldü) |
 | 18 | Matchmaking'in kapanışta yarıda kesilmesinin etkisi doğrulanmadı | M4 | Açık soru | A3a (çözüldü: planlı kapanış; SIGKILL boşluğu Faz 1 sonrası) |
-| 19 | **Websocket oturum kontrolü yapmıyor; logout WS'i kapatmıyor** | M8 | Ölçüldü | A3b |
+| 19 | **Websocket oturum kontrolü yapmıyor; logout WS'i kapatmıyor** | M8 | Ölçüldü | A3b (çözüldü) |
 | 20 | CI'da 7 servisin 5'i build ediliyor | M7 | Kod | A5 |
 | 21 | `build` job'u gereksiz; docker `.tar` artifact'ları kullanılmıyor | M7 | Kod | A5 |
 | 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 |
@@ -1064,7 +1097,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 41 | Otomatik secret taraması yok | M8 | Kod | A9, A5a |
 | 42 | `kubeconform` anlamsal hataları yakalayamıyor | M5, M7 | Kod | A10 |
 | 43 | Docker/k3s `ufw`'yi atlıyor | M2 | Bilgi | B2 |
-| 44 | `/ws` ingress'te gateway'i atlıyor | M8 | Kod | C4, A3b |
+| 44 | `/ws` ingress'te gateway'i atlıyor | M8 | Kod | A3b (çözüldü: websocket artık oturumu kendisi kontrol ediyor); C4'te `/ws` açılabilir |
 | 45 | `rollout status` shallow readiness ile anlamsız | M6 | Kod | D2 |
 | 46 | `docs/deployment.md` CI ve servis sayısı bilgisi hatalı | M7 | Kod | D4 |
 | 47 | Şema dört ayrı yerde; `AutoMigrate` yarışı | M2, M5 | Kod | Faz 1 sonrası |
@@ -1077,5 +1110,6 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
 | 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
-| 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a |
+| 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a (çözüldü: 75 sn → 5 sn, açılışta retry) |
 | 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (Docker Desktop yeniden açılışında doğrulanacak) |
+| 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |

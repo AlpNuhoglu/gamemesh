@@ -3,6 +3,7 @@ package player
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,8 +20,17 @@ import (
 // methods capture the emitted event so tests can assert the outbox payload
 // without a database (the real atomicity is covered by the integration tests).
 type mockRepository struct {
-	players map[uuid.UUID]*Player
-	events  []events.Event
+	players    map[uuid.UUID]*Player
+	events     []events.Event
+	publishErr error
+}
+
+func (r *mockRepository) PublishEvent(_ context.Context, e events.Event, _ string) error {
+	if r.publishErr != nil {
+		return r.publishErr
+	}
+	r.events = append(r.events, e)
+	return nil
 }
 
 func newMockRepository() *mockRepository {
@@ -113,6 +123,14 @@ func (s *fakeSessions) Delete(_ context.Context, jti string) error {
 func (s *fakeSessions) Exists(_ context.Context, jti string) (bool, error) {
 	_, ok := s.saved[jti]
 	return ok, nil
+}
+
+func (s *fakeSessions) ExistsMany(_ context.Context, jtis []string) ([]bool, error) {
+	out := make([]bool, len(jtis))
+	for i, jti := range jtis {
+		_, out[i] = s.saved[jti]
+	}
+	return out, nil
 }
 
 func newTestService() (*Service, *mockRepository, *fakeSessions) {
@@ -230,4 +248,43 @@ func TestUpdateProfile(t *testing.T) {
 
 	_, err = svc.UpdateProfile(ctx, uuid.New(), UpdateInput{Username: &newName})
 	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+// loginJTI registers and logs in alice and returns her session's JTI.
+func loginJTI(t *testing.T, svc *Service, sessions *fakeSessions) string {
+	t.Helper()
+	ctx := context.Background()
+	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
+	require.NoError(t, err)
+	_, _, err = svc.Login(ctx, "alice", "password123")
+	require.NoError(t, err)
+	for jti := range sessions.saved {
+		return jti
+	}
+	t.Fatal("no session saved")
+	return ""
+}
+
+func TestLogoutAnnouncesRevocation(t *testing.T) {
+	svc, repo, sessions := newTestService()
+	jti := loginJTI(t, svc, sessions)
+
+	require.NoError(t, svc.Logout(context.Background(), jti))
+
+	last := repo.events[len(repo.events)-1]
+	assert.Equal(t, events.TypeSessionRevoked, last.Type)
+	var p events.SessionRevokedPayload
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	assert.Equal(t, jti, p.JTI)
+}
+
+// TestLogoutSucceedsWhenAnnouncementFails: the revocation is the Redis delete;
+// a failed announcement is covered by the WebSocket sweep.
+func TestLogoutSucceedsWhenAnnouncementFails(t *testing.T) {
+	svc, repo, sessions := newTestService()
+	jti := loginJTI(t, svc, sessions)
+	repo.publishErr = errors.New("postgres down")
+
+	require.NoError(t, svc.Logout(context.Background(), jti))
+	assert.Contains(t, sessions.deleted, jti)
 }
