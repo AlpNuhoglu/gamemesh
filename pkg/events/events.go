@@ -24,6 +24,9 @@ const (
 	// be lost once the registration/update commits (no dual-write).
 	TypePlayerRegistered = "PlayerRegistered"
 	TypePlayerUpdated    = "PlayerUpdated"
+	// TypeSessionRevoked is written to the outbox on logout so the WebSocket
+	// service can close the connections opened with that session at once.
+	TypeSessionRevoked = "SessionRevoked"
 	// Presence events. Emitted by the Presence Service on connection-driven
 	// transitions. Published directly to NATS (not via the outbox): presence is
 	// high-churn and self-correcting — a dropped event is re-derived on the next
@@ -100,6 +103,11 @@ type PlayerUpdatedPayload struct {
 	PlayerID string `json:"player_id"`
 	Username string `json:"username"`
 	Email    string `json:"email"`
+}
+
+// SessionRevokedPayload names the revoked session (JWT ID).
+type SessionRevokedPayload struct {
+	JTI string `json:"jti"`
 }
 
 // PresenceChangedPayload is emitted on every presence transition. It carries

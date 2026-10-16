@@ -84,6 +84,17 @@ Leaves the queue. **404** if not queued.
 Connect via gateway (`:8080/ws`) or directly (`:8084/ws`). The token may also
 be sent as an `Authorization: Bearer` header (non-browser clients).
 
+The handshake needs a valid JWT **and** a live session: a logged-out token
+gets `401`, and `503` means the session store did not answer (retry later).
+
+**Close codes the server sends**
+
+| Code | Reason | What the client should do |
+|---|---|---|
+| `1001` | `server shutting down` | Reconnect after a random delay (jitter), then re-read state, e.g. `GET /queue/status`. |
+| `1008` | `session revoked` | The session was logged out (closed within about a second, at most 10 s). Do not reconnect with this token; log in again. |
+| `1008` | `token expired` | The JWT expired while connected. Log in again. |
+
 **Client → server**
 ```json
 { "action": "join",  "room": "<room-id>" }

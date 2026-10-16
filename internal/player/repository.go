@@ -35,6 +35,9 @@ type Repository interface {
 	GetByEmail(ctx context.Context, email string) (*Player, error)
 	Update(ctx context.Context, p *Player) error
 	UpdateWithOutbox(ctx context.Context, p *Player, e events.Event, topic string) error
+	// PublishEvent writes an event to the outbox on its own, for events with no
+	// accompanying row change (a logout).
+	PublishEvent(ctx context.Context, e events.Event, topic string) error
 }
 
 type gormRepository struct {
@@ -72,6 +75,10 @@ func (r *gormRepository) UpdateWithOutbox(ctx context.Context, p *Player, e even
 		}
 		return r.out.WithTx(tx).Publish(ctx, topic, e)
 	}))
+}
+
+func (r *gormRepository) PublishEvent(ctx context.Context, e events.Event, topic string) error {
+	return r.out.Publish(ctx, topic, e)
 }
 
 func (r *gormRepository) GetByID(ctx context.Context, id uuid.UUID) (*Player, error) {

@@ -76,3 +76,22 @@ func (h *Hub) sweepSessions(ctx context.Context, sessions SessionBatchChecker) {
 		}
 	}
 }
+
+// CloseSession closes, with 1008 "session revoked", the connections opened
+// with the given session. It handles the logout event; the sweep is the
+// fallback when that event is missed. A linear scan is fine at this scale; a
+// jti index would make it O(1) if logouts ever become frequent.
+func (h *Hub) CloseSession(jti string) int {
+	h.mu.RLock()
+	var matched []*Client
+	for c := range h.clients {
+		if c.jti == jti && c.conn != nil {
+			matched = append(matched, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range matched {
+		c.closeWith(websocket.ClosePolicyViolation, "session revoked")
+	}
+	return len(matched)
+}

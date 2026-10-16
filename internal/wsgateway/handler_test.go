@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
+	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
@@ -303,4 +304,27 @@ func TestSweepKeepsConnectionsWhenRedisFails(t *testing.T) {
 
 	time.Sleep(1500 * time.Millisecond) // past closeWith's grace period
 	assert.Equal(t, 1, hub.count())
+}
+
+// TestBridgeClosesRevokedSession: the logout event closes the connection
+// opened with that session at once, and only that one.
+func TestBridgeClosesRevokedSession(t *testing.T) {
+	srv, tokens, hub, _ := newWSServerWithSessions(t)
+	revokedToken, revokedJTI, err := tokens.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	otherToken, _, err := tokens.Generate(uuid.New(), "alice") // same player, another device
+	require.NoError(t, err)
+	revoked := dialToken(t, srv, revokedToken)
+	dialToken(t, srv, otherToken)
+	require.Eventually(t, func() bool { return hub.count() == 2 }, time.Second, 10*time.Millisecond)
+
+	e, err := events.New(events.TypeSessionRevoked, events.SessionRevokedPayload{JTI: revokedJTI})
+	require.NoError(t, err)
+	require.NoError(t, NewBridge(hub, nil, zap.NewNop()).dispatch(context.Background(), e))
+
+	ce := readClose(t, revoked)
+	assert.Equal(t, websocket.ClosePolicyViolation, ce.Code)
+	assert.Equal(t, "session revoked", ce.Text)
+	assert.Eventually(t, func() bool { return hub.count() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"the player's other session stays connected")
 }

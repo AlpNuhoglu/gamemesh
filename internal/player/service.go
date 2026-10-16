@@ -103,8 +103,22 @@ func (s *Service) Login(ctx context.Context, identifier, password string) (strin
 }
 
 // Logout revokes the session for the given JTI.
+// Logout revokes the session and announces it so open WebSocket connections
+// opened with it are closed at once. The revocation is the Redis delete; if
+// the announcement fails, the WebSocket service's periodic session sweep
+// still closes those connections, so the logout itself succeeds.
 func (s *Service) Logout(ctx context.Context, jti string) error {
-	return s.sessions.Delete(ctx, jti)
+	if err := s.sessions.Delete(ctx, jti); err != nil {
+		return err
+	}
+	e, err := events.New(events.TypeSessionRevoked, events.SessionRevokedPayload{JTI: jti})
+	if err == nil {
+		err = s.repo.PublishEvent(ctx, e, events.TopicPlayer)
+	}
+	if err != nil {
+		s.log.Warn("failed to announce session revocation", zap.Error(err))
+	}
+	return nil
 }
 
 // GetProfile fetches a player with stats.
