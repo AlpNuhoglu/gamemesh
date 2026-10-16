@@ -5,6 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: the token can only read the repository; a job that needs
+# more (pushing images, A6) asks for it itself. The repository default is
+# already read-only, but stating it here does not depend on that setting.
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Runs on main are never
+# cancelled, only queued: cancelling one could stop a deploy halfway, since
+# the deploy job runs in this workflow.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -49,31 +62,27 @@ jobs:
       - name: Integration tests (Testcontainers)
         run: go test -tags integration -timeout 10m ./tests/integration/...
 
-  build:
+  services:
+    # The image matrix comes from the cmd/ directories, so a new service is
+    # built (and later published) without anyone remembering to list it here.
+    # A hand-written list had drifted to 5 of the 7 services.
     runs-on: ubuntu-latest
-    needs: test
+    outputs:
+      list: ${{ steps.list.outputs.list }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: Build all services
+      - id: list
         run: |
-          mkdir -p bin
-          for svc in gateway player matchmaking leaderboard websocket; do
-            CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "bin/$svc" "./cmd/$svc"
-          done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: binaries
-          path: bin/
+          list=$(for d in cmd/*/; do basename "$d"; done | jq -Rcs 'split("\n") | map(select(length > 0))')
+          echo "services: $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
 
   docker:
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, services]
     strategy:
       matrix:
-        service: [gateway, player, matchmaking, leaderboard, websocket]
+        service: ${{ fromJSON(needs.services.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -86,15 +95,11 @@ jobs:
             SERVICE=${{ matrix.service }}
             VERSION=${{ github.sha }}
           tags: gamemesh/${{ matrix.service }}:${{ github.sha }}
-          push: false # set true with registry credentials to publish
+          # Build only: proves every image builds. Publishing to a registry
+          # comes with the deploy pipeline (A6).
+          push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/${{ matrix.service }}.tar
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-${{ matrix.service }}
-          path: /tmp/${{ matrix.service }}.tar
 
   security:
     runs-on: ubuntu-latest
@@ -118,6 +123,10 @@ jobs:
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
+          # The action defaults go-version-input to "stable", and setup-go
+          # prefers go-version over go-version-file when both are set, so
+          # without clearing it govulncheck audited the latest Go instead.
+          go-version-input: ""
           go-version-file: go.mod
 
   deploy:
