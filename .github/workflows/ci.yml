@@ -5,6 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: the token can only read the repository; a job that needs
+# more (pushing images, A6) asks for it itself. The repository default is
+# already read-only, but stating it here does not depend on that setting.
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Runs on main are never
+# cancelled, only queued: cancelling one could stop a deploy halfway, since
+# the deploy job runs in this workflow.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
