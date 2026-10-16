@@ -109,11 +109,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Trivy filesystem scan
+      # Report only, until the manifests are reworked (A7): today it finds 33
+      # HIGH issues, all in deployments/k8s (no securityContext, writable root
+      # filesystem). Runs first so the blocking scan below cannot skip it.
+      - name: Trivy misconfiguration scan (report only)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+      # The scanners are named: left empty, Trivy runs vuln and secret only, and
+      # a step once called "deps + misconfig" never checked a single manifest.
+      - name: Trivy dependency and secret scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
