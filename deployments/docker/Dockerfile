@@ -18,11 +18,15 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 ARG SERVICE
 ARG TARGETOS TARGETARCH
+# The commit this image is built from; /health and traces report it.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     test -n "$SERVICE" || { echo "set --build-arg SERVICE=<name of a cmd/ dir>" >&2; exit 1; }; \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/service "./cmd/$SERVICE"
+    go build -trimpath \
+      -ldflags="-s -w -X github.com/alpnuhoglu/gamemesh/pkg/config.version=$VERSION" \
+      -o /out/service "./cmd/$SERVICE"
 
 FROM alpine:3.24.2
 COPY --from=build /out/service /service

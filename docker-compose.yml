@@ -42,7 +42,6 @@ x-service-env: &service-env
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
   OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
   OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
-  SERVICE_VERSION: ${SERVICE_VERSION:-dev}
 
 services:
   postgres:
@@ -110,6 +109,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: gateway
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8080"
@@ -147,6 +147,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: player
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8081"
@@ -170,6 +171,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: matchmaking
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8082"
@@ -197,6 +199,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: leaderboard
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8083"
@@ -218,6 +221,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: websocket
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8084"
@@ -248,6 +252,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: presence
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8086"
@@ -278,6 +283,7 @@ services:
       dockerfile: deployments/docker/Dockerfile
       args:
         SERVICE: outbox-relay
+        VERSION: ${VERSION:-dev}
     environment:
       <<: *service-env
       HTTP_PORT: "8085"
