@@ -117,7 +117,7 @@ func (h *Handler) serveWS(c *gin.Context) {
 		return
 	}
 
-	client := newClient(claims.PlayerID, conn, h.hub, h.log)
+	client := newClient(claims.PlayerID, claims.ID, claims.ExpiresAt.Time, conn, h.hub, h.log)
 	h.hub.register(client)
 	h.log.Info("websocket connected",
 		append([]zap.Field{zap.String("player_id", claims.PlayerID)},

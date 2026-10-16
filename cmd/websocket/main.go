@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -21,6 +22,10 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
+
+// sessionSweepInterval is the worst-case delay before a revoked or expired
+// session's open connection is closed, if the logout event is missed.
+const sessionSweepInterval = 10 * time.Second
 
 func main() { os.Exit(run()) }
 
@@ -65,8 +70,10 @@ func run() int {
 	notifier := presence.NewHTTPNotifier(cfg.PresenceServiceURL, cfg.PresenceHeartbeatInterval)
 	hub := wsgateway.NewHub(log, m, notifier)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
-	// Sessions are checked straight against Redis, uncached: once per connection.
-	handler := wsgateway.NewHandler(hub, tokens, player.NewSessionStore(rdb), cfg.AllowedOrigins, log)
+	// Sessions are checked straight against Redis, uncached: once per
+	// connection at the handshake and every sessionSweepInterval afterwards.
+	sessions := player.NewSessionStore(rdb)
+	handler := wsgateway.NewHandler(hub, tokens, sessions, cfg.AllowedOrigins, log)
 
 	ctx, stop := server.ShutdownContext()
 	defer stop()
@@ -74,6 +81,8 @@ func run() int {
 
 	// Refresh presence TTL for every locally-connected player on a ticker.
 	workers.Go(func() { hub.RunHeartbeat(ctx, cfg.PresenceHeartbeatInterval) })
+	// Close connections whose session was revoked or whose JWT expired.
+	workers.Go(func() { hub.RunSessionSweep(ctx, sessionSweepInterval, sessions) })
 	bus, err := events.NewBus(events.Config{
 		Transport:   cfg.EventBus,
 		DurableName: cfg.ServiceName,

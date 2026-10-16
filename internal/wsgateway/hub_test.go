@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +17,7 @@ import (
 // newHubClient builds a client without a real socket: hub operations only
 // touch the send channel, never the conn.
 func newHubClient(hub *Hub, playerID string) *Client {
-	return newClient(playerID, nil, hub, zap.NewNop())
+	return newClient(playerID, "", time.Time{}, nil, hub, zap.NewNop())
 }
 
 func newTestHub() *Hub {

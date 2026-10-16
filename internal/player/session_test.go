@@ -51,6 +51,18 @@ func (s *countingStore) Exists(_ context.Context, jti string) (bool, error) {
 	return s.present[jti], nil
 }
 
+func (s *countingStore) ExistsMany(ctx context.Context, jtis []string) ([]bool, error) {
+	out := make([]bool, len(jtis))
+	for i, jti := range jtis {
+		ok, err := s.Exists(ctx, jti)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = ok
+	}
+	return out, nil
+}
+
 func (s *countingStore) calls() int32 { return atomic.LoadInt32(&s.existsCalls) }
 
 func TestSessionStoreLifecycle(t *testing.T) {
@@ -173,4 +185,20 @@ func TestCachedSessionStore_ConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestSessionStoreExistsMany(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := NewSessionStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	ctx := context.Background()
+	require.NoError(t, store.Save(ctx, "a", "p1", time.Hour))
+	require.NoError(t, store.Save(ctx, "c", "p3", time.Hour))
+
+	got, err := store.ExistsMany(ctx, []string{"a", "b", "c"})
+	require.NoError(t, err)
+	assert.Equal(t, []bool{true, false, true}, got)
+
+	mr.Close()
+	_, err = store.ExistsMany(ctx, []string{"a"})
+	assert.Error(t, err)
 }

@@ -39,6 +39,18 @@ func (f *fakeSessions) Exists(_ context.Context, jti string) (bool, error) {
 	return !f.revoked[jti], nil
 }
 
+func (f *fakeSessions) ExistsMany(ctx context.Context, jtis []string) ([]bool, error) {
+	out := make([]bool, len(jtis))
+	for i, jti := range jtis {
+		ok, err := f.Exists(ctx, jti)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = ok
+	}
+	return out, nil
+}
+
 func (f *fakeSessions) revoke(jti string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -212,4 +224,83 @@ func TestServeWSFailsClosedWhenSessionCheckFails(t *testing.T) {
 	require.Error(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+}
+
+// readClose waits for the server's close frame on conn.
+func readClose(t *testing.T, conn *websocket.Conn) *websocket.CloseError {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			var ce *websocket.CloseError
+			require.ErrorAs(t, err, &ce)
+			return ce
+		}
+	}
+}
+
+func dialToken(t *testing.T, srv *httptest.Server, token string) *websocket.Conn {
+	t.Helper()
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(srv.URL)+"/ws?token="+token, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+// TestSweepClosesRevokedSessions: a connection whose session was deleted
+// (logout) is closed with 1008 "session revoked"; others stay open.
+func TestSweepClosesRevokedSessions(t *testing.T) {
+	srv, tokens, hub, sessions := newWSServerWithSessions(t)
+	revokedToken, revokedJTI, err := tokens.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	liveToken, _, err := tokens.Generate(uuid.New(), "bob")
+	require.NoError(t, err)
+	revoked := dialToken(t, srv, revokedToken)
+	dialToken(t, srv, liveToken)
+	require.Eventually(t, func() bool { return hub.count() == 2 }, time.Second, 10*time.Millisecond)
+
+	sessions.revoke(revokedJTI)
+	hub.sweepSessions(context.Background(), sessions)
+
+	ce := readClose(t, revoked)
+	assert.Equal(t, websocket.ClosePolicyViolation, ce.Code)
+	assert.Equal(t, "session revoked", ce.Text)
+	assert.Eventually(t, func() bool { return hub.count() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"only the revoked connection is gone")
+}
+
+// TestSweepClosesExpiredTokens: an open connection must not outlive its JWT.
+func TestSweepClosesExpiredTokens(t *testing.T) {
+	srv, _, hub, sessions := newWSServerWithSessions(t)
+	shortLived := auth.NewTokenManager("ws-test-secret", 2*time.Second, "gamemesh")
+	token, _, err := shortLived.Generate(uuid.New(), "carol")
+	require.NoError(t, err)
+	conn := dialToken(t, srv, token)
+	require.Eventually(t, func() bool { return hub.count() == 1 }, time.Second, 10*time.Millisecond)
+
+	time.Sleep(2500 * time.Millisecond)
+	hub.sweepSessions(context.Background(), sessions)
+
+	ce := readClose(t, conn)
+	assert.Equal(t, websocket.ClosePolicyViolation, ce.Code)
+	assert.Equal(t, "token expired", ce.Text)
+}
+
+// TestSweepKeepsConnectionsWhenRedisFails: unlike the handshake, the sweep
+// fails open, so a Redis blip does not disconnect everyone at once.
+func TestSweepKeepsConnectionsWhenRedisFails(t *testing.T) {
+	srv, tokens, hub, sessions := newWSServerWithSessions(t)
+	token, _, err := tokens.Generate(uuid.New(), "dave")
+	require.NoError(t, err)
+	dialToken(t, srv, token)
+	require.Eventually(t, func() bool { return hub.count() == 1 }, time.Second, 10*time.Millisecond)
+
+	sessions.mu.Lock()
+	sessions.err = errors.New("redis: connection refused")
+	sessions.mu.Unlock()
+	hub.sweepSessions(context.Background(), sessions)
+
+	time.Sleep(1500 * time.Millisecond) // past closeWith's grace period
+	assert.Equal(t, 1, hub.count())
 }

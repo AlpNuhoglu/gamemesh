@@ -115,6 +115,14 @@ func (s *fakeSessions) Exists(_ context.Context, jti string) (bool, error) {
 	return ok, nil
 }
 
+func (s *fakeSessions) ExistsMany(_ context.Context, jtis []string) ([]bool, error) {
+	out := make([]bool, len(jtis))
+	for i, jti := range jtis {
+		_, out[i] = s.saved[jti]
+	}
+	return out, nil
+}
+
 func newTestService() (*Service, *mockRepository, *fakeSessions) {
 	repo := newMockRepository()
 	sessions := newFakeSessions()
