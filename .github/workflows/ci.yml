@@ -193,9 +193,19 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
+      # A pinned release whose hash is checked before it runs: "latest" could
+      # change under us, and a replaced release asset would run unchecked in
+      # the job that deploys. The hash is the release's own CHECKSUMS entry,
+      # recorded once, so a later swap of the file fails here. Bump both
+      # together.
       - name: Validate Kubernetes manifests (kubeconform, offline schema check)
+        env:
+          KUBECONFORM_VERSION: v0.8.0
+          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
         run: |
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          curl -fsSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
+          tar xzf kubeconform.tar.gz kubeconform
           ./kubeconform -strict -summary deployments/k8s/
       - name: Deploy (example)
         run: |
