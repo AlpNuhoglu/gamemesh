@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly, so a vulnerability published overnight turns main red the next
+  # morning instead of first surfacing in whichever pull request comes next
+  # (four past red runs came from the scans, two of them on docs-only PRs).
+  # GitHub runs schedules on the default branch and mails failures to whoever
+  # last edited this cron line; the odd minute avoids the top-of-hour load
+  # that delays scheduled runs.
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC
+  # The same run on demand, e.g. to check a fix without waiting a night.
+  workflow_dispatch:
 
 # Least privilege: the token can only read the repository; a job that needs
 # more (pushing images, A6) asks for it itself. The repository default is
@@ -13,9 +23,11 @@ permissions:
 
 # A new push to a pull request cancels its older run. Runs on main are never
 # cancelled, only queued: cancelling one could stop a deploy halfway, since
-# the deploy job runs in this workflow.
+# the deploy job runs in this workflow. The event is part of the group: a
+# group holds one pending run and a newer one cancels it, so a nightly run
+# sharing main's group could cancel a queued push and its deploy with it.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -177,7 +189,8 @@ jobs:
     # Every gate, and the images: needs is a data dependency, so docker must be
     # listed even though another job used to imply it.
     needs: [integration, docker, scan-deps, govulncheck]
-    if: github.ref == 'refs/heads/main'
+    # A scheduled or manual run also has ref main; only a push deploys.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
       - name: Validate Kubernetes manifests (kubeconform, offline schema check)
