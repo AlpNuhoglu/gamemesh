@@ -2,6 +2,8 @@ module github.com/alpnuhoglu/gamemesh
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
 	github.com/gin-gonic/gin v1.12.0

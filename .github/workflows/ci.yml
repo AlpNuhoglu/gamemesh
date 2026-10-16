@@ -5,17 +5,14 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  GO_VERSION: "1.26"
-
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
       - name: Download modules
         run: go mod download
@@ -28,9 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
       - name: Unit tests (race + coverage)
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./pkg/...
       - name: Coverage summary
@@ -46,9 +43,9 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
       - name: Integration tests (Testcontainers)
         run: go test -tags integration -timeout 10m ./tests/integration/...
 
@@ -57,9 +54,9 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
       - name: Build all services
         run: |
           mkdir -p bin
@@ -109,18 +106,16 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
-      # govulncheck reports stdlib vulnerabilities against the toolchain it
-      # runs on, so it must use the same Go version the services ship with
-      # (GO_VERSION, matching deployments/docker/*).
-      #
-      # Keep GO_VERSION a major version ("1.26"), not a pinned patch: a stale
-      # patch fails the job for CVEs that are not in this codebase (1.26.4
-      # reports 8 such findings, all fixed by 1.26.6). The major version
-      # resolves to the latest patch, which is the state that reports honestly.
+      # Every job reads the Go version from go.mod's toolchain directive (setup-go
+      # v6 honours it; v5 only read the go line), the same version the images
+      # are built with. govulncheck reports stdlib vulnerabilities against the
+      # toolchain it runs on, so it must audit exactly that version. When a new
+      # patch fixes a stdlib vulnerability this job turns red: the shipped
+      # binaries really do contain it until the toolchain line is bumped.
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
   deploy:
     # Example deploy stage: validates the manifests and shows what a real
