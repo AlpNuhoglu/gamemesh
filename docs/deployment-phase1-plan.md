@@ -441,6 +441,11 @@ Her adım şu yapıda:
      `go 1.26.0` satırını okurdu), v6 okuyup `GOTOOLCHAIN=local` set ediyor. govulncheck de
      aynı dosyadan okuyor; artık gönderilen toolchain'i denetliyor (yeni bir stdlib yaması
      job'u kırmızıya çevirir; doğru sinyal). Build imajı `golang:1.26.9-alpine3.24`.
+     **Düzeltme (2026-10-16, A5):** govulncheck kısmı çalışmamıştı. PR #22 sonrası `main`'de
+     `test` job'u `go1.26.9`, `security` job'u `go1.27.2` kurdu; logda "Both go-version and
+     go-version-file inputs are specified, only go-version will be used" uyarısı var.
+     Sebep: action `go-version-input`'a varsayılan `stable` veriyor. A5'te
+     `go-version-input: ""` ile düzeltildi.
      Resmi takvim: Go 1.25 desteksiz (1.27.0, 2026-08-19); Alpine 3.20'nin desteği
      2026-04-01'de bitti, 3.21'inki 2026-11-01'de bitiyor.
   2. Tek `deployments/docker/Dockerfile` (`--build-arg SERVICE=`), 7 dosya silindi (yorum,
@@ -478,6 +483,17 @@ Her adım şu yapıda:
      push'larda eski çalıştırmaları iptal eder). Deploy için tersi gerekli (D2).
   4. **`permissions: contents: read`** workflow seviyesinde. Yazma yetkisi sadece ihtiyaç
      duyan job'a verilir (A6'da docker job'una `packages: write`).
+- **Yapılanlar (2026-10-16), CI kanıtı bekleniyor:** Kararlar (2026-10-16): liste `cmd/`'den
+  otomatik; `build` job'u kaldırıldı; imaj ve binary artifact'ları kaldırıldı (coverage
+  kaldı); `cancel-in-progress` sadece PR'larda; workflow seviyesinde `contents: read`.
+  - Önce (`main`'deki son push, 338 sn): 5/7 servis; `build` job'u 73 sn; kullanılmayan
+    artifact'lar ~76 MB imaj tar'ı + 62 MB binary; `security` +296 sn'de başlıyor.
+  - Yerel kanıt: `cmd/presence`'a bilerek konan derleme hatasında `go test ./cmd/...`
+    `FAIL … [build failed]` verdi (`build` job'u gereksiz). Keşif komutu 7 servisi
+    listeliyor. `actionlint` temiz. Repo'nun varsayılan token yetkisi zaten `read`.
+  - Plan maddesi 3'ten sapma: `cancel-in-progress` sadece PR'larda; `main`'de iptal edilen
+    bir çalıştırma, aynı workflow'daki deploy'u yarıda kesebilir.
+  - #25 düzeltmesi bu adıma alındı (bkz. A4 Sonuç).
 
 ### A5a. CI güvenlik taramalarını sıkılaştır *(incelemeden eklendi)*
 
@@ -1102,7 +1118,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 |
 | 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a |
 | 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a |
-| 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Kod | A4 (çözüldü: aynı `go.mod` toolchain'i) |
+| 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te düzeltildi (`go-version-input: ""`) |
 | 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a |
 | 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a |
 | 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 |
