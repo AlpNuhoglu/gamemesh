@@ -30,27 +30,31 @@ concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every action is pinned to a commit, with its release in the comment. A tag
+# can be moved to other code at any time (tj-actions/changed-files, March 2025:
+# its tags were repointed to a commit that dumped secrets into CI logs); a
+# commit cannot. Dependabot proposes the bumps (.github/dependabot.yml).
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Download modules
         run: go mod download
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v8.0.0
         with:
           version: v2.12
 
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
       - name: Unit tests (race + coverage)
@@ -58,7 +62,7 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage
           path: coverage.out
@@ -67,8 +71,8 @@ jobs:
     runs-on: ubuntu-latest # Docker is preinstalled; Testcontainers uses it
     needs: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
       - name: Integration tests (Testcontainers)
@@ -82,7 +86,7 @@ jobs:
     outputs:
       list: ${{ steps.list.outputs.list }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: list
         run: |
           list=$(for d in cmd/*/; do basename "$d"; done | jq -Rcs 'split("\n") | map(select(length > 0))')
@@ -96,10 +100,10 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.services.outputs.list) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: deployments/docker/Dockerfile
@@ -121,7 +125,7 @@ jobs:
       # fixes for it any more: alpine:3.20 reports 0 HIGH/CRITICAL, and only
       # this setting turns it red.
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_EXIT_ON_EOL: "1"
         with:
@@ -138,12 +142,12 @@ jobs:
   scan-deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Report only, until the manifests are reworked (A7): today it finds 33
       # HIGH issues, all in deployments/k8s (no securityContext, writable root
       # filesystem). Runs first so the blocking scan below cannot skip it.
       - name: Trivy misconfiguration scan (report only)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -153,7 +157,7 @@ jobs:
       # The scanners are named: left empty, Trivy runs vuln and secret only, and
       # a step once called "deps + misconfig" never checked a single manifest.
       - name: Trivy dependency and secret scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -172,7 +176,7 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: gitleaks (full history)
@@ -192,7 +196,7 @@ jobs:
       # turns red: the shipped binaries really do contain it until the
       # toolchain line is bumped.
       - name: govulncheck
-        uses: golang/govulncheck-action@v1
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
           # The action defaults go-version-input to "stable", and setup-go
           # prefers go-version over go-version-file when both are set, so
@@ -211,7 +215,7 @@ jobs:
     # A scheduled or manual run also has ref main; only a push deploys.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # A pinned release whose hash is checked before it runs: "latest" could
       # change under us, and a replaced release asset would run unchecked in
       # the job that deploys. The hash is the release's own CHECKSUMS entry,
