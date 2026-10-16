@@ -162,6 +162,25 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
+  # Every commit of the history, not only the tip: a key that was committed and
+  # then deleted is still in the repository and still has to be rotated. Trivy's
+  # secret scanner above sees only the checked-out files. GitHub's own secret
+  # scanning and push protection cover pushes; this also covers what a pull
+  # request brings in, with rules kept in the repository. The image is pinned
+  # by digest; it marks every directory git-safe itself, so the runner's uid
+  # owning the checkout is not a problem.
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (full history)
+        run: >-
+          docker run --rm -v "$PWD":/repo:ro
+          zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git --redact --no-banner --exit-code 1 /repo
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
@@ -188,7 +207,7 @@ jobs:
     runs-on: ubuntu-latest
     # Every gate, and the images: needs is a data dependency, so docker must be
     # listed even though another job used to imply it.
-    needs: [integration, docker, scan-deps, govulncheck]
+    needs: [integration, docker, scan-deps, gitleaks, govulncheck]
     # A scheduled or manual run also has ref main; only a push deploys.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
