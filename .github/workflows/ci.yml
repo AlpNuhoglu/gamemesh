@@ -96,10 +96,28 @@ jobs:
             VERSION=${{ github.sha }}
           tags: gamemesh/${{ matrix.service }}:${{ github.sha }}
           # Build only: proves every image builds. Publishing to a registry
-          # comes with the deploy pipeline (A6).
+          # comes with the deploy pipeline (A6). Loaded into the runner's
+          # Docker so the next step can scan it.
           push: false
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The filesystem scan sees go.mod only; this one sees what ships: the
+      # Alpine packages (musl, busybox, openssl) and the compiled binary.
+      # TRIVY_EXIT_ON_EOL also fails a base image that no longer gets security
+      # updates. Such an image can scan clean exactly because nobody files
+      # fixes for it any more: alpine:3.20 reports 0 HIGH/CRITICAL, and only
+      # this setting turns it red.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_EXIT_ON_EOL: "1"
+        with:
+          scan-type: image
+          image-ref: gamemesh/${{ matrix.service }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
 
   # The scans need nothing from the other jobs, so they start at once and run
   # in parallel, each in its own job: a failing scan can no longer stop the
