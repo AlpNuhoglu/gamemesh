@@ -101,12 +101,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  security:
+  # The scans need nothing from the other jobs, so they start at once and run
+  # in parallel, each in its own job: a failing scan can no longer stop the
+  # next one from running (a govulncheck finding once stayed hidden behind a
+  # red Trivy step in the same job).
+  scan-deps:
     runs-on: ubuntu-latest
-    needs: docker
     steps:
       - uses: actions/checkout@v4
-      - name: Trivy filesystem scan (deps + misconfig)
+      - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
@@ -114,12 +117,17 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
-      # Every job reads the Go version from go.mod's toolchain directive (setup-go
-      # v6 honours it; v5 only read the go line), the same version the images
-      # are built with. govulncheck reports stdlib vulnerabilities against the
-      # toolchain it runs on, so it must audit exactly that version. When a new
-      # patch fixes a stdlib vulnerability this job turns red: the shipped
-      # binaries really do contain it until the toolchain line is bumped.
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout step: the action checks the repository out itself
+      # (repo-checkout defaults to true).
+      # govulncheck reports stdlib vulnerabilities against the toolchain it
+      # runs on, so it audits exactly go.mod's toolchain, the one the images
+      # are built with. When a new patch fixes a stdlib vulnerability this job
+      # turns red: the shipped binaries really do contain it until the
+      # toolchain line is bumped.
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
@@ -134,7 +142,9 @@ jobs:
     # deploy job would run. Replace with `kubectl apply` against a real
     # cluster (credentials via OIDC or a KUBECONFIG secret).
     runs-on: ubuntu-latest
-    needs: [integration, security]
+    # Every gate, and the images: needs is a data dependency, so docker must be
+    # listed even though another job used to imply it.
+    needs: [integration, docker, scan-deps, govulncheck]
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
