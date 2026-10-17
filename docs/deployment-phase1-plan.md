@@ -595,8 +595,21 @@ Her adım şu yapıda:
   - `lint`: "go.mod toolchain: go1.26.9, Dockerfile build stage: golang:1.26.9".
   - `govulncheck`: `go1.26.9`, "No vulnerabilities found". `gitleaks`: 90 commit, "no leaks
     found". `deploy`: skipped.
-  - Merge sonrası kalan: `workflow_dispatch` ile `deploy`'un atlandığının gösterilmesi ve
-    ilk Dependabot PR'ları (A6'nın plan notuna yazılacak).
+  - Merge sonrası (2026-10-17, PR #24 → `f3f4ca7`): `main` push run'ında `deploy` çalıştı
+    (`kubeconform.tar.gz: OK`, 33/33). Dependabot ilk dakikada 8 PR açtı (#25–#32).
+    Dependabot `--platform`'lu FROM satırını tag ve digest birlikte güncelledi; action'larda
+    SHA ile `# vX.Y.Z` yorumu birlikte değişti. #29 (`golang` 1.26.9 → 1.27.2, sadece
+    Dockerfile) toolchain kontrolünde kırmızı: `go1.26.9` ≠ `golang:1.27.2`. Kontrol
+    tasarlandığı işi yaptı.
+  - Takip (`chore/dependabot-groups`, kararlar 2026-10-17): golang için minor/major
+    güncellemeler `ignore` (A4 kararı Go 1.26; yamalar gelmeye devam ediyor), #29
+    kapatılacak; actions ve gomod için minor+patch tek PR'da, major'lar ayrı PR olarak
+    kalıyor. Son ekli docker tag'inde (`1.26.9-alpine3.24`) semver türlerinin nasıl
+    uygulandığı belgede yok; bir sonraki Dependabot çalıştırmasında doğrulanacak.
+  - Major action güncellemeleri (#25–#28, #30): release notlarında ana değişiklik Node 24.
+    Bizim kullandığımız input ve env'lerin hiçbiri kaldırılmamış (kod okumasından).
+    Mevcut sürümler Node 20'yi hedefliyor ve runner onları Node 24'te çalışmaya zorluyor
+    (her job'da `Node.js 20 is deprecated` uyarısı, run 38987122485).
 
 ### A6. Container registry: imajları GHCR'a gönder
 
@@ -1146,6 +1159,10 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   istemcinin oda durumunu sorgulaması) bunu kapatır.
 - **Outbox tüketicilerinin idempotent olduğunun doğrulanması (M4):** Relay at-least-once
   çalışıyor; kapanış sırasında yayınlanıp işaretlenemeyen satırlar tekrar yayınlanır.
+- **Go 1.27'ye geçiş (A5a takibi):** `go.mod` toolchain'i, Dockerfile'daki `golang` tag'i
+  ve digest'i aynı PR'da; ardından testler ve govulncheck. Go 1.26'nın desteği Go 1.28 ile
+  (beklenen: Şubat 2027) bitiyor, o tarihten önce yapılmalı. Dependabot golang minor'ını
+  bilerek önermiyor.
 - **Kalan iki taşınabilir referans (A5a):** Dockerfile'daki `# syntax=docker/dockerfile:1`
   satırı bir tag (digest ile sabitlenebilir; Dependabot'un bu satırı güncelleyip
   güncellemediği test edilmedi). Trivy sürümü action'ın varsayılanına bağlı; `version:`
