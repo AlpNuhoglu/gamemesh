@@ -504,7 +504,7 @@ Her adım şu yapıda:
 
 ### A5a. CI güvenlik taramalarını sıkılaştır *(incelemeden eklendi)*
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. **`security` job'undaki `needs: docker` bağımlılığını kaldırmak:** Trivy imajları
      değil dosya sistemini tarıyor; docker'ı beklemesi kritik yola yaklaşık 2 dk ekliyor.
   2. **İmaj taraması eklemek:** Build edilen imajlara `trivy image` çalıştırmak. `fs`
@@ -541,6 +541,62 @@ Her adım şu yapıda:
   farkı, güvenlik kapılarının zamana bağlı doğası.
 - **Bitti sayılır:** `security` job'u docker'ı beklemiyor; imaj taraması çalışıyor; bütün
   action'lar SHA ile sabitli; Dependabot yapılandırması var.
+- **Yapılanlar (2026-10-17), CI kanıtı bekleniyor:** On commit. Kararlar (2026-10-17):
+  taramalar ayrı job'lar; imaj taraması bloklayan ve EOL kontrollü; misconfig A7'ye kadar
+  sadece rapor; gece taraması; doküman PR'ları muaf tutulmadı; `.trivyignore` şimdilik yok
+  (gerekirse gerekçe + `exp:` tarihiyle); action'lar SHA, imajlar digest ile; Dependabot.
+  1. `security` → `scan-deps` (Trivy fs), `govulncheck`, `gitleaks`: hiçbirinin `needs`'i
+     yok. `deploy`'un `needs`'ine `docker` açıkça eklendi (önceden `security` üzerinden
+     dolaylıydı).
+  2. Trivy `scanners` açıkça veriliyor: `vuln,secret` bloklayan; `misconfig` ayrı step,
+     `exit-code: 0`, bloklayandan önce. Yerel (Trivy 0.70.0, action'ın varsayılanı):
+     "Misconfiguration scanning is enabled", 33 HIGH, hepsi `deployments/k8s` (KSV-0118
+     ×22, KSV-0014 ×11). Yeni Bulgu #60.
+  3. Her `docker` matrix job'u imajı `load` edip `trivy image` çalıştırıyor (HIGH/CRITICAL,
+     düzeltmesi olanlar, bloklayan, `TRIVY_EXIT_ON_EOL=1`). Yerel: `alpine:3.20` EOSL ve
+     0 bulgu; ayarsız exit 0, ayarla exit 1. `alpine:3.24.2` ve gateway imajı exit 0 (3.24
+     Trivy'nin EOL listesinde henüz yok, sadece uyarı).
+  4. Gece 03:17 UTC `schedule` + `workflow_dispatch`. İki koruma (GitHub belgelerinden,
+     CI'da henüz test edilmedi): `deploy` sadece `push`'ta çalışıyor (schedule'ın ref'i de
+     `main`; eski koşulla her gece deploy olurdu); concurrency grubuna event adı eklendi
+     (grup tek bir pending çalıştırma tutar ve yenisi eskisini iptal eder; gece koşusu
+     kuyruktaki bir push'u ve onun deploy'unu iptal edebilirdi).
+  5. kubeconform v0.8.0 + `sha256sum -c` + `curl -f`. Yerel (linux/amd64): doğru hash
+     `OK`, 33/33 kaynak geçerli; yanlış hash exit 1 ve kubeconform hiç çalışmıyor.
+  6. gitleaks v8.30.1 (digest ile), tam geçmiş (`fetch-depth: 0`), `--redact`. Yerel: 109
+     commit (85'i diff'li) temiz; sahte `ghp_` token'lı deneme reposu `github-pat`, exit 1.
+     "dubious ownership" tahminim yanlıştı: imaj kendisi `safe.directory '*'` ayarlıyor.
+  7. 8 action, 19 `uses:` satırı commit SHA'sıyla (`# vX.Y.Z` yorumuyla). Her SHA hem tam
+     sürüm tag'inin hem o ana kadar kullanılan major tag'in commit'i: çalışan kod
+     değişmedi. Dockerfile'daki iki taban imaj index digest'iyle; amd64 + arm64 build
+     başarılı.
+  8. `.github/dependabot.yml`: github-actions, gomod (otel modülleri tek grup), docker;
+     haftalık. Şema doğrulaması geçti (`interval: hourly` reddedildi). Lint job'u
+     Dockerfile'daki golang sürümünü `go.mod`'daki toolchain'le karşılaştırıyor (Dependabot
+     ikisini ayrı güncelliyor); sadece Dockerfile'ı 1.26.10 olan kopyada exit 1.
+  9. GitHub ayarları (kullanıcı elle yaptı, 2026-10-17): Dependabot alerts ve security
+     updates açık. API: `vulnerability-alerts` 204, `dependabot_security_updates: enabled`;
+     dependency graph 138 paket okuyor (`x/net v0.60.0`, `otel v1.45.0`); açık alert 0.
+     **Plan düzeltmesi (madde 8):** secret scanning ve push protection zaten açıktı.
+  - Not (bilgi): Trivy'nin checks bundle'ındaki bazı kurallar Trivy ≥ 0.72 istiyor; action
+    0.70 kurduğu için bunlar atlanıyor (uyarı logda).
+- **Sonuç (2026-10-17), PR #24'ün CI'ı (run 38987122485, hepsi yeşil):**
+  - Zaman çizelgesi: `scan-deps`, `govulncheck`, `gitleaks` +0–1 sn'de başlayıp +12–20 sn'de
+    bitti (önce: `security` +250 sn'de başlıyordu). Tarama sonucu ~280 sn yerine ~20 sn'de
+    geliyor. Toplam süre 280 sn → 269 sn; kritik yol artık `test` (175 sn) → `docker`.
+    Q6'daki ≈252 sn tahminim tutmadı: `docker` job'ları imaj taraması yüzünden 70–86 sn'den
+    76–89 sn'ye çıktı.
+  - `scan-deps`: "Misconfiguration scanning is enabled"; 10 dosyada 33 HIGH (KSV-0118 ×22,
+    KSV-0014 ×11), step yeşil. vuln ve secret tarayıcıları "enabled" yazdı.
+  - 7 `docker` job'unun 7'sinde `Trivy image scan`: `alpine 3.24.2` 0, `gobinary` 0;
+    "not on the EOL list" uyarısı. `TRIVY_EXIT_ON_EOL: 1` action'ın bütün iç step'lerinin
+    env'inde görünüyor. EOL'de gerçekten exit 1 verdiği CI'da değil, yerelde aynı Trivy
+    sürümüyle (0.70.0) ve aynı env ile gösterildi.
+  - `lint`: "go.mod toolchain: go1.26.9, Dockerfile build stage: golang:1.26.9".
+  - `govulncheck`: `go1.26.9`, "No vulnerabilities found". `gitleaks`: 90 commit, "no leaks
+    found". `deploy`: skipped.
+  - Merge sonrası kalan: `workflow_dispatch` ile `deploy`'un atlandığının gösterilmesi ve
+    ilk Dependabot PR'ları (A6'nın plan notuna yazılacak).
 
 ### A6. Container registry: imajları GHCR'a gönder
 
@@ -1090,6 +1146,10 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   istemcinin oda durumunu sorgulaması) bunu kapatır.
 - **Outbox tüketicilerinin idempotent olduğunun doğrulanması (M4):** Relay at-least-once
   çalışıyor; kapanış sırasında yayınlanıp işaretlenemeyen satırlar tekrar yayınlanır.
+- **Kalan iki taşınabilir referans (A5a):** Dockerfile'daki `# syntax=docker/dockerfile:1`
+  satırı bir tag (digest ile sabitlenebilir; Dependabot'un bu satırı güncelleyip
+  güncellemediği test edilmedi). Trivy sürümü action'ın varsayılanına bağlı; `version:`
+  ile sabitlenip Dependabot dışında elle güncellenmeli.
 
 ---
 
@@ -1123,11 +1183,11 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 20 | CI'da 7 servisin 5'i build ediliyor | M7 | Kod | A5 (çözüldü: matrix `cmd/`'den) |
 | 21 | `build` job'u gereksiz; docker `.tar` artifact'ları kullanılmıyor | M7 | Kod | A5 (çözüldü) |
 | 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 (çözüldü) |
-| 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a |
-| 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a |
+| 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a (çözüldü: taramalar `needs`'siz; +250 sn → +0 sn) |
+| 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a (çözüldü: 7 imaja `trivy image` + EOL kontrolü) |
 | 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te çözüldü (`go-version-input: ""`, CI'da 1.26.9) |
-| 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a |
-| 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a |
+| 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a (gece taraması; doküman PR'ları bilerek muaf tutulmadı) |
+| 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a (çözüldü: action SHA, imaj digest, kubeconform checksum, Dependabot) |
 | 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 |
 | 29 | **Websocket replica'ları NATS consumer'ını paylaşıyor (event'ler bölünüyor)** | M5 | Kod | A7, A10 |
 | 30 | **Matchmaking rolling update sırasında iki kopya çalışıyor** | M5 | Kod | A7, A10 |
@@ -1141,7 +1201,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 38 | Ingress nginx'e özel; k3s'te sessizce yok sayılır | M5 | Kod | A8, C4 |
 | 39 | Secret'lar repoda (`01-secrets.yaml`) | M5, M8 | Kod | A9 |
 | 40 | **Uygulama production'da güvensiz secret ile sessizce açılıyor** | M8 | Kod | A9 |
-| 41 | Otomatik secret taraması yok | M8 | Kod | A9, A5a |
+| 41 | Otomatik secret taraması yok | M8 | Kod | A9, A5a (gitleaks; GitHub secret scanning ve push protection zaten açıktı, API ile doğrulandı) |
 | 42 | `kubeconform` anlamsal hataları yakalayamıyor | M5, M7 | Kod | A10 |
 | 43 | Docker/k3s `ufw`'yi atlıyor | M2 | Bilgi | B2 |
 | 44 | `/ws` ingress'te gateway'i atlıyor | M8 | Kod | A3b (çözüldü: websocket artık oturumu kendisi kontrol ediyor); C4'te `/ws` açılabilir |
@@ -1154,9 +1214,10 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 51 | Yeni CVE-2026-78669 (`x/net` v0.58.0, HIGH) bütün PR'larda security job'unu kırıyor; düzeltmesi Go 1.26 istiyor | M7 | Ölçüldü (CI run 38411117929, yerel Trivy) | `fix/deps-x-net` (çözüldü), kalıcı çözüm A5a |
 | 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (çözüldü: sahte XFF ile 200×200 → 119×200/81×429); prod ayarı A8, doğrulama A10/B4 |
 | 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` (çözüldü) |
-| 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
+| 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a (çözüldü: ayrı job'lar) |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
 | 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
 | 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a (çözüldü: 75 sn → 5 sn, açılışta retry) |
 | 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (Docker Desktop yeniden açılışında doğrulanacak) |
 | 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |
+| 60 | Trivy'ye `scanners` verilmemiş; step adı "misconfig" dese de manifest'ler hiç taranmıyordu (33 HIGH görünmüyordu) | M7 | Ölçüldü (yerel Trivy 0.70.0) | A5a (misconfig sadece rapor; bloklama A7) |

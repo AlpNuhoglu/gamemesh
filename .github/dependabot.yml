@@ -1,0 +1,36 @@
+# Version updates as pull requests, so the pins in this repository (action
+# commits, image digests, module versions) do not quietly age. Each PR runs
+# the full CI, scans included, before anyone merges it.
+version: 2
+updates:
+  # The commit SHAs in .github/workflows; Dependabot rewrites the SHA and the
+  # "# vX.Y.Z" comment next to it together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    groups:
+      # otel and its contrib instrumentation are released in lockstep
+      # (contrib v0.69 requires otel v1.45); bumped one by one, every PR but
+      # the last would fail to build.
+      opentelemetry:
+        patterns:
+          - go.opentelemetry.io/*
+
+  # The two FROM lines: tag and digest move together. A golang bump must
+  # also match go.mod's toolchain line, which CI checks.
+  - package-ecosystem: docker
+    directory: /deployments/docker
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
