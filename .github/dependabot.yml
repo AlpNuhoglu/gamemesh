@@ -11,6 +11,13 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    # Minor and patch bumps in one weekly PR instead of one per action (the
+    # first run opened five, all editing ci.yml, so each merge forced the
+    # others to rebase and rerun CI). Majors stay separate: each can break
+    # an input or a default and gets read before it is merged.
+    groups:
+      actions:
+        update-types: [minor, patch]
 
   - package-ecosystem: gomod
     directory: /
@@ -25,6 +32,12 @@ updates:
       opentelemetry:
         patterns:
           - go.opentelemetry.io/*
+      # Everything else that is not a major, in one PR. A module matches the
+      # first group it fits, so otel stays in its own group above.
+      go-modules:
+        patterns:
+          - "*"
+        update-types: [minor, patch]
 
   # The two FROM lines: tag and digest move together. A golang bump must
   # also match go.mod's toolchain line, which CI checks.
@@ -34,3 +47,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: build
+    ignore:
+      # Go stays on 1.26 (A4) until moving to a new minor is its own change:
+      # go.mod's toolchain line has to move with the image, and CI rejects a
+      # PR that bumps only the image (the first run proposed 1.27.2 that way).
+      # Patch releases, which carry the security fixes, still come.
+      - dependency-name: golang
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
