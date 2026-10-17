@@ -216,14 +216,39 @@ jobs:
           go-version-input: ""
           go-version-file: go.mod
 
+  # The one check the main branch ruleset requires. Listing every job there
+  # instead would drift: the docker jobs are named after the cmd/ directories
+  # ("docker (gateway)"), so a new service would not be required until someone
+  # edited the ruleset. Every other job is listed here, in the same file.
+  #
+  # if: always() is the point of this job. A job skipped because something it
+  # needs failed reports "Success" to required checks (GitHub's docs), so a
+  # plain needs: would let a red scan merge. This job always runs and fails
+  # itself unless every needed job succeeded. always() and not !cancelled():
+  # a run cancelled by hand would skip it under !cancelled(), and a skipped
+  # required check passes.
+  ci-ok:
+    if: always()
+    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every needed job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
+          if ! echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null; then
+            echo "::error::Not every job succeeded; failure, cancelled and skipped all count as not passed"
+            exit 1
+          fi
+
   deploy:
     # Example deploy stage: validates the manifests and shows what a real
     # deploy job would run. Replace with `kubectl apply` against a real
     # cluster (credentials via OIDC or a KUBECONFIG secret).
     runs-on: ubuntu-latest
-    # Every gate, and the images: needs is a data dependency, so docker must be
-    # listed even though another job used to imply it.
-    needs: [integration, docker, scan-deps, gitleaks, govulncheck]
+    # Every gate and the images, through the one job that checks them all.
+    needs: ci-ok
     # A scheduled or manual run also has ref main; only a push deploys.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
