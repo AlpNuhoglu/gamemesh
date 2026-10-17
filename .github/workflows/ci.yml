@@ -39,6 +39,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # CI tests and govulncheck audit go.mod's toolchain; the images are built
+      # with the Dockerfile's golang tag. Dependabot bumps the two separately,
+      # so a mismatch would ship binaries from a Go nobody audited.
+      - name: Dockerfile Go matches go.mod toolchain
+        run: |
+          want=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' go.mod)
+          got=$(sed -nE 's/^FROM .*golang:([0-9.]+)-.*/\1/p' deployments/docker/Dockerfile)
+          echo "go.mod toolchain: go${want:-<none>}, Dockerfile build stage: golang:${got:-<none>}"
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "::error file=deployments/docker/Dockerfile::golang:${got} does not match go.mod's toolchain go${want}; bump both together"
+            exit 1
+          fi
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
