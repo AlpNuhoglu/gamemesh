@@ -610,6 +610,21 @@ Her adım şu yapıda:
     Bizim kullandığımız input ve env'lerin hiçbiri kaldırılmamış (kod okumasından).
     Mevcut sürümler Node 20'yi hedefliyor ve runner onları Node 24'te çalışmaya zorluyor
     (her job'da `Node.js 20 is deprecated` uyarısı, run 38987122485).
+  - **Düzeltme (2026-10-17), Bulgu #61:** Taramalar job olarak kırmızıya dönüyor ama merge'ü
+    engellemiyordu. "Protect Main Branch" ruleset'i sadece `lint`, `test` ve `integration`'ı
+    zorunlu tutuyor (`strict` açık). `ci/required-check-gate`: `deploy` hariç bütün
+    job'ları bekleyen `ci-ok` job'u eklendi, `deploy` artık `ci-ok`'a bağlı. Job
+    `if: always()` ile çalışıyor ve bir job bile `success` değilse kendisi kırmızı oluyor.
+    GitHub belgesine göre atlanan bir job zorunlu check'e "Success" raporluyor; düz
+    `needs` kullanılsaydı kırmızı bir tarama gate'i atlatıp merge'e izin verirdi. Betik
+    yerelde dört girdiyle denendi: hepsi success → 0; failure, skipped, cancelled → 1.
+    Ruleset'te zorunlu check'i `ci-ok` yapmak kullanıcı tarafından yapılacak.
+  - Strict politikanın yan etkisi: her merge diğer PR'ları "BEHIND" yapıyor. Dependabot
+    PR'ında "Update branch" bir merge commit ekliyor, Dependabot da o PR'ı bir daha rebase
+    etmiyor (belge: "will stop rebasing a pull request once extra commits have been
+    pushed"). Doğrusu `@dependabot rebase` yorumu. #26'da "Update branch" kullanıldı;
+    PR hemen merge edildiği için bir etkisi olmadı. #28'deki çakışmayı Dependabot bir
+    dakika içinde kendisi rebase ederek çözdü.
 
 ### A6. Container registry: imajları GHCR'a gönder
 
@@ -1238,3 +1253,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (Docker Desktop yeniden açılışında doğrulanacak) |
 | 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |
 | 60 | Trivy'ye `scanners` verilmemiş; step adı "misconfig" dese de manifest'ler hiç taranmıyordu (33 HIGH görünmüyordu) | M7 | Ölçüldü (yerel Trivy 0.70.0) | A5a (misconfig sadece rapor; bloklama A7) |
+| 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
