@@ -38,7 +38,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # CI tests and govulncheck audit go.mod's toolchain; the images are built
       # with the Dockerfile's golang tag. Dependabot bumps the two separately,
       # so a mismatch would ship binaries from a Go nobody audited.
@@ -65,7 +65,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest # Docker is preinstalled; Testcontainers uses it
     needs: test
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -98,7 +98,7 @@ jobs:
     outputs:
       list: ${{ steps.list.outputs.list }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: list
         run: |
           list=$(for d in cmd/*/; do basename "$d"; done | jq -Rcs 'split("\n") | map(select(length > 0))')
@@ -112,7 +112,7 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.services.outputs.list) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -154,7 +154,7 @@ jobs:
   scan-deps:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Report only, until the manifests are reworked (A7): today it finds 33
       # HIGH issues, all in deployments/k8s (no securityContext, writable root
       # filesystem). Runs first so the blocking scan below cannot skip it.
@@ -188,7 +188,7 @@ jobs:
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: gitleaks (full history)
@@ -227,7 +227,7 @@ jobs:
     # A scheduled or manual run also has ref main; only a push deploys.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # A pinned release whose hash is checked before it runs: "latest" could
       # change under us, and a replaced release asset would run unchecked in
       # the job that deploys. The hash is the release's own CHECKSUMS entry,
