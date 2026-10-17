@@ -504,7 +504,7 @@ Her adım şu yapıda:
 
 ### A5a. CI güvenlik taramalarını sıkılaştır *(incelemeden eklendi)*
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. **`security` job'undaki `needs: docker` bağımlılığını kaldırmak:** Trivy imajları
      değil dosya sistemini tarıyor; docker'ı beklemesi kritik yola yaklaşık 2 dk ekliyor.
   2. **İmaj taraması eklemek:** Build edilen imajlara `trivy image` çalıştırmak. `fs`
@@ -580,6 +580,23 @@ Her adım şu yapıda:
      **Plan düzeltmesi (madde 8):** secret scanning ve push protection zaten açıktı.
   - Not (bilgi): Trivy'nin checks bundle'ındaki bazı kurallar Trivy ≥ 0.72 istiyor; action
     0.70 kurduğu için bunlar atlanıyor (uyarı logda).
+- **Sonuç (2026-10-17), PR #24'ün CI'ı (run 38987122485, hepsi yeşil):**
+  - Zaman çizelgesi: `scan-deps`, `govulncheck`, `gitleaks` +0–1 sn'de başlayıp +12–20 sn'de
+    bitti (önce: `security` +250 sn'de başlıyordu). Tarama sonucu ~280 sn yerine ~20 sn'de
+    geliyor. Toplam süre 280 sn → 269 sn; kritik yol artık `test` (175 sn) → `docker`.
+    Q6'daki ≈252 sn tahminim tutmadı: `docker` job'ları imaj taraması yüzünden 70–86 sn'den
+    76–89 sn'ye çıktı.
+  - `scan-deps`: "Misconfiguration scanning is enabled"; 10 dosyada 33 HIGH (KSV-0118 ×22,
+    KSV-0014 ×11), step yeşil. vuln ve secret tarayıcıları "enabled" yazdı.
+  - 7 `docker` job'unun 7'sinde `Trivy image scan`: `alpine 3.24.2` 0, `gobinary` 0;
+    "not on the EOL list" uyarısı. `TRIVY_EXIT_ON_EOL: 1` action'ın bütün iç step'lerinin
+    env'inde görünüyor. EOL'de gerçekten exit 1 verdiği CI'da değil, yerelde aynı Trivy
+    sürümüyle (0.70.0) ve aynı env ile gösterildi.
+  - `lint`: "go.mod toolchain: go1.26.9, Dockerfile build stage: golang:1.26.9".
+  - `govulncheck`: `go1.26.9`, "No vulnerabilities found". `gitleaks`: 90 commit, "no leaks
+    found". `deploy`: skipped.
+  - Merge sonrası kalan: `workflow_dispatch` ile `deploy`'un atlandığının gösterilmesi ve
+    ilk Dependabot PR'ları (A6'nın plan notuna yazılacak).
 
 ### A6. Container registry: imajları GHCR'a gönder
 
@@ -1166,11 +1183,11 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 20 | CI'da 7 servisin 5'i build ediliyor | M7 | Kod | A5 (çözüldü: matrix `cmd/`'den) |
 | 21 | `build` job'u gereksiz; docker `.tar` artifact'ları kullanılmıyor | M7 | Kod | A5 (çözüldü) |
 | 22 | `permissions` ve `concurrency` tanımlı değil | M7 | Kod | A5 (çözüldü) |
-| 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a |
-| 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a |
+| 23 | `security`, gereksiz yere `docker` job'unu bekliyor | M7 | Ölçüldü (süreler) | A5a (çözüldü: taramalar `needs`'siz; +250 sn → +0 sn) |
+| 24 | İmaj taraması yok; Alpine OS paketleri taranmıyor | M7 | Kod | A5a (çözüldü: 7 imaja `trivy image` + EOL kontrolü) |
 | 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te çözüldü (`go-version-input: ""`, CI'da 1.26.9) |
-| 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a |
-| 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a |
+| 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a (gece taraması; doküman PR'ları bilerek muaf tutulmadı) |
+| 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a (çözüldü: action SHA, imaj digest, kubeconform checksum, Dependabot) |
 | 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 |
 | 29 | **Websocket replica'ları NATS consumer'ını paylaşıyor (event'ler bölünüyor)** | M5 | Kod | A7, A10 |
 | 30 | **Matchmaking rolling update sırasında iki kopya çalışıyor** | M5 | Kod | A7, A10 |
@@ -1197,7 +1214,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 51 | Yeni CVE-2026-78669 (`x/net` v0.58.0, HIGH) bütün PR'larda security job'unu kırıyor; düzeltmesi Go 1.26 istiyor | M7 | Ölçüldü (CI run 38411117929, yerel Trivy) | `fix/deps-x-net` (çözüldü), kalıcı çözüm A5a |
 | 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (çözüldü: sahte XFF ile 200×200 → 119×200/81×429); prod ayarı A8, doğrulama A10/B4 |
 | 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` (çözüldü) |
-| 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a |
+| 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a (çözüldü: ayrı job'lar) |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
 | 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
 | 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a (çözüldü: 75 sn → 5 sn, açılışta retry) |
