@@ -23,6 +23,17 @@ spec:
       # 30 s covers the worst case: preStop 5 s + HTTP shutdown 15 s
       # (pkg/server) + background workers 5 s (WorkerShutdownTimeout) = 25 s.
       terminationGracePeriodSeconds: 30
+      # The services never call the Kubernetes API; without a mounted token a
+      # compromised pod cannot either.
+      automountServiceAccountToken: false
+      # Pod Security Standards "restricted". The image runs as 10001:10001
+      # (numeric, so the kubelet can check runAsNonRoot); stated here as well
+      # so the pod does not depend on what a future image declares.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: matchmaking
           image: gamemesh/matchmaking:latest
@@ -66,6 +77,13 @@ spec:
           lifecycle:
             preStop:
               sleep: { seconds: 5 }
+          # The static binary writes nothing to disk, needs no privileges and no
+          # capabilities: a compromised process cannot drop files into the image
+          # or gain root through setuid.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           resources:
             requests: { cpu: 100m, memory: 64Mi }
             limits: { cpu: 500m, memory: 128Mi }
