@@ -87,6 +87,9 @@ func run() int {
 		Transport:   cfg.EventBus,
 		DurableName: cfg.ServiceName,
 		Workers:     cfg.EventWorkers,
+		// Each replica forwards events to the players connected to it, so every
+		// replica needs every event.
+		Broadcast: true,
 	}, rdb, cfg.NATSURL, m, log)
 	if err != nil {
 		log.Fatal("failed to init event bus", zap.Error(err))

@@ -45,6 +45,10 @@ type NATSBus struct {
 	workers int
 	durable string // durable consumer name prefix (per consuming service)
 
+	// broadcast gives this instance its own consumer instead of the shared
+	// durable, so every instance receives every event (WithBroadcast).
+	broadcast bool
+
 	mu       sync.Mutex
 	stop     chan struct{} // closed by Close to trigger early consumer drain
 	consumes []jetstream.ConsumeContext
@@ -86,14 +90,45 @@ var streamFor = map[string]stream{
 	},
 }
 
+// NATSOption configures a NATSBus.
+type NATSOption func(*NATSBus)
+
+// WithBroadcast makes every instance of a service receive every event. By
+// default the instances of a service share one durable consumer, which
+// JetStream treats as a work queue: each event goes to one instance, right
+// for work done once (leaderboard updates, the outbox). A service that fans
+// events out to connections it holds itself, like the WebSocket gateway, needs
+// all of them: with the shared durable, two replicas got 11 and 9 of 20 events
+// and each player missed the events delivered to the other replica.
+//
+// Each instance then gets its own consumer. It is ephemeral, so instances that
+// come and go with rollouts leave nothing behind (the server deletes it after
+// broadcastInactiveThreshold without the instance pulling), and it starts at
+// new events: replaying the stream to a fresh pod would resend old matches to
+// connected players. An ephemeral consumer on a file-stored stream survives a
+// NATS server restart (tested); events published while an instance is down
+// are not delivered to it, and its clients resync when they reconnect.
+func WithBroadcast() NATSOption { return func(b *NATSBus) { b.broadcast = true } }
+
+// broadcastInactiveThreshold is how long the server keeps a broadcast
+// consumer whose instance stopped pulling. Longer than a reconnect after a
+// NATS restart (about 3 s in tests), so a live instance never loses its
+// consumer; short enough that a deleted pod's consumer goes away quickly.
+const broadcastInactiveThreshold = time.Minute
+
 // NewNATSBus connects to NATS, ensures the streams exist and returns a bus.
 // durableName identifies the consuming service (e.g. "ws-bridge") so durable
 // consumers survive restarts and resume from the last ACK'd message. workers
 // bounds the consume-side concurrency. m may be nil (metrics skipped).
-func NewNATSBus(url, durableName string, workers int, m *metrics.Metrics, log *zap.Logger) (*NATSBus, error) {
+func NewNATSBus(url, durableName string, workers int, m *metrics.Metrics, log *zap.Logger, opts ...NATSOption) (*NATSBus, error) {
 	if workers <= 0 {
 		workers = 8
 	}
+	b := &NATSBus{log: log, m: m, workers: workers, durable: durableName, stop: make(chan struct{})}
+	for _, opt := range opts {
+		opt(b)
+	}
+
 	conn, err := nats.Connect(url,
 		nats.Name("gamemesh-"+durableName),
 		nats.MaxReconnects(-1), // reconnect forever; JetStream tolerates gaps
@@ -107,8 +142,7 @@ func NewNATSBus(url, durableName string, workers int, m *metrics.Metrics, log *z
 		conn.Close()
 		return nil, fmt.Errorf("jetstream init: %w", err)
 	}
-
-	b := &NATSBus{conn: conn, js: js, log: log, m: m, workers: workers, durable: durableName, stop: make(chan struct{})}
+	b.conn, b.js = conn, js
 
 	// Ensure every known stream exists. CreateOrUpdateStream is idempotent, so
 	// every service can call this safely on boot regardless of start order.
@@ -224,6 +258,7 @@ func (b *NATSBus) SubscribeAck(ctx context.Context, handler Handler, topics ...s
 		zap.Strings("topics", topics),
 		zap.Int("workers", b.workers),
 		zap.String("durable", b.durable),
+		zap.Bool("broadcast", b.broadcast),
 	)
 	<-ctx.Done()
 	return nil
@@ -246,14 +281,25 @@ func (b *NATSBus) startConsumers(ctx context.Context, handler Handler, topics ..
 		// Durable name = service + stream, so each service has an independent
 		// cursor and restarts resume from the last ACK.
 		durable := sanitize(b.durable + "-" + strings.ToLower(s.name))
-		cctx, err := b.js.CreateOrUpdateConsumer(ctx, s.name, jetstream.ConsumerConfig{
-			Durable:       durable,
+		ccfg := jetstream.ConsumerConfig{
 			AckPolicy:     jetstream.AckExplicitPolicy, // manual ACK required
 			AckWait:       30 * time.Second,            // redeliver if not ACK'd in time
 			MaxDeliver:    5,                           // bounded retries, then give up
-			DeliverPolicy: jetstream.DeliverAllPolicy,  // replay history on first run
 			FilterSubject: topic + ".>",
-		})
+		}
+		var cctx jetstream.Consumer
+		var err error
+		if b.broadcast {
+			// This instance's own consumer; see WithBroadcast.
+			ccfg.DeliverPolicy = jetstream.DeliverNewPolicy
+			ccfg.InactiveThreshold = broadcastInactiveThreshold
+			ccfg.Description = durable + " (per-instance fan-out)"
+			cctx, err = b.js.CreateConsumer(ctx, s.name, ccfg)
+		} else {
+			ccfg.Durable = durable
+			ccfg.DeliverPolicy = jetstream.DeliverAllPolicy // replay history on first run
+			cctx, err = b.js.CreateOrUpdateConsumer(ctx, s.name, ccfg)
+		}
 		if err != nil {
 			return fmt.Errorf("ensure consumer %s: %w", durable, err)
 		}
