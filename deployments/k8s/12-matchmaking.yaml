@@ -20,6 +20,9 @@ spec:
         prometheus.io/port: "8082"
         prometheus.io/path: /metrics
     spec:
+      # 30 s covers the worst case: preStop 5 s + HTTP shutdown 15 s
+      # (pkg/server) + background workers 5 s (WorkerShutdownTimeout) = 25 s.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: matchmaking
           image: gamemesh/matchmaking:latest
@@ -55,6 +58,14 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
+          # SIGTERM and the removal of this pod from the Service endpoints happen
+          # in parallel; for these 5 s the pod keeps serving requests that were
+          # routed to it before the endpoint update reached every node, instead of
+          # refusing them (a 502 at the ingress). The kubelet's own sleep action:
+          # no shell or sleep binary needed in the image.
+          lifecycle:
+            preStop:
+              sleep: { seconds: 5 }
           resources:
             requests: { cpu: 100m, memory: 64Mi }
             limits: { cpu: 500m, memory: 128Mi }
