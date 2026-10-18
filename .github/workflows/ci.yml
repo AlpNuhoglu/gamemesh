@@ -249,13 +249,61 @@ jobs:
             exit 1
           fi
 
+  # Pushes every service's image to GHCR on a push to main, after every gate:
+  # the registry only holds images that passed all of them. Both platforms,
+  # so the VPS architecture (B1) stays open; arm64 costs little because the
+  # build stage cross-compiles and the final stage runs nothing. The amd64
+  # image is the one the docker job above built and scanned, with the same
+  # build args, so its compile step comes from that job's cache scope.
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ci-ok, services]
+    runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow's: contents: read is stated
+    # again, and packages: write exists in this job only.
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.services.outputs.list) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deployments/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            VERSION=${{ github.sha }}
+          # The commit, never latest: one tag is one commit, and a rollback
+          # deploys the previous SHA. Registry names must be lowercase, hence
+          # the owner written out instead of github.repository_owner.
+          tags: ghcr.io/alpnuhoglu/gamemesh-${{ matrix.service }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          push: true
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
   deploy:
     # Example deploy stage: validates the manifests and shows what a real
     # deploy job would run. Replace with `kubectl apply` against a real
     # cluster (credentials via OIDC or a KUBECONFIG secret).
     runs-on: ubuntu-latest
-    # Every gate and the images, through the one job that checks them all.
-    needs: ci-ok
+    # Every gate, through the one job that checks them all, and the
+    # published images the cluster will pull.
+    needs: [ci-ok, publish]
     # A scheduled or manual run also has ref main; only a push deploys.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
