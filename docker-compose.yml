@@ -310,7 +310,7 @@ services:
   # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.
   jaeger:
     restart: always
-    image: jaegertracing/all-in-one:1.62.0@sha256:836e9b69c88afbedf7683ea7162e179de63b1f981662e83f5ebb68badadc710f
+    image: jaegertracing/all-in-one:1.76.0@sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
