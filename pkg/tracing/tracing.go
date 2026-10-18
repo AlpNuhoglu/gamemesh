@@ -9,6 +9,7 @@ package tracing
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -24,6 +25,12 @@ import (
 // tracerName is the instrumentation scope reported on every span we create by
 // hand. Library instrumentations (otelgin, redisotel, gorm) use their own.
 const tracerName = "github.com/alpnuhoglu/gamemesh"
+
+// shutdownTimeout bounds flushing the batched spans on shutdown. Without it
+// the flush waited for the exporter's own 10 s timeout whenever no collector
+// was reachable, and in Kubernetes every pod's termination took that much
+// longer. It is part of the pod's termination budget (deployments/k8s).
+var shutdownTimeout = 3 * time.Second
 
 // Config drives Init. All values come from pkg/config (env-driven).
 type Config struct {
@@ -48,7 +55,8 @@ type Config struct {
 }
 
 // Init configures global tracing and returns a shutdown function that flushes
-// the exporter. It is safe to call the returned shutdown even when tracing is
+// the exporter, giving up after shutdownTimeout whatever deadline the caller's
+// context has. It is safe to call the returned shutdown even when tracing is
 // disabled. The W3C propagator is installed in BOTH modes so that trace
 // headers are still threaded through (cheap, and lets a disabled hop sit
 // transparently between two enabled ones).
@@ -98,7 +106,11 @@ func Init(ctx context.Context, cfg Config, log *zap.Logger) (func(context.Contex
 		zap.String("sampler", cfg.Sampler),
 		zap.Float64("sampler_ratio", cfg.SamplerRatio))
 
-	return tp.Shutdown, nil
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+		defer cancel()
+		return tp.Shutdown(ctx)
+	}, nil
 }
 
 // sampler maps the OTEL_TRACES_SAMPLER value to an SDK sampler. Unknown values
