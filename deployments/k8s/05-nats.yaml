@@ -1,0 +1,99 @@
+# NATS with JetStream: the event bus the services use in docker-compose
+# (EVENT_BUS=nats). Without it outbox-relay exits at startup ("lookup nats:
+# no such host") and the cluster fell back to Redis Pub/Sub, a different
+# transport than the one tested locally.
+#
+# A StatefulSet, not a Deployment: the JetStream store is on disk, and a
+# StatefulSet never runs two pods with the same identity, so a restart cannot
+# start a second server on the same store while the old one is still writing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: gamemesh
+spec:
+  # Headless: the StatefulSet's governing Service. Clients still connect to
+  # nats:4222, which resolves to the pod.
+  clusterIP: None
+  selector:
+    app: nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+  namespace: gamemesh
+spec:
+  serviceName: nats
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nats
+  template:
+    metadata:
+      labels:
+        app: nats
+    spec:
+      automountServiceAccountToken: false
+      # The image starts as root but needs nothing root can do: it runs as
+      # nobody, and fsGroup makes the volume writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: nats
+          # Same version as docker-compose; tag for people, digest for the
+          # runtime (the tag can be republished, the digest cannot).
+          image: nats:2.15.1-alpine@sha256:2ae57dfba3063d5e25fecb75256118c0882a1a2d2cf7d0fba17a7c701df956f6
+          # Flags only, as in docker-compose: the image's default config file
+          # (a sample cluster block with a placeholder password) is not loaded.
+          args: ["-js", "-sd", "/data", "-m", "8222"]
+          ports:
+            - name: client
+              containerPort: 4222
+            - name: monitor
+              containerPort: 8222
+          startupProbe:
+            httpGet: { path: /healthz, port: 8222 }
+            periodSeconds: 2
+            failureThreshold: 30
+          # Ready once the server and JetStream are both up; alive as long as
+          # JetStream is enabled (the lighter check).
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8222 }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: "/healthz?js-enabled-only=true", port: 8222 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
