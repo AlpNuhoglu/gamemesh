@@ -625,6 +625,27 @@ Her adım şu yapıda:
     pushed"). Doğrusu `@dependabot rebase` yorumu. #26'da "Update branch" kullanıldı;
     PR hemen merge edildiği için bir etkisi olmadı. #28'deki çakışmayı Dependabot bir
     dakika içinde kendisi rebase ederek çözdü.
+  - **Kapanış (2026-10-18):** Ruleset'te zorunlu check artık sadece `ci-ok` (GitHub
+    Actions, `integration_id` 15368), strict açık; API ile doğrulandı. Dependabot'un ilk
+    dalgası kapandı: #25–#28, #30, #31, #39, #40 merge edildi; #29 kapatıldı. #32–#35 grup
+    PR'ı #37'de birleşti. #31 merge edilince Dependabot #37'yi "updatable in another way"
+    diyerek kapattı ve yerine #40'ı (17 güncelleme, otel satırı yok) açtı; otel'in hepsi
+    v1.47.0, contrib v0.72.0. #37'nin önce merge edilmesi otel API'sini 1.47'ye çıkarıp
+    sdk'yı 1.45'te bırakacaktı (`go mod graph`: `redisotel v9.23.0`, `otelgorm`/`otelsql
+    v0.4.0` otel 1.47 istiyor). `actions/setup-go` v7 (#39) Temmuz'da çıkmıştı; ilk
+    çalıştırmada github-actions için 5 PR açılıp varsayılan açık PR sınırına
+    takıldığı için sonradan geldi. v7 hâlâ `toolchain` satırını okuyor (kaynakta ve CI
+    logunda `go1.26.9`). Bütün action'lar Node 24'te; `Node.js 20 is deprecated` uyarısı
+    kalmadı.
+  - **Gate kanıtı (PR #41, kapatıldı):** Final imaj bilerek `alpine:3.20`'ye çekildi.
+    `lint`, `test`, `integration` (eski zorunlu üçlü) yeşil; imaj taraması `This OS
+    version is no longer supported by the distribution` + exit 1 ile docker job'larını
+    kırmızıya çevirdi (EOL kontrolünün CI'daki kanıtı); `ci-ok` `failure docker`; PR
+    `draft=false`, `MERGEABLE`, `BLOCKED`. Eski kuralla bu PR merge edilebilirdi. İlk
+    deneme (sadece golang sürümü) `lint`'i bozduğu için `ci-ok`'un farkını
+    göstermiyordu; deney değiştirildi.
+  - Yeni Bulgu #62: aynı çalıştırmada 7 docker job'unun 2'si EOL'den değil matrix'in
+    `fail-fast` varsayılanıyla iptal edildi (`The operation was canceled`).
 
 ### A6. Container registry: imajları GHCR'a gönder
 
@@ -1156,6 +1177,12 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   logout'tan sonra 5 sn boyunca gateway'de token hâlâ geçerli (ölçüldü: hemen 200, 6 sn
   sonra 401). Logout isteği zaten gateway'den geçtiği için yanıt başarılıysa yerel girdi
   silinebilir.
+- **go-redis 9.23'ün ayrı pipeline havuzu (A5a takibi, #40):** Her `Client` artık
+  `PipelinePoolSize` (varsayılan 10) boyutunda ayrı bir pipeline havuzu açıyor (release
+  notlarından, kod okuması). WS sweep'inin `ExistsMany` pipeline'ı el sıkışma kontrolleriyle
+  aynı havuzu paylaşmıyor; client başına Redis'e en fazla 10 bağlantı daha. Ana havuzun
+  varsayılanında (10 × GOMAXPROCS) değişiklik notlarda geçmiyor. Havuz metrikleri bu iki
+  havuzu ayrı göstermeli.
 - **go-redis havuz metrikleri (A3b):** `PoolStats` (`Timeouts`, `TotalConns`, `Hits`)
   Prometheus'a aktarılsın; havuz tükenmesi prod'da tahminle değil ölçümle görülsün.
 - **Gateway'de upstream başına circuit breaker** (M3, Soru 2): Sürekli hata veren bir
@@ -1254,3 +1281,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |
 | 60 | Trivy'ye `scanners` verilmemiş; step adı "misconfig" dese de manifest'ler hiç taranmıyordu (33 HIGH görünmüyordu) | M7 | Ölçüldü (yerel Trivy 0.70.0) | A5a (misconfig sadece rapor; bloklama A7) |
 | 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
+| 62 | `docker` matrix'i `fail-fast: true` (varsayılan): bir servisin job'u düşünce kardeş job'lar iptal ediliyor, diğer imajların tarama sonucu görünmüyor (#54'ün matrix'teki karşılığı) | M7 | Ölçüldü (PR #41: 5 EOL, 2 `canceled`) | A6 (`fail-fast: false`) |
