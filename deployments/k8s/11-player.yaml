@@ -17,6 +17,21 @@ spec:
         prometheus.io/port: "8081"
         prometheus.io/path: /metrics
     spec:
+      # Worst case before the kubelet sends SIGKILL: preStop 5 s + HTTP
+      # shutdown 15 s (pkg/server) + background workers 5 s
+      # (WorkerShutdownTimeout) + flushing traces 3 s (pkg/tracing) = 28 s.
+      terminationGracePeriodSeconds: 35
+      # The services never call the Kubernetes API; without a mounted token a
+      # compromised pod cannot either.
+      automountServiceAccountToken: false
+      # Pod Security Standards "restricted". The image runs as 10001:10001
+      # (numeric, so the kubelet can check runAsNonRoot); stated here as well
+      # so the pod does not depend on what a future image declares.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: player
           image: gamemesh/player:latest
@@ -33,14 +48,42 @@ spec:
                 name: gamemesh-config
             - secretRef:
                 name: gamemesh-secrets
+          # Startup gives the process up to 60 s (30 x 2 s) before liveness counts,
+          # so a slow start (Postgres retry, migrations) is not killed and restarted
+          # in a loop; it replaces the old initialDelaySeconds guesses.
+          startupProbe:
+            httpGet: { path: /livez, port: 8081 }
+            periodSeconds: 2
+            failureThreshold: 30
+          # Readiness is quick to drop a pod from the Service (4 s) when a
+          # dependency fails; liveness is slow to kill it (30 s) and tolerates a
+          # 3 s stall, since a 1 s timeout under a 500m CPU limit can fail on CFS
+          # throttling alone and restart healthy pods under load.
           readinessProbe:
-            httpGet: { path: /healthz, port: 8081 }
-            initialDelaySeconds: 3
-            periodSeconds: 5
+            httpGet: { path: /readyz, port: 8081 }
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /healthz, port: 8081 }
-            initialDelaySeconds: 10
+            httpGet: { path: /livez, port: 8081 }
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # SIGTERM and the removal of this pod from the Service endpoints happen
+          # in parallel; for these 5 s the pod keeps serving requests that were
+          # routed to it before the endpoint update reached every node, instead of
+          # refusing them (a 502 at the ingress). The kubelet's own sleep action:
+          # no shell or sleep binary needed in the image.
+          lifecycle:
+            preStop:
+              sleep: { seconds: 5 }
+          # The static binary writes nothing to disk, needs no privileges and no
+          # capabilities: a compromised process cannot drop files into the image
+          # or gain root through setuid.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           resources:
             requests: { cpu: 100m, memory: 64Mi }
             limits: { cpu: 500m, memory: 128Mi }

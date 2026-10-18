@@ -24,3 +24,7 @@ data:
   MATCH_MAX_QUEUE_AGE: 5m
   ROOM_TTL: 1h
   AUTO_MIGRATE: "true"
+  # No OpenTelemetry collector runs in the cluster in phase 1. Tracing
+  # defaults to on with localhost:4317, and flushing spans to a collector
+  # that is not there held every pod's shutdown for ~18 s.
+  OTEL_ENABLED: "false"
