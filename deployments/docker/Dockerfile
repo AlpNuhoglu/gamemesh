@@ -15,7 +15,7 @@
 # digest, so the pin holds for every target architecture. Dependabot bumps
 # tag and digest together; the golang tag also has to match go.mod's
 # toolchain line.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 # Cache mounts keep the module and build caches between builds, so a code
@@ -34,7 +34,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags="-s -w -X github.com/alpnuhoglu/gamemesh/pkg/config.version=$VERSION" \
       -o /out/service "./cmd/$SERVICE"
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.20
 COPY --from=build /out/service /service
 # Numeric, so Kubernetes' runAsNonRoot can verify the user is not root; no
 # passwd entry is needed for a static binary.
