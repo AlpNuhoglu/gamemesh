@@ -48,6 +48,8 @@ type NATSBus struct {
 	// broadcast gives this instance its own consumer instead of the shared
 	// durable, so every instance receives every event (WithBroadcast).
 	broadcast bool
+	// connectWait bounds how long the first connection is retried.
+	connectWait time.Duration
 
 	mu       sync.Mutex
 	stop     chan struct{} // closed by Close to trigger early consumer drain
@@ -110,6 +112,16 @@ type NATSOption func(*NATSBus)
 // are not delivered to it, and its clients resync when they reconnect.
 func WithBroadcast() NATSOption { return func(b *NATSBus) { b.broadcast = true } }
 
+// WithConnectWait sets how long NewNATSBus retries the first connection
+// (default defaultConnectWait).
+func WithConnectWait(d time.Duration) NATSOption { return func(b *NATSBus) { b.connectWait = d } }
+
+// defaultConnectWait is how long a service waits for NATS at startup before
+// giving up. Kubernetes starts pods in no particular order; without a retry a
+// service started before NATS exited and crash-looped until NATS was up. It
+// stays inside the startup probe's 60 s window.
+const defaultConnectWait = 30 * time.Second
+
 // broadcastInactiveThreshold is how long the server keeps a broadcast
 // consumer whose instance stopped pulling. Longer than a reconnect after a
 // NATS restart (about 3 s in tests), so a live instance never loses its
@@ -124,18 +136,14 @@ func NewNATSBus(url, durableName string, workers int, m *metrics.Metrics, log *z
 	if workers <= 0 {
 		workers = 8
 	}
-	b := &NATSBus{log: log, m: m, workers: workers, durable: durableName, stop: make(chan struct{})}
+	b := &NATSBus{log: log, m: m, workers: workers, durable: durableName, connectWait: defaultConnectWait, stop: make(chan struct{})}
 	for _, opt := range opts {
 		opt(b)
 	}
 
-	conn, err := nats.Connect(url,
-		nats.Name("gamemesh-"+durableName),
-		nats.MaxReconnects(-1), // reconnect forever; JetStream tolerates gaps
-		nats.ReconnectWait(time.Second),
-	)
+	conn, err := connectWithRetry(url, durableName, b.connectWait, log)
 	if err != nil {
-		return nil, fmt.Errorf("nats connect: %w", err)
+		return nil, err
 	}
 	js, err := jetstream.New(conn)
 	if err != nil {
@@ -161,6 +169,32 @@ func NewNATSBus(url, durableName string, workers int, m *metrics.Metrics, log *z
 		}
 	}
 	return b, nil
+}
+
+// connectWithRetry dials NATS with a capped exponential backoff for up to
+// maxWait, the same way database.Open waits for Postgres. Once connected the
+// client reconnects by itself (MaxReconnects -1); only the first connection
+// needs this.
+func connectWithRetry(url, name string, maxWait time.Duration, log *zap.Logger) (*nats.Conn, error) {
+	deadline := time.Now().Add(maxWait)
+	backoff := 500 * time.Millisecond
+	for attempt := 1; ; attempt++ {
+		conn, err := nats.Connect(url,
+			nats.Name("gamemesh-"+name),
+			nats.MaxReconnects(-1), // reconnect forever; JetStream tolerates gaps
+			nats.ReconnectWait(time.Second),
+		)
+		if err == nil {
+			return conn, nil
+		}
+		if time.Now().Add(backoff).After(deadline) {
+			return nil, fmt.Errorf("nats connect: unreachable after %d attempts: %w", attempt, err)
+		}
+		log.Warn("nats not reachable yet, retrying",
+			zap.Int("attempt", attempt), zap.Duration("backoff", backoff), zap.Error(err))
+		time.Sleep(backoff)
+		backoff = min(2*backoff, 5*time.Second)
+	}
 }
 
 // dedupeStreams returns the unique set of streams (streamFor maps multiple
