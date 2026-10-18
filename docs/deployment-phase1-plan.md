@@ -649,7 +649,7 @@ Her adım şu yapıda:
 
 ### A6. Container registry: imajları GHCR'a gönder
 
-- [ ] **Ne:** `main`'e push'ta imajları `ghcr.io/alpnuhoglu/gamemesh-<servis>:<git-sha>`
+- [x] **Ne:** `main`'e push'ta imajları `ghcr.io/alpnuhoglu/gamemesh-<servis>:<git-sha>`
   olarak multi-arch (`linux/amd64,linux/arm64`) build edip push etmek. PR'larda sadece build
   yapılıyor, push yok.
 - **Neden:** Şu anki manifest'ler imajın node'da zaten var olduğunu varsayıyor
@@ -692,6 +692,34 @@ Her adım şu yapıda:
      her commit'te değişiyor. Beklenti: `publish`'te amd64 derleme adımı aynı commit'teki
      `docker` job'unun scope'undan `CACHED` gelecek; `main`'de doğrulanacak.
   4. Bulgu #62: docker matrix'inde `fail-fast: false` (`publish`'te de).
+- **Sonuç (2026-10-18), PR #42 → `main` `4419350` (run 39125801500, success):**
+  - `publish` 7/7 başarılı (81–95 sn). Yetkiler logda: `publish`'te `Contents: read`,
+    `Metadata: read`, `Packages: write`; `lint`'te `Packages` yok.
+  - Bulgu #63 düzeltmesi: 7 serviste de `publish`'in amd64 derleme adımı `CACHED`
+    (`docker` job'unun scope'undan). arm64 adımı `[linux/amd64->arm64 build 6/6]`:
+    runner'ın platformunda cross-compile, her seferinde sıfırdan 50–57 sn. Build
+    aşamasının ilk adımları iki hedef için bir kez çalışıyor. `main` pipeline'ına
+    eklenen süre ~1 dk 40 sn (`ci-ok` 12:09:50'de bitti → `deploy` 12:11:29'da başladı;
+    tahmin ~1–1,5 dk'ydı).
+  - Görünürlük: 7 paket ilk push'tan itibaren **public**. Mac'te ghcr.io için kayıtlı
+    kimlik bilgisi yokken anonim token alındı ve manifest 200 döndü; var olmayan bir
+    paket için token `DENIED` (403). Paket sayfası `AlpNuhoglu/gamemesh/pkgs/container/...`
+    adresine yönleniyor (repoya bağlı). **Plan düzeltmesi:** "varsayılan private,
+    elle public yapılacak" beklentisi yanlış çıktı; neden public açıldığı belgede yok,
+    bilinmiyor. Elle yapılması gereken bir adım kalmadı.
+  - "Bitti sayılır": Mac'ten giriş yapmadan `docker pull
+    ghcr.io/alpnuhoglu/gamemesh-gateway:<sha>` çalıştı. `imagetools inspect`: OCI
+    index'te `linux/amd64`, `linux/arm64` ve her birine işaret eden 2 ×
+    `unknown/unknown` attestation manifest'i. İmaj `user=10001:10001`, `source` ve
+    `revision` etiketleri doğru. arm64 imajı Mac'te emülasyonsuz çalıştı (`aarch64`):
+    `/health` → `{"status":"ok","version":"4419350…"}`, `/livez` 200.
+  - Bulgu #62'nin etkisi CI'da henüz görülmedi (bu run'da başarısız job yok).
+  - Not: `services` job'u adımları 12:04:47'de bitmiş olduğu halde ~10 dk `in_progress`
+    göründü; bağımlı job'lar çıktısını aldı, kayıt sonra `completed_at=12:04:49` ile
+    düzeldi. GitHub tarafında bir durum kaydı gecikmesi; workflow'la ilgili değil.
+  - A7/A8 için: manifest'ler hâlâ `gamemesh/<servis>:latest` + `IfNotPresent`. Overlay'deki
+    `images:` alanı `ghcr.io/alpnuhoglu/gamemesh-<servis>` ve SHA'ya çevirmeli;
+    değişmezlik için D adımında digest ile deploy.
 
 ### A7. K8s manifest'lerindeki eksikleri tamamla
 
@@ -1330,7 +1358,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |
 | 60 | Trivy'ye `scanners` verilmemiş; step adı "misconfig" dese de manifest'ler hiç taranmıyordu (33 HIGH görünmüyordu) | M7 | Ölçüldü (yerel Trivy 0.70.0) | A5a (misconfig sadece rapor; bloklama A7) |
 | 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
-| 62 | `docker` matrix'i `fail-fast: true` (varsayılan): bir servisin job'u düşünce kardeş job'lar iptal ediliyor, diğer imajların tarama sonucu görünmüyor (#54'ün matrix'teki karşılığı) | M7 | Ölçüldü (PR #41: 5 EOL, 2 `canceled`) | A6 (`fail-fast: false`) |
-| 63 | 7 docker job'u gha önbelleğine aynı (varsayılan `buildkit`) scope'la yazıyor; her build öncekinin önbellek index'ini eziyor | M7 | Ölçüldü (run 39118835866, Docker belgesi) | A6 (servis başına `scope`) |
+| 62 | `docker` matrix'i `fail-fast: true` (varsayılan): bir servisin job'u düşünce kardeş job'lar iptal ediliyor, diğer imajların tarama sonucu görünmüyor (#54'ün matrix'teki karşılığı) | M7 | Ölçüldü (PR #41: 5 EOL, 2 `canceled`) | A6 (`fail-fast: false`; etkisi bir başarısız run'da görülecek) |
+| 63 | 7 docker job'u gha önbelleğine aynı (varsayılan `buildkit`) scope'la yazıyor; her build öncekinin önbellek index'ini eziyor | M7 | Ölçüldü (run 39118835866, Docker belgesi) | A6 (çözüldü: `publish`'te amd64 derleme 7/7 `CACHED`) |
 | 64 | Event bus bağlantısında açılış retry'ı yok; bağımlılık geç kalkınca servis `fatal` verip yeniden başlıyor | M4 | Ölçüldü (k3d: websocket 2 restart, `event bridge failed`) | A7-3 (NATS istemcisinde retry) |
 | 65 | Tracing kapanışı sınırsız (`shutdownTracing(context.Background())`, 7 servis); collector yokken her pod kapanışı ~18 sn uzuyor | M4 | Ölçüldü (k3d: ~24 sn → `OTEL_ENABLED=false` ile ~6 sn) | `fix/tracing-shutdown-timeout` (3 sn sınır) |
