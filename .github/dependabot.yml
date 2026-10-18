@@ -54,3 +54,29 @@ updates:
       # Patch releases, which carry the security fixes, still come.
       - dependency-name: golang
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # The third-party images in the Kubernetes manifests (NATS, Redis, Postgres,
+  # Prometheus, Grafana). Majors are their own decision: Redis 8, Postgres 17,
+  # Prometheus 3 and Grafana 12 each change behaviour or data formats.
+  - package-ecosystem: docker
+    directory: /deployments/k8s
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # The same images in docker-compose.yml, plus Jaeger and the collector.
+  # Dependabot updates this file and the manifests in separate PRs; CI fails
+  # while an image they share differs, so both are merged together.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

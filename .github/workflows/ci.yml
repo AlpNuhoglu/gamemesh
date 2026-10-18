@@ -51,6 +51,23 @@ jobs:
             echo "::error file=deployments/docker/Dockerfile::golang:${got} does not match go.mod's toolchain go${want}; bump both together"
             exit 1
           fi
+      # docker-compose is where the stack is tested; deployments/k8s is what
+      # runs. Dependabot bumps the two in separate PRs, so a third-party image
+      # they share (NATS, Redis, Postgres, ...) must be the same tag@digest in
+      # both, or what was tested is not what is deployed.
+      - name: Shared images match between docker-compose and Kubernetes
+        run: |
+          k8s=$(grep -rhoE 'image: [^ ]+@sha256:[0-9a-f]{64}' deployments/k8s | cut -d' ' -f2 | sort -u)
+          compose=$(grep -hoE 'image: [^ ]+@sha256:[0-9a-f]{64}' docker-compose.yml | cut -d' ' -f2 | sort -u)
+          bad=0
+          for ref in $k8s; do
+            repo=${ref%%:*}
+            other=$(printf '%s\n' "$compose" | grep -E "^${repo}:" || true)
+            [ -z "$other" ] && continue
+            if [ "$other" = "$ref" ]; then echo "same: ${ref%@*}"
+            else echo "::error file=docker-compose.yml::$repo differs: deployments/k8s has ${ref%@*}, docker-compose.yml has ${other%@*} (or another digest)"; bad=1; fi
+          done
+          exit $bad
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -162,17 +179,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Report only, until the manifests are reworked (A7): today it finds 33
-      # HIGH issues, all in deployments/k8s (no securityContext, writable root
-      # filesystem). Runs first so the blocking scan below cannot skip it.
-      - name: Trivy misconfiguration scan (report only)
+      # Blocking since the manifests were reworked (A7): it found 33 HIGH issues
+      # in deployments/k8s (no security context, writable root filesystem),
+      # now 0. Runs first, so a red dependency scan cannot skip it.
+      - name: Trivy misconfiguration scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: misconfig
           severity: HIGH,CRITICAL
-          exit-code: "0"
+          exit-code: "1"
       # The scanners are named: left empty, Trivy runs vuln and secret only, and
       # a step once called "deps + misconfig" never checked a single manifest.
       - name: Trivy dependency and secret scan
@@ -203,6 +220,58 @@ jobs:
           docker run --rm -v "$PWD":/repo:ro
           zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           git --redact --no-banner --exit-code 1 /repo
+
+  # The third-party images the manifests and docker-compose run (NATS, Redis,
+  # Postgres, monitoring, tracing). The image scan above covers only the
+  # images built here; these were never scanned, for vulnerabilities or for
+  # an end-of-life base.
+  third-party-images:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    env:
+      # Report only, by name; every other image blocks, including one added
+      # later. These are a major version behind and not deployed in phase 1
+      # (monitoring stays out of production, A8; Jaeger and the collector run
+      # in docker-compose only). Upgrading them is tracked as finding #68.
+      REPORT_ONLY: prom/prometheus grafana/grafana jaegertracing/all-in-one otel/opentelemetry-collector-contrib
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: list
+        run: |
+          refs=$( (grep -rhoE 'image: [^ ]+@sha256:[0-9a-f]{64}' deployments/k8s; grep -hoE 'image: [^ ]+@sha256:[0-9a-f]{64}' docker-compose.yml) | cut -d' ' -f2 | sort -u)
+          list=$(for ref in $refs; do
+            repo=${ref%%:*}; blocking=true
+            for r in $REPORT_ONLY; do [ "$r" = "$repo" ] && blocking=false; done
+            jq -cn --arg image "$ref" --arg name "${ref%@*}" --argjson blocking "$blocking" '{image: $image, name: $name, blocking: $blocking}'
+          done | jq -cs .)
+          echo "$list" | jq -r '.[] | "\(if .blocking then "blocking   " else "report only" end)  \(.name)"'
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  scan-third-party:
+    name: scan-third-party (${{ matrix.name }})
+    needs: third-party-images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.third-party-images.outputs.list) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Same rules as the images built here (HIGH/CRITICAL with a fix, and
+      # an end-of-life base fails), with the accepted findings in
+      # .trivyignore.yaml: each scoped to a path or package, each expiring.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_EXIT_ON_EOL: ${{ matrix.blocking && '1' || '0' }}
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: ${{ matrix.blocking && '1' || '0' }}
+          trivyignores: .trivyignore.yaml
 
   govulncheck:
     runs-on: ubuntu-latest
@@ -236,7 +305,7 @@ jobs:
   # required check passes.
   ci-ok:
     if: always()
-    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck]
+    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party]
     runs-on: ubuntu-latest
     steps:
       - name: Every needed job succeeded

@@ -822,6 +822,50 @@ Her adım şu yapıda:
      Service'in hazır endpoint'siz kaldığı süre 8–9 sn (planın "birkaç saniye"si).
   5. `OTEL_ENABLED: "false"` (madde 3, A7-3'ten öne çekildi): silme isteği → container
      bitişi tracing açıkken ~24 sn, kapalıyken ~6 sn; Recreate boşluğu 21 sn → 8–9 sn.
+- **A7-2 yapılanlar (`build/k8s-stateful`, 2026-10-18).** Kararlar: NATS 2.15.1 (compose da);
+  üçüncü taraf imajlar tag + digest, Dependabot ile; #66 için prod imajları bloklayan,
+  monitoring ve compose'a özgü araçlar rapor modunda; monitoring de sertleştirildi;
+  Postgres Deployment + `Recreate` olarak kaldı.
+  1. **NATS StatefulSet** (`05-nats.yaml`): `nobody` (65534), restricted, `/data` PVC,
+     compose bayrakları (imajın örnek config'i ve oradaki yer tutucu cluster şifresi
+     yüklenmiyor). Probe'lar `/healthz` ve `?js-enabled-only=true`. k3d: outbox-relay
+     CrashLoop → 3/3 Running (#28 çözüldü); PLAYER stream'indeki mesaj pod silindikten
+     sonra da duruyor. **Sapma:** lame duck `preStop` (3a) eklenmedi; tek replica'da
+     istemcileri taşıyacak başka sunucu yok, nats.go kendisi yeniden bağlanıyor.
+  2. **Redis StatefulSet + AOF** (`--appendonly yes`): imajın `redis` kullanıcısı uid 999,
+     **gid 1000**; `fsGroup: 1000`. k3d önce: pod silinince DBSIZE 1 → 0; sonra: string ve
+     sorted set duruyor. Uygulamalar Redis yokken `READY 0/1`, 0 restart, 5 sn'de geri geldi
+     (yeni pod IP'sine yeniden bağlanarak). **Not:** Service headless oldu; `clusterIP`
+     yerinde değiştirilemediği için var olan bir cluster'da eski Service silinmeli (VPS
+     sıfırdan kurulacak).
+  3. **Postgres:** uid/gid 70, restricted, read-only root (`/var/run/postgresql` ve `/tmp`
+     için `emptyDir`), probe'lar Secret'taki `$POSTGRES_USER`/`$POSTGRES_DB` ile, init SQL
+     ConfigMap'i kaldırıldı. k3d'de boş volume ile: `AutoMigrate` `outbox_events`,
+     `player_stats`, `players`'ı kurdu; kayıt + giriş çalıştı, PLAYER 1 → 2; pod silindikten
+     sonra giriş hâlâ çalışıyor.
+  4. **Prometheus/Grafana:** restricted + probe'lar (önce rollout, sunucu dinlemeden
+     "başarılı" diyordu). Grafana root grubu olmadan; varsayılan `Merge` politikasıyla
+     kubelet imajın `/etc/group`'undan gid 0'ı yine ekliyordu (`groups=0(root),472`),
+     `supplementalGroupsPolicy: Strict` ile `groups=472`. Prometheus token'ı bağlı kaldı
+     (servis keşfi); 14 hedefin hepsi `up`. Grafana'daki "xychart already registered"
+     hatası kısıtlamasız imajda da var.
+  5. **Namespace PSS `enforce: restricted` (v1.35)** + warn/audit. Root bir pod
+     `Forbidden: violates PodSecurity "restricted:v1.35"`; bütün iş yükleri yeniden
+     başlatıldıktan sonra 19 pod `1/1`, PodSecurity `FailedCreate` yok.
+  6. **compose = k8s imajları:** Postgres, Redis, NATS, Prometheus, Grafana iki yerde aynı
+     `tag@digest`; Jaeger ve collector da digest'li. Yerel stack: NATS 2.10.29 → 2.15.1,
+     JetStream verisi korundu (PLAYER 20 → 20), kayıt 201, PLAYER 21. Dependabot'a
+     `deployments/k8s` (docker) ve `docker-compose` girişleri (major'lar ignore); lint job'u
+     ortak imajlar iki yerde farklıysa kırmızı.
+  7. **Misconfig bloklayan:** HIGH 33 (A5a) → 12 (A7-1) → **0**. Bir kopyada gateway'in
+     `readOnlyRootFilesystem: false` olması `KSV-0014` ile exit 1.
+  8. **Üçüncü taraf imaj taraması (#66):** 7 imajdan 6'sı yerel taramada düşüyordu
+     (Grafana 11.2.0 ve Jaeger 1.62.0 EOL Alpine 3.19/3.20 üzerinde). Bloklayan: NATS,
+     Redis, Postgres (varsayılan; rapor modundakiler adıyla listeli). `.trivyignore.yaml`:
+     Postgres'in 25 bulgusu, hiç çalışmayan `usr/local/bin/gosu`'ya (go1.24.6; entrypoint
+     sadece root'ta çağırıyor) path ile sınırlı, 2027-01-18'e kadar; Redis'in OpenSSL
+     CVE'si (Alpine'da düzeltilmiş, imaj yeniden build edilmemiş) paket sürümüyle sınırlı,
+     2026-11-18'e kadar. Süre dolunca ikisi de exit 1 (denendi).
 
 ### A8. Kustomize ile base / overlay yapısı
 
@@ -1282,6 +1326,9 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
   ve digest'i aynı PR'da; ardından testler ve govulncheck. Go 1.26'nın desteği Go 1.28 ile
   (beklenen: Şubat 2027) bitiyor, o tarihten önce yapılmalı. Dependabot golang minor'ını
   bilerek önermiyor.
+- **Monitoring ve tracing imajlarının major yükseltmesi (#68):** Prometheus 3, Grafana 12/13,
+  Jaeger v2 (config biçimi değişiyor), collector 0.16x. Yapıldıktan sonra #66 taramasındaki
+  `REPORT_ONLY` listesinden çıkarılmalı.
 - **Kalan iki taşınabilir referans (A5a):** Dockerfile'daki `# syntax=docker/dockerfile:1`
   satırı bir tag (digest ile sabitlenebilir; Dependabot'un bu satırı güncelleyip
   güncellemediği test edilmedi). Trivy sürümü action'ın varsayılanına bağlı; `version:`
@@ -1324,13 +1371,13 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te çözüldü (`go-version-input: ""`, CI'da 1.26.9) |
 | 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a (gece taraması; doküman PR'ları bilerek muaf tutulmadı) |
 | 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a (çözüldü: action SHA, imaj digest, kubeconform checksum, Dependabot) |
-| 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 |
+| 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 (NATS kuruldu, outbox-relay 3/3 Running; `EVENT_BUS=nats` A7-3'te) |
 | 29 | **Websocket replica'ları NATS consumer'ını paylaşıyor (event'ler bölünüyor)** | M5 | Kod | A7, A10 |
 | 30 | **Matchmaking rolling update sırasında iki kopya çalışıyor** | M5 | Kod | A7, A10 |
 | 31 | `preStop` ve `terminationGracePeriodSeconds` yok (endpoint yarışı) | M4 | Ölçüldü (lab) | A7 |
 | 32 | `startupProbe` yok; probe timeout'ları varsayılan (1 sn) | M6 | Kod | A7 |
-| 33 | Redis'in PVC'si yok; k8s imajdaki `VOLUME` tanımını yok sayıyor | M2, M5 | Ölçüldü (compose) | A7 |
-| 34 | Postgres probe'unda kullanıcı adı sabit; liveness yok; init SQL ConfigMap'i | M5 | Kod | A7 |
+| 33 | Redis'in PVC'si yok; k8s imajdaki `VOLUME` tanımını yok sayıyor | M2, M5 | Ölçüldü (compose) | A7 (çözüldü: StatefulSet + AOF, veri pod silinince duruyor) |
+| 34 | Postgres probe'unda kullanıcı adı sabit; liveness yok; init SQL ConfigMap'i | M5 | Kod | A7 (çözüldü: Secret'tan probe, liveness, init SQL kaldırıldı) |
 | 35 | **PDB `minAvailable: 2` tek replica ile node drain'i kilitliyor** | M5 | Kod | A8, A10 |
 | 36 | Toplam requests 1800m CPU, 2 vCPU'ya sığmıyor | M5 | Ölçüldü (hesap) | A8, B1 |
 | 37 | ConfigMap değişikliği pod'ları yeniden başlatmıyor | M5 | Ölçüldü (Docker analog) | A8 |
@@ -1362,3 +1409,6 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 63 | 7 docker job'u gha önbelleğine aynı (varsayılan `buildkit`) scope'la yazıyor; her build öncekinin önbellek index'ini eziyor | M7 | Ölçüldü (run 39118835866, Docker belgesi) | A6 (çözüldü: `publish`'te amd64 derleme 7/7 `CACHED`) |
 | 64 | Event bus bağlantısında açılış retry'ı yok; bağımlılık geç kalkınca servis `fatal` verip yeniden başlıyor | M4 | Ölçüldü (k3d: websocket 2 restart, `event bridge failed`) | A7-3 (NATS istemcisinde retry) |
 | 65 | Tracing kapanışı sınırsız (`shutdownTracing(context.Background())`, 7 servis); collector yokken her pod kapanışı ~18 sn uzuyor | M4 | Ölçüldü (k3d: ~24 sn → `OTEL_ENABLED=false` ile ~6 sn) | `fix/tracing-shutdown-timeout` (3 sn sınır) |
+| 66 | Üçüncü taraf imajlar (NATS, Redis, Postgres, monitoring, tracing) hiç taranmıyordu; yerelde 7'den 6'sı düşüyor, ikisi EOL Alpine üzerinde | M7 | Ölçüldü (Trivy 0.70.0, yerel) | A7-2 (prod imajları bloklayan, `.trivyignore.yaml` süreli) |
+| 67 | Grafana admin şifresi manifest'te düz metin (`admin`/`admin`) | M8 | Kod | A9 |
+| 68 | Monitoring ve tracing imajları major sürüm geride (Prometheus v2.54.1, Grafana 11.2.0, Jaeger 1.62.0, collector 0.111.0); CI'da rapor modunda | M7 | Ölçüldü (#66 taraması) | Faz 1 sonrası; A8'de monitoring prod overlay'inin dışında |

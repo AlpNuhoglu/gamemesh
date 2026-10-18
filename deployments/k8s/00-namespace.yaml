@@ -4,3 +4,16 @@ metadata:
   name: gamemesh
   labels:
     app.kubernetes.io/part-of: gamemesh
+    # Pod Security Standards "restricted", enforced by the API server: a pod
+    # that runs as root, keeps capabilities, allows privilege escalation or
+    # has no seccomp profile is rejected at creation, whatever the manifest
+    # review or the CI scan missed. The version is pinned so a k3s upgrade
+    # cannot tighten the rules under running workloads; raise it on purpose.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.35
+    # warn shows violations to whoever applies; audit records them in the
+    # API server's audit log.
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.35
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.35
