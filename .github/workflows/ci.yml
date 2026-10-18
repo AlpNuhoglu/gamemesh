@@ -109,6 +109,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test, services]
     strategy:
+      # Every service's build and scan runs to the end. With the default
+      # (fail-fast: true) one failing image cancelled the jobs still running,
+      # so their scan results never showed up.
+      fail-fast: false
       matrix:
         service: ${{ fromJSON(needs.services.outputs.list) }}
     steps:
