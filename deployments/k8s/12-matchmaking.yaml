@@ -8,6 +8,13 @@ metadata:
   namespace: gamemesh
 spec:
   replicas: 1
+  # Recreate stops the old pod completely before starting the new one. The
+  # default RollingUpdate starts the new pod first (maxSurge rounds up to 1),
+  # so for the old pod's whole shutdown, preStop included, two match loops
+  # pop the same queue. The cost is a short gap with no matching; the queue
+  # itself is in Redis and survives it.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: matchmaking
