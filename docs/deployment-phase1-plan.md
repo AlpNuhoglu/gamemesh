@@ -671,6 +671,27 @@ Her adım şu yapıda:
 - **İncelemeden eklenenler (M7):** `packages: write` yetkisi workflow seviyesinde değil,
   **sadece push yapan job'da** verilmeli (A5'teki `permissions: contents: read` ile
   birlikte).
+- **Yapılanlar (2026-10-18), CI kanıtı bekleniyor:** Kararlar (2026-10-18): push `ci-ok`'tan
+  sonra ayrı bir `publish` job'unda; amd64 + arm64; tarama PR'lardaki gibi amd64 üzerinde
+  (`docker` job'u); provenance varsayılanı korunuyor; OCI etiketleri CI'da elle; paketler
+  public; `fail-fast: false`.
+  1. `publish`: sadece `main`'e push'ta (`event_name == 'push'`; plandaki
+     `push: ${{ github.ref == 'refs/heads/main' }}` gece ve elle tetiklenen çalıştırmada
+     da push ederdi), `needs: [ci-ok, services]`, job seviyesinde `contents: read` +
+     `packages: write`. `ghcr.io/alpnuhoglu/gamemesh-<servis>:<sha>`; etiketler
+     `org.opencontainers.image.source` ve `revision`. `docker/login-action` v4.6.0 SHA ile
+     pinli. `deploy` artık `[ci-ok, publish]` bekliyor.
+  2. Yerel ölçüm (aynı build argümanlarıyla OCI arşivine): iki platform build oluyor,
+     `user=10001:10001`, iki etiket de var. Index'te ayrıca 2 × `unknown/unknown`
+     attestation manifest'i (SLSA provenance v1, platform başına bir). "Bitti sayılır"
+     kriterindeki "iki platform" GHCR'da 2 platform + 2 attestation olarak görünecek.
+  3. Bulgu #63: 7 docker job'u gha önbelleğine varsayılan scope'la (`buildkit`) yazıyordu;
+     belge: "each build will overwrite the cache of the previous". Servis başına scope
+     verildi. Ölçüldü (run 39118835866): `go mod download` 7 job'da `CACHED`; `go build`
+     hiçbirinde önbellekten gelmiyor (35–55 sn). Bunun bir kısmı tasarım gereği: `VERSION`
+     her commit'te değişiyor. Beklenti: `publish`'te amd64 derleme adımı aynı commit'teki
+     `docker` job'unun scope'undan `CACHED` gelecek; `main`'de doğrulanacak.
+  4. Bulgu #62: docker matrix'inde `fail-fast: false` (`publish`'te de).
 
 ### A7. K8s manifest'lerindeki eksikleri tamamla
 
@@ -1282,3 +1303,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 60 | Trivy'ye `scanners` verilmemiş; step adı "misconfig" dese de manifest'ler hiç taranmıyordu (33 HIGH görünmüyordu) | M7 | Ölçüldü (yerel Trivy 0.70.0) | A5a (misconfig sadece rapor; bloklama A7) |
 | 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
 | 62 | `docker` matrix'i `fail-fast: true` (varsayılan): bir servisin job'u düşünce kardeş job'lar iptal ediliyor, diğer imajların tarama sonucu görünmüyor (#54'ün matrix'teki karşılığı) | M7 | Ölçüldü (PR #41: 5 EOL, 2 `canceled`) | A6 (`fail-fast: false`) |
+| 63 | 7 docker job'u gha önbelleğine aynı (varsayılan `buildkit`) scope'la yazıyor; her build öncekinin önbellek index'ini eziyor | M7 | Ölçüldü (run 39118835866, Docker belgesi) | A6 (servis başına `scope`) |
