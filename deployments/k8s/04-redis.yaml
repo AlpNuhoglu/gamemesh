@@ -1,11 +1,32 @@
-# Single-node Redis for Minikube. Production: Redis Cluster or a managed
-# offering, with separate instances for cache vs. pub/sub if needed.
-apiVersion: apps/v1
-kind: Deployment
+# Single-node Redis: sessions, the matchmaking queue, leaderboards and
+# presence. Production at scale: Redis Cluster or a managed offering.
+#
+# A StatefulSet with its own volume and AOF on. As a Deployment without a
+# volume, deleting the pod lost every key (measured on k3d: DBSIZE 1 -> 0):
+# all sessions logged out, every leaderboard reset. docker-compose kept the
+# data only through the image's VOLUME /data, which Kubernetes ignores.
+apiVersion: v1
+kind: Service
 metadata:
   name: redis
   namespace: gamemesh
 spec:
+  # Headless: the StatefulSet's governing Service; redis:6379 resolves to
+  # the pod.
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: gamemesh
+spec:
+  serviceName: redis
   replicas: 1
   selector:
     matchLabels:
@@ -15,28 +36,54 @@ spec:
       labels:
         app: redis
     spec:
+      automountServiceAccountToken: false
+      # The image's redis user is uid 999, gid 1000 (not 999). Run as it from
+      # the start, so the entrypoint skips its root-only chown, and let fsGroup
+      # make the volume writable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+          # AOF: every write is appended and fsynced once a second, so a restart
+          # loses at most about a second of writes instead of everything.
+          args: ["redis-server", "--appendonly", "yes"]
           ports:
             - containerPort: 6379
+          startupProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 2
+            # Replaying a large AOF can take a while; up to 60 s.
+            failureThreshold: 30
           readinessProbe:
-            exec:
-              command: ["redis-cli", "ping"]
-            initialDelaySeconds: 3
+            exec: { command: ["redis-cli", "ping"] }
             periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: data
+              mountPath: /data
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 256Mi }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis
-  namespace: gamemesh
-spec:
-  selector:
-    app: redis
-  ports:
-    - port: 6379
-      targetPort: 6379
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
