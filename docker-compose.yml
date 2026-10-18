@@ -327,7 +327,7 @@ services:
   # for Tempo/Datadog by editing config/otel/collector.yaml — no service rebuilds.
   otel-collector:
     restart: always
-    image: otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
+    image: otel/opentelemetry-collector-contrib:0.162.0-386@sha256:8b9211dbe1b3642eca91b237f39ede8baae9abaf97d6dcc88116f77f29545359
     command: ["--config=/etc/otel/collector.yaml"]
     volumes:
       - ./config/otel/collector.yaml:/etc/otel/collector.yaml:ro
