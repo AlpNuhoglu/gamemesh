@@ -51,14 +51,27 @@ spec:
                 name: gamemesh-config
             - secretRef:
                 name: gamemesh-secrets
+          # Startup gives the process up to 60 s (30 x 2 s) before liveness counts,
+          # so a slow start (Postgres retry, migrations) is not killed and restarted
+          # in a loop; it replaces the old initialDelaySeconds guesses.
+          startupProbe:
+            httpGet: { path: /livez, port: 8085 }
+            periodSeconds: 2
+            failureThreshold: 30
+          # Readiness is quick to drop a pod from the Service (4 s) when a
+          # dependency fails; liveness is slow to kill it (30 s) and tolerates a
+          # 3 s stall, since a 1 s timeout under a 500m CPU limit can fail on CFS
+          # throttling alone and restart healthy pods under load.
           readinessProbe:
-            httpGet: { path: /healthz, port: 8085 }
-            initialDelaySeconds: 3
-            periodSeconds: 5
+            httpGet: { path: /readyz, port: 8085 }
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /healthz, port: 8085 }
-            initialDelaySeconds: 10
+            httpGet: { path: /livez, port: 8085 }
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
             requests: { cpu: 100m, memory: 64Mi }
             limits: { cpu: 500m, memory: 128Mi }
