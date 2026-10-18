@@ -27,9 +27,10 @@ spec:
         prometheus.io/port: "8082"
         prometheus.io/path: /metrics
     spec:
-      # 30 s covers the worst case: preStop 5 s + HTTP shutdown 15 s
-      # (pkg/server) + background workers 5 s (WorkerShutdownTimeout) = 25 s.
-      terminationGracePeriodSeconds: 30
+      # Worst case before the kubelet sends SIGKILL: preStop 5 s + HTTP
+      # shutdown 15 s (pkg/server) + background workers 5 s
+      # (WorkerShutdownTimeout) + flushing traces 3 s (pkg/tracing) = 28 s.
+      terminationGracePeriodSeconds: 35
       # The services never call the Kubernetes API; without a mounted token a
       # compromised pod cannot either.
       automountServiceAccountToken: false
