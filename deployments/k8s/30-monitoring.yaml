@@ -107,15 +107,50 @@ spec:
         app: prometheus
     spec:
       serviceAccountName: prometheus
+      # Unlike the services, Prometheus needs its token: it discovers the pods
+      # to scrape through the Kubernetes API (kubernetes_sd_configs).
+      automountServiceAccountToken: true
+      # The image's own user (nobody); fsGroup makes the volumes writable.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: prometheus
-          image: prom/prometheus:v2.54.1
+          image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
           args: ["--config.file=/etc/prometheus/prometheus.yml"]
           ports:
             - containerPort: 9090
+          # Without probes a rollout reported success as soon as the container
+          # started, before the server listened.
+          startupProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9090 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            # The TSDB (the image's VOLUME /prometheus, which Kubernetes
+            # ignores). An emptyDir: metrics are lost with the pod, acceptable
+            # while monitoring is not part of the production deployment.
+            - name: data
+              mountPath: /prometheus
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: 500m, memory: 512Mi }
@@ -123,6 +158,8 @@ spec:
         - name: config
           configMap:
             name: prometheus-config
+        - name: data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -151,19 +188,66 @@ spec:
       labels:
         app: grafana
     spec:
+      automountServiceAccountToken: false
+      # The image runs as uid 472 in the root group (gid 0); nothing it reads
+      # needs that group, so it runs with its own. Strict keeps the kubelet
+      # from adding the image's /etc/group memberships back: with the default
+      # (Merge) the process still had root as a supplementary group.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        supplementalGroupsPolicy: Strict
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: grafana
-          image: grafana/grafana:11.2.0
+          image: grafana/grafana:11.2.0@sha256:408afb9726de5122b00a2576763a8a57a3c86d5b0eff5305bc994ceb3eb96c3f
           ports:
             - containerPort: 3000
+          # Without probes a rollout reported success as soon as the container
+          # started, before the server listened.
+          startupProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           env:
             - name: GF_SECURITY_ADMIN_USER
               value: admin
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: admin
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          # Grafana writes its database and plugins, its logs and temp files.
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: logs
+              mountPath: /var/log/grafana
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
