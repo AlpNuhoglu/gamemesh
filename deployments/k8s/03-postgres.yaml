@@ -1,38 +1,10 @@
-# Single-node PostgreSQL for Minikube. Production would use a managed
-# database or an operator (CloudNativePG) with replication and backups.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-init
-  namespace: gamemesh
-data:
-  01-schema.sql: |
-    CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-    CREATE TABLE IF NOT EXISTS players (
-        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        username      VARCHAR(32)  NOT NULL,
-        email         VARCHAR(255) NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
-        updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
-        CONSTRAINT uni_players_username UNIQUE (username),
-        CONSTRAINT uni_players_email    UNIQUE (email),
-        CONSTRAINT ck_players_username_len CHECK (char_length(username) >= 3)
-    );
-
-    CREATE TABLE IF NOT EXISTS player_stats (
-        player_id    UUID PRIMARY KEY REFERENCES players (id) ON DELETE CASCADE,
-        rank         INTEGER     NOT NULL DEFAULT 1000,
-        score        BIGINT      NOT NULL DEFAULT 0,
-        games_played INTEGER     NOT NULL DEFAULT 0,
-        updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-        CONSTRAINT ck_player_stats_rank  CHECK (rank >= 0),
-        CONSTRAINT ck_player_stats_games CHECK (games_played >= 0)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_player_stats_rank ON player_stats (rank);
----
+# Single-node PostgreSQL. Production at scale: a managed database or an
+# operator (CloudNativePG) with replication and backups.
+#
+# The schema comes from the player service's AutoMigrate (players,
+# player_stats, outbox_events). The init SQL ConfigMap that used to sit here
+# was a fourth copy of it, created only two of the three tables, and its
+# constraint names differed from GORM's.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -51,6 +23,8 @@ metadata:
   namespace: gamemesh
 spec:
   replicas: 1
+  # Never two servers on the same data directory: the old pod stops before
+  # the new one starts.
   strategy:
     type: Recreate
   selector:
@@ -61,27 +35,59 @@ spec:
       labels:
         app: postgres
     spec:
+      automountServiceAccountToken: false
+      # The image's postgres user (uid/gid 70) from the start; fsGroup makes
+      # the volume writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
           ports:
             - containerPort: 5432
           envFrom:
             - secretRef:
                 name: gamemesh-secrets
           env:
+            # A subdirectory: initdb refuses a mount point that is not empty.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          # The user and database come from the Secret, not a name written
+          # into the probe.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-            - name: init
-              mountPath: /docker-entrypoint-initdb.d
-          readinessProbe:
-            exec:
-              command: ["pg_isready", "-U", "gamemesh"]
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            # The only other places Postgres writes: its Unix socket and
+            # temporary files.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 512Mi }
@@ -89,9 +95,10 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: postgres-data
-        - name: init
-          configMap:
-            name: postgres-init
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
