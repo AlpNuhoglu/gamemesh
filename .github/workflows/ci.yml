@@ -51,6 +51,23 @@ jobs:
             echo "::error file=deployments/docker/Dockerfile::golang:${got} does not match go.mod's toolchain go${want}; bump both together"
             exit 1
           fi
+      # docker-compose is where the stack is tested; deployments/k8s is what
+      # runs. Dependabot bumps the two in separate PRs, so a third-party image
+      # they share (NATS, Redis, Postgres, ...) must be the same tag@digest in
+      # both, or what was tested is not what is deployed.
+      - name: Shared images match between docker-compose and Kubernetes
+        run: |
+          k8s=$(grep -rhoE 'image: [^ ]+@sha256:[0-9a-f]{64}' deployments/k8s | cut -d' ' -f2 | sort -u)
+          compose=$(grep -hoE 'image: [^ ]+@sha256:[0-9a-f]{64}' docker-compose.yml | cut -d' ' -f2 | sort -u)
+          bad=0
+          for ref in $k8s; do
+            repo=${ref%%:*}
+            other=$(printf '%s\n' "$compose" | grep -E "^${repo}:" || true)
+            [ -z "$other" ] && continue
+            if [ "$other" = "$ref" ]; then echo "same: ${ref%@*}"
+            else echo "::error file=docker-compose.yml::$repo differs: deployments/k8s has ${ref%@*}, docker-compose.yml has ${other%@*} (or another digest)"; bad=1; fi
+          done
+          exit $bad
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
