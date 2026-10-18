@@ -1,0 +1,190 @@
+# Accepted vulnerability findings, each scoped to where it was judged and
+# each with an expiry: on expired_at the finding counts again and the scan
+# turns red, so the decision is revisited instead of forgotten. Format:
+# Trivy's .trivyignore.yaml (marked experimental in Trivy 0.70), chosen over
+# the plain .trivyignore because it can scope an ID to a path or package:
+# the gosu IDs are Go standard library CVEs, and ignoring them everywhere
+# would also hide them in any other image.
+vulnerabilities:
+  - id: CVE-2025-61726
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2025-61729
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2025-68121
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-25679
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-27145
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-32280
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-32281
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-32283
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-33811
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-33814
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-33818
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-39820
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-39821
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-39822
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-39836
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-42499
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-42504
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-56853
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-56858
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-56859
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-56860
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-56862
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-78667
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-78669
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-97031
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  - id: CVE-2026-84782
+    purls: ["pkg:apk/alpine/libcrypto3@3.3.7-r1", "pkg:apk/alpine/libssl3@3.3.7-r1"]
+    statement: >-
+      OpenSSL in redis:7.4.11-alpine (Alpine 3.21). Alpine has the fix
+      (3.3.7-r2); the image has not been rebuilt yet. Dependabot proposes the
+      new digest once it is; revisit if it has not by then.
+    expired_at: 2026-11-18

@@ -221,6 +221,58 @@ jobs:
           zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           git --redact --no-banner --exit-code 1 /repo
 
+  # The third-party images the manifests and docker-compose run (NATS, Redis,
+  # Postgres, monitoring, tracing). The image scan above covers only the
+  # images built here; these were never scanned, for vulnerabilities or for
+  # an end-of-life base.
+  third-party-images:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    env:
+      # Report only, by name; every other image blocks, including one added
+      # later. These are a major version behind and not deployed in phase 1
+      # (monitoring stays out of production, A8; Jaeger and the collector run
+      # in docker-compose only). Upgrading them is tracked as finding #68.
+      REPORT_ONLY: prom/prometheus grafana/grafana jaegertracing/all-in-one otel/opentelemetry-collector-contrib
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: list
+        run: |
+          refs=$( (grep -rhoE 'image: [^ ]+@sha256:[0-9a-f]{64}' deployments/k8s; grep -hoE 'image: [^ ]+@sha256:[0-9a-f]{64}' docker-compose.yml) | cut -d' ' -f2 | sort -u)
+          list=$(for ref in $refs; do
+            repo=${ref%%:*}; blocking=true
+            for r in $REPORT_ONLY; do [ "$r" = "$repo" ] && blocking=false; done
+            jq -cn --arg image "$ref" --arg name "${ref%@*}" --argjson blocking "$blocking" '{image: $image, name: $name, blocking: $blocking}'
+          done | jq -cs .)
+          echo "$list" | jq -r '.[] | "\(if .blocking then "blocking   " else "report only" end)  \(.name)"'
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  scan-third-party:
+    name: scan-third-party (${{ matrix.name }})
+    needs: third-party-images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.third-party-images.outputs.list) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Same rules as the images built here (HIGH/CRITICAL with a fix, and
+      # an end-of-life base fails), with the accepted findings in
+      # .trivyignore.yaml: each scoped to a path or package, each expiring.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_EXIT_ON_EOL: ${{ matrix.blocking && '1' || '0' }}
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: ${{ matrix.blocking && '1' || '0' }}
+          trivyignores: .trivyignore.yaml
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:
@@ -253,7 +305,7 @@ jobs:
   # required check passes.
   ci-ok:
     if: always()
-    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck]
+    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party]
     runs-on: ubuntu-latest
     steps:
       - name: Every needed job succeeded
