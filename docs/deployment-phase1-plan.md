@@ -766,6 +766,34 @@ Her adım şu yapıda:
      anonim volume oluşturduğu için veri `stop/start` ve container yeniden oluşturulmasında
      korunuyor, `down`+`up` ile kayboluyor. Kubernetes bu tanımı **yok sayar**; PVC
      olmadan her pod restart'ında veri kaybolur. Madde 4 bu yüzden zorunlu.
+- **Kararlar (2026-10-18):** k3d A10'dan öne çekildi (`brew install k3d`, v5.9.0; cluster
+  `k3s v1.35.5-k3s1`, Traefik `127.0.0.1:18080`, API `127.0.0.1:6550`; plandaki `8080`
+  compose'un gateway'iyle çakışıyordu). websocket için pod başına ephemeral consumer +
+  `DeliverNew`; Redis ve NATS StatefulSet; namespace'te PSS `enforce: restricted`; misconfig
+  A7 sonunda bloklayan; üç PR (A7-1 uygulamalar, A7-2 stateful, A7-3 #29 + NATS).
+- **Önce (k3d, mevcut manifest'ler + GHCR imajları):** outbox-relay 3/3 `CrashLoopBackOff`
+  (`nats connect: lookup nats ... no such host`, #28 çalışırken doğrulandı); websocket 2
+  restart (Redis hazır değilken `event bridge failed`, #64); player 1 restart (iki
+  replica aynı anda `AutoMigrate`: `constraint "fk_players_stats" ... already exists`,
+  #47'nin kanıtı); tracing collector olmadan açık.
+- **A7-1 yapılanlar (`build/k8s-app-hardening`, 2026-10-18):**
+  1. Probe'lar: `startupProbe` `/livez` (30 × 2 sn), readiness `/readyz` (2 sn timeout,
+     2 hata), liveness `/livez` (3 sn timeout, 3 hata). kubeconform (1.35) 33/33.
+  2. `preStop` kubelet'in yerleşik `sleep` eylemiyle (5 sn; `exec sleep` yerine, imajda
+     binary gerektirmiyor). Şema bilinmeyen `sleepz` alanını reddediyor. Bütçe
+     düzeltmesi: plandaki "5 + 15 = 20" işçi beklemesini (5 sn) unutuyordu; tracing
+     sınırıyla en kötü durum 28 sn, `terminationGracePeriodSeconds: 35` (karar).
+  3. `securityContext` (PSS restricted, plandaki eksik `seccompProfile` dahil) +
+     `automountServiceAccountToken: false`. Pod içinde: `uid=10001`, `/` ve `/tmp`
+     `Read-only file system`, `CapEff 0`, `NoNewPrivs 1`, `Seccomp 2`, token yok. 6 servis
+     `1/1`, 0 restart. Misconfig HIGH 33 → 12 (kalanlar Postgres, Redis, monitoring).
+     Not: `/tmp` da salt okunur; ileride geçici dosya yazan bir kütüphane `emptyDir` ister.
+  4. matchmaking `Recreate`: rollout sırasında çift döngü 88 örneğin 36'sı (~24 sn) → 0.
+     Kod okumasından: `MatchOnce` kuyruğu tüketmeden okuyup atomik olmayan adımlarla oda
+     açıyor; iki döngü aynı oyunculara iki oda ve iki `MatchFound` üretebilir. Bedel:
+     Service'in hazır endpoint'siz kaldığı süre 8–9 sn (planın "birkaç saniye"si).
+  5. `OTEL_ENABLED: "false"` (madde 3, A7-3'ten öne çekildi): silme isteği → container
+     bitişi tracing açıkken ~24 sn, kapalıyken ~6 sn; Recreate boşluğu 21 sn → 8–9 sn.
 
 ### A8. Kustomize ile base / overlay yapısı
 
@@ -1287,7 +1315,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 44 | `/ws` ingress'te gateway'i atlıyor | M8 | Kod | A3b (çözüldü: websocket artık oturumu kendisi kontrol ediyor); C4'te `/ws` açılabilir |
 | 45 | `rollout status` shallow readiness ile anlamsız | M6 | Kod | D2 |
 | 46 | `docs/deployment.md` CI ve servis sayısı bilgisi hatalı | M7 | Kod | D4 |
-| 47 | Şema dört ayrı yerde; `AutoMigrate` yarışı | M2, M5 | Kod | Faz 1 sonrası |
+| 47 | Şema dört ayrı yerde; `AutoMigrate` yarışı | M2, M5 | Kod | Faz 1 sonrası (k3d'de 2 replica ile ölçüldü: `fk_players_stats ... already exists`, 1 restart; prod replica sayısı A8) |
 | 48 | HS256: üç servis token üretebilir | M8 | Kod | Faz 1 sonrası |
 | 49 | Secret'lar env çıktılarında düz metin | M8 | Ölçüldü | Faz 1 sonrası |
 | 50 | Prometheus `ClusterRole` kullanıyor | M5 | Kod | Faz 1 sonrası |
@@ -1304,3 +1332,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
 | 62 | `docker` matrix'i `fail-fast: true` (varsayılan): bir servisin job'u düşünce kardeş job'lar iptal ediliyor, diğer imajların tarama sonucu görünmüyor (#54'ün matrix'teki karşılığı) | M7 | Ölçüldü (PR #41: 5 EOL, 2 `canceled`) | A6 (`fail-fast: false`) |
 | 63 | 7 docker job'u gha önbelleğine aynı (varsayılan `buildkit`) scope'la yazıyor; her build öncekinin önbellek index'ini eziyor | M7 | Ölçüldü (run 39118835866, Docker belgesi) | A6 (servis başına `scope`) |
+| 64 | Event bus bağlantısında açılış retry'ı yok; bağımlılık geç kalkınca servis `fatal` verip yeniden başlıyor | M4 | Ölçüldü (k3d: websocket 2 restart, `event bridge failed`) | A7-3 (NATS istemcisinde retry) |
+| 65 | Tracing kapanışı sınırsız (`shutdownTracing(context.Background())`, 7 servis); collector yokken her pod kapanışı ~18 sn uzuyor | M4 | Ölçüldü (k3d: ~24 sn → `OTEL_ENABLED=false` ile ~6 sn) | `fix/tracing-shutdown-timeout` (3 sn sınır) |
