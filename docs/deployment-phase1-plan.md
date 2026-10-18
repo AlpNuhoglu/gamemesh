@@ -866,6 +866,28 @@ Her adım şu yapıda:
      sadece root'ta çağırıyor) path ile sınırlı, 2027-01-18'e kadar; Redis'in OpenSSL
      CVE'si (Alpine'da düzeltilmiş, imaj yeniden build edilmemiş) paket sürümüyle sınırlı,
      2026-11-18'e kadar. Süre dolunca ikisi de exit 1 (denendi).
+- **A7-3 yapılanlar (`feat/nats-fanout`, 2026-10-18):**
+  1. **#29, websocket fan-out:** Gömülü NATS'ta yeniden üretildi: aynı durable'a bağlı iki
+     replica 20 event'in 11'ini ve 9'unu aldı. `events.Config.Broadcast` / `WithBroadcast`:
+     her instance kendi ephemeral consumer'ı (`DeliverNew`, 1 dk `InactiveThreshold`).
+     Önceden test edildi: ephemeral consumer file-store'lu bir stream'de NATS restart'ından
+     sonra da çalışıyor. Testler: paylaşılan durable 20/20 tam bir kez; broadcast ile iki
+     instance da 20; broadcast consumer geçmişi oynatmıyor; `WithBroadcast` etkisiz
+     yapılınca iki broadcast testi kırmızı. k3d (iki websocket pod'u, iki farklı pod'daki
+     iki oyuncu): yayınlanmış imajlarla iki denemenin ikisinde de bir oyuncu `MatchFound`
+     almadı; bu branch'in imajlarıyla 3/3 denemede ikisi de aldı.
+  2. **#64, NATS'a açılış retry'ı:** `database.Open` gibi 0,5 → 5 sn backoff, en çok 30 sn
+     (startupProbe'un 60 sn'si içinde). Testler: NATS 1,5 sn geç kalkınca bağlanıyor; hiç
+     yoksa sınırda hata; tek denemeyle (kontrol) `no servers available`. k3d: NATS
+     kapalıyken yeni outbox-relay pod'u `nats not reachable yet, retrying` yazdı, 0 restart,
+     NATS dönünce Ready.
+  3. **`EVENT_BUS: nats`, `NATS_URL: nats://nats:4222`** ConfigMap'te (#28 tamamlandı).
+  - Not: k3d'de eski sürümden kalan paylaşılan `websocket-matchmaking` durable'ı duruyor;
+    yeni cluster'da oluşmaz. Var olan bir cluster'da elle silinebilir.
+- **Bitti sayılır (k3d, 2026-10-18):** `kubeconform -strict` 34/34. Bütün Deployment ve
+  StatefulSet'ler (NATS ve Redis dahil) aynı anda yeniden başlatıldı: 19/19 pod
+  `Running 1/1`, toplam restart 0; iki dakika sonra da aynı. (Önceki aynı denemede
+  bus retry'ı olmadığı için outbox-relay ve websocket restart ediyordu.)
 
 ### A8. Kustomize ile base / overlay yapısı
 
@@ -1371,11 +1393,11 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 25 | govulncheck production'dan farklı bir Go sürümünü denetliyor | M7 | Ölçüldü (CI logu) | A4'te yanlışlıkla çözüldü sayıldı; A5'te çözüldü (`go-version-input: ""`, CI'da 1.26.9) |
 | 26 | Güvenlik taraması doküman PR'larını blokluyor (geçmişte 4 kırmızı) | M7 | Ölçüldü (GitHub API) | A5a (gece taraması; doküman PR'ları bilerek muaf tutulmadı) |
 | 27 | Action'lar tag ile sabitlenmiş; kubeconform `latest` ve checksum'sız | M7 | Kod | A5a (çözüldü: action SHA, imaj digest, kubeconform checksum, Dependabot) |
-| 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 (NATS kuruldu, outbox-relay 3/3 Running; `EVENT_BUS=nats` A7-3'te) |
-| 29 | **Websocket replica'ları NATS consumer'ını paylaşıyor (event'ler bölünüyor)** | M5 | Kod | A7, A10 |
-| 30 | **Matchmaking rolling update sırasında iki kopya çalışıyor** | M5 | Kod | A7, A10 |
-| 31 | `preStop` ve `terminationGracePeriodSeconds` yok (endpoint yarışı) | M4 | Ölçüldü (lab) | A7 |
-| 32 | `startupProbe` yok; probe timeout'ları varsayılan (1 sn) | M6 | Kod | A7 |
+| 28 | K8s'te NATS yok; `EVENT_BUS` tanımsız (k8s Redis Pub/Sub kullanıyor) | M5 | Kod | A7 (çözüldü: NATS StatefulSet + `EVENT_BUS=nats`) |
+| 29 | **Websocket replica'ları NATS consumer'ını paylaşıyor (event'ler bölünüyor)** | M5 | Kod | A7 (çözüldü: pod başına ephemeral consumer; k3d'de 3/3), A10'da overlay ile tekrar |
+| 30 | **Matchmaking rolling update sırasında iki kopya çalışıyor** | M5 | Kod | A7 (çözüldü: `Recreate`, çift döngü 36/88 → 0), A10'da tekrar |
+| 31 | `preStop` ve `terminationGracePeriodSeconds` yok (endpoint yarışı) | M4 | Ölçüldü (lab) | A7 (çözüldü: `preStop` 5 sn + grace 35 sn) |
+| 32 | `startupProbe` yok; probe timeout'ları varsayılan (1 sn) | M6 | Kod | A7 (çözüldü: startup/readiness/liveness ayrı ayarlarla) |
 | 33 | Redis'in PVC'si yok; k8s imajdaki `VOLUME` tanımını yok sayıyor | M2, M5 | Ölçüldü (compose) | A7 (çözüldü: StatefulSet + AOF, veri pod silinince duruyor) |
 | 34 | Postgres probe'unda kullanıcı adı sabit; liveness yok; init SQL ConfigMap'i | M5 | Kod | A7 (çözüldü: Secret'tan probe, liveness, init SQL kaldırıldı) |
 | 35 | **PDB `minAvailable: 2` tek replica ile node drain'i kilitliyor** | M5 | Kod | A8, A10 |
@@ -1407,8 +1429,8 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
 | 62 | `docker` matrix'i `fail-fast: true` (varsayılan): bir servisin job'u düşünce kardeş job'lar iptal ediliyor, diğer imajların tarama sonucu görünmüyor (#54'ün matrix'teki karşılığı) | M7 | Ölçüldü (PR #41: 5 EOL, 2 `canceled`) | A6 (`fail-fast: false`; etkisi bir başarısız run'da görülecek) |
 | 63 | 7 docker job'u gha önbelleğine aynı (varsayılan `buildkit`) scope'la yazıyor; her build öncekinin önbellek index'ini eziyor | M7 | Ölçüldü (run 39118835866, Docker belgesi) | A6 (çözüldü: `publish`'te amd64 derleme 7/7 `CACHED`) |
-| 64 | Event bus bağlantısında açılış retry'ı yok; bağımlılık geç kalkınca servis `fatal` verip yeniden başlıyor | M4 | Ölçüldü (k3d: websocket 2 restart, `event bridge failed`) | A7-3 (NATS istemcisinde retry) |
-| 65 | Tracing kapanışı sınırsız (`shutdownTracing(context.Background())`, 7 servis); collector yokken her pod kapanışı ~18 sn uzuyor | M4 | Ölçüldü (k3d: ~24 sn → `OTEL_ENABLED=false` ile ~6 sn) | `fix/tracing-shutdown-timeout` (3 sn sınır) |
+| 64 | Event bus bağlantısında açılış retry'ı yok; bağımlılık geç kalkınca servis `fatal` verip yeniden başlıyor | M4 | Ölçüldü (k3d: websocket 2 restart, `event bridge failed`) | A7 (çözüldü: 30 sn'lik bağlantı retry'ı; k3d'de 0 restart) |
+| 65 | Tracing kapanışı sınırsız (`shutdownTracing(context.Background())`, 7 servis); collector yokken her pod kapanışı ~18 sn uzuyor | M4 | Ölçüldü (k3d: ~24 sn → `OTEL_ENABLED=false` ile ~6 sn) | PR #44 (çözüldü: 10,01 → 3,00 sn; k3d'de 24 → 9 sn) |
 | 66 | Üçüncü taraf imajlar (NATS, Redis, Postgres, monitoring, tracing) hiç taranmıyordu; yerelde 7'den 6'sı düşüyor, ikisi EOL Alpine üzerinde | M7 | Ölçüldü (Trivy 0.70.0, yerel) | A7-2 (prod imajları bloklayan, `.trivyignore.yaml` süreli) |
 | 67 | Grafana admin şifresi manifest'te düz metin (`admin`/`admin`) | M8 | Kod | A9 |
 | 68 | Monitoring ve tracing imajları major sürüm geride (Prometheus v2.54.1, Grafana 11.2.0, Jaeger 1.62.0, collector 0.111.0); CI'da rapor modunda | M7 | Ölçüldü (#66 taraması) | Faz 1 sonrası; A8'de monitoring prod overlay'inin dışında |
