@@ -8,6 +8,11 @@ data:
   JWT_EXPIRY: 24h
   JWT_ISSUER: gamemesh
   REDIS_ADDR: redis:6379
+  # The event transport docker-compose runs: NATS JetStream (durable, replay,
+  # at-least-once). Unset, the services fell back to Redis Pub/Sub, so the
+  # cluster ran a different transport than the one tested locally.
+  EVENT_BUS: nats
+  NATS_URL: nats://nats:4222
   ALLOWED_ORIGINS: "*"
   PLAYER_SERVICE_URL: http://player:8081
   MATCHMAKING_SERVICE_URL: http://matchmaking:8082

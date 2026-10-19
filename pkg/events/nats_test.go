@@ -2,6 +2,8 @@ package events
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,4 +169,119 @@ func TestNATSPing(t *testing.T) {
 	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	assert.Error(t, bus.Ping(ctx))
+}
+
+// subscribeCounting starts n buses for one service and counts the
+// matchmaking events each receives.
+func subscribeCounting(ctx context.Context, t *testing.T, url string, n int, opts ...NATSOption) []*atomic.Int64 {
+	t.Helper()
+	got := make([]*atomic.Int64, n)
+	for i := range got {
+		got[i] = new(atomic.Int64)
+		bus, err := NewNATSBus(url, "websocket", 4, nil, zap.NewNop(), opts...)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = bus.Close() })
+		c := got[i]
+		go func() {
+			_ = bus.SubscribeAck(ctx, func(context.Context, Event) error { c.Add(1); return nil }, TopicMatchmaking)
+		}()
+	}
+	time.Sleep(300 * time.Millisecond) // let the consumers attach
+	return got
+}
+
+func publishN(ctx context.Context, t *testing.T, url string, n int) {
+	t.Helper()
+	pub, err := NewNATSBus(url, "matchmaking", 1, nil, zap.NewNop())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pub.Close() })
+	for i := 0; i < n; i++ {
+		require.NoError(t, pub.Publish(ctx, TopicMatchmaking, Event{Type: TypeMatchFound}))
+	}
+}
+
+// TestNATSSharedDurableDeliversEachEventOnce pins the default: the instances
+// of a service share one durable, a work queue, so each event is processed
+// once across them (what the leaderboard and the outbox rely on).
+func TestNATSSharedDurableDeliversEachEventOnce(t *testing.T) {
+	url := startEmbeddedJetStream(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	got := subscribeCounting(ctx, t, url, 2)
+	publishN(ctx, t, url, 20)
+
+	require.Eventually(t, func() bool { return got[0].Load()+got[1].Load() == 20 }, 5*time.Second, 50*time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // no late duplicates
+	assert.Equal(t, int64(20), got[0].Load()+got[1].Load())
+}
+
+// TestNATSBroadcastDeliversToEveryInstance is the WebSocket fan-out: every
+// replica receives every event. With the shared durable two replicas got 11
+// and 9 of 20.
+func TestNATSBroadcastDeliversToEveryInstance(t *testing.T) {
+	url := startEmbeddedJetStream(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	got := subscribeCounting(ctx, t, url, 2, WithBroadcast())
+	publishN(ctx, t, url, 20)
+
+	require.Eventually(t, func() bool { return got[0].Load() == 20 && got[1].Load() == 20 }, 5*time.Second, 50*time.Millisecond)
+}
+
+// TestNATSBroadcastStartsAtNewEvents: a new replica does not replay the
+// stream, which would resend old matches to the players connected to it.
+func TestNATSBroadcastStartsAtNewEvents(t *testing.T) {
+	url := startEmbeddedJetStream(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	publishN(ctx, t, url, 3) // history
+	got := subscribeCounting(ctx, t, url, 1, WithBroadcast())
+	publishN(ctx, t, url, 2)
+
+	require.Eventually(t, func() bool { return got[0].Load() == 2 }, 5*time.Second, 50*time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	assert.Equal(t, int64(2), got[0].Load())
+}
+
+// freePort returns a TCP port nothing listens on right now.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// TestNATSConnectWaitsForServer: a service that starts before NATS (no start
+// order in Kubernetes) waits for it instead of exiting and crash-looping.
+func TestNATSConnectWaitsForServer(t *testing.T) {
+	port := freePort(t)
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		srv, err := natsserver.NewServer(&natsserver.Options{Host: "127.0.0.1", Port: port, JetStream: true, StoreDir: t.TempDir()})
+		if err != nil {
+			return
+		}
+		go srv.Start()
+		t.Cleanup(srv.Shutdown)
+	}()
+
+	start := time.Now()
+	bus, err := NewNATSBus(fmt.Sprintf("nats://127.0.0.1:%d", port), "test", 1, nil, zap.NewNop(), WithConnectWait(10*time.Second))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bus.Close() })
+	assert.GreaterOrEqual(t, time.Since(start), 1500*time.Millisecond)
+}
+
+// TestNATSConnectGivesUp: with no server at all, startup fails after the wait
+// instead of hanging.
+func TestNATSConnectGivesUp(t *testing.T) {
+	start := time.Now()
+	_, err := NewNATSBus(fmt.Sprintf("nats://127.0.0.1:%d", freePort(t)), "test", 1, nil, zap.NewNop(), WithConnectWait(time.Second))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unreachable after")
+	assert.Less(t, time.Since(start), 3*time.Second)
 }
