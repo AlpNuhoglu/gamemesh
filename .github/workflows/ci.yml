@@ -34,9 +34,15 @@ concurrency:
 # can be moved to other code at any time (tj-actions/changed-files, March 2025:
 # its tags were repointed to a commit that dumped secrets into CI logs); a
 # commit cannot. Dependabot proposes the bumps (.github/dependabot.yml).
+# Every job has a time limit, a few times its usual duration. GitHub's default
+# is 360 minutes: a job hung on a runner would hold it for six hours and, as
+# runs on main queue instead of cancelling, delay every later push to main and
+# its deploy as long. A slow runner is not cut short: one image build on main
+# took 13 minutes instead of under 2 and still finished inside its 20.
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # CI tests and govulncheck audit go.mod's toolchain; the images are built
@@ -81,6 +87,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -98,6 +105,7 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest # Docker is preinstalled; Testcontainers uses it
+    timeout-minutes: 15
     needs: test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,6 +120,7 @@ jobs:
     # built (and later published) without anyone remembering to list it here.
     # A hand-written list had drifted to 5 of the 7 services.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       list: ${{ steps.list.outputs.list }}
     steps:
@@ -124,6 +133,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [lint, test, services]
     strategy:
       # Every service's build and scan runs to the end. With the default
@@ -177,6 +187,7 @@ jobs:
   # red Trivy step in the same job).
   scan-deps:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Blocking since the manifests were reworked (A7): it found 33 HIGH issues
@@ -211,6 +222,7 @@ jobs:
   # owning the checkout is not a problem.
   gitleaks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -227,6 +239,7 @@ jobs:
   # an end-of-life base.
   third-party-images:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       list: ${{ steps.list.outputs.list }}
     env:
@@ -252,6 +265,7 @@ jobs:
     name: scan-third-party (${{ matrix.name }})
     needs: third-party-images
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -275,6 +289,7 @@ jobs:
 
   govulncheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # No checkout step: the action checks the repository out itself
       # (repo-checkout defaults to true).
@@ -307,6 +322,7 @@ jobs:
     if: always()
     needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Every needed job succeeded
         env:
@@ -328,6 +344,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [ci-ok, services]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Job-level permissions replace the workflow's: contents: read is stated
     # again, and packages: write exists in this job only.
     permissions:
@@ -370,6 +387,7 @@ jobs:
     # deploy job would run. Replace with `kubectl apply` against a real
     # cluster (credentials via OIDC or a KUBECONFIG secret).
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Every gate, through the one job that checks them all, and the
     # published images the cluster will pull.
     needs: [ci-ok, publish]
