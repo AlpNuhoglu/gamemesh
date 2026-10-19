@@ -1,0 +1,8 @@
+# Accepted gitleaks findings, by fingerprint (commit:file:rule:line). gitleaks
+# scans every commit, so a false positive in history stays until it is listed
+# here; rewriting pushed history is not an option.
+#
+# Test fixture, not a secret: strongSecret in pkg/config/config_test.go was the
+# literal "0123456789abcdef" repeated four times, which the generic-api-key rule
+# flags for its name and entropy. The test now builds the value at run time.
+c255f6a685bc737b0be8ab8b85892314d7fd32e3:pkg/config/config_test.go:generic-api-key:103

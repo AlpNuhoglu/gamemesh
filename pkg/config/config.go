@@ -4,6 +4,9 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -280,4 +283,84 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// Need names a secret a service depends on; see Validate.
+type Need int
+
+const (
+	// NeedJWT is JWT_SECRET, the key tokens are signed and verified with.
+	NeedJWT Need = iota
+	// NeedPostgres is the password in POSTGRES_DSN.
+	NeedPostgres
+	// NeedRedis is REDIS_PASSWORD.
+	NeedRedis
+)
+
+// minSecretLen is the shortest secret Validate accepts in production. The
+// production values come from openssl rand -hex 32 (64 characters).
+const minSecretLen = 32
+
+// knownDevSecrets are the development defaults long enough to pass the length
+// check: the code's own JWT default and the one in .env.example. They are
+// public in this repository, so a token signed with them proves nothing.
+var knownDevSecrets = map[string]bool{
+	"insecure-dev-secret-do-not-use-in-prod": true,
+	"change-me-generate-a-real-secret":       true,
+}
+
+// Validate refuses to run in production (APP_ENV=production) with a secret
+// the service needs that is unset, shorter than minSecretLen or a known
+// development default. Without it a production deployment started silently
+// with the JWT default from this public repository, and anyone could mint a
+// valid token for any player. A service lists only what it uses, so one that
+// never talks to Postgres is not failed for the DSN default. Outside
+// production it accepts the defaults. The error names the setting, never its
+// value.
+func (c *Config) Validate(needs ...Need) error {
+	if c.Env != "production" {
+		return nil
+	}
+	var errs []error
+	for _, n := range needs {
+		switch n {
+		case NeedJWT:
+			errs = append(errs, checkSecret("JWT_SECRET", c.JWTSecret))
+		case NeedPostgres:
+			errs = append(errs, checkSecret("the password in POSTGRES_DSN", dsnPassword(c.PostgresDSN)))
+		case NeedRedis:
+			errs = append(errs, checkSecret("REDIS_PASSWORD", c.RedisPassword))
+		default:
+			errs = append(errs, fmt.Errorf("unknown config.Need %d", n))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func checkSecret(name, value string) error {
+	switch {
+	case value == "":
+		return fmt.Errorf("%s is not set", name)
+	case knownDevSecrets[value]:
+		return fmt.Errorf("%s is a known development default", name)
+	case len(value) < minSecretLen:
+		return fmt.Errorf("%s is shorter than %d characters", name, minSecretLen)
+	}
+	return nil
+}
+
+// dsnPassword returns the password of a Postgres DSN in either form pgx
+// accepts: key=value ("... password=x ...", value optionally quoted) or URL
+// ("postgres://user:x@host/db").
+func dsnPassword(dsn string) string {
+	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		p, _ := u.User.Password()
+		return p
+	}
+	for _, field := range strings.Fields(dsn) {
+		if v, ok := strings.CutPrefix(field, "password="); ok {
+			return strings.Trim(v, "'")
+		}
+	}
+	return ""
 }

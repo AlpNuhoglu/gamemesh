@@ -74,8 +74,13 @@ make k8s-delete                                        # remove the local overla
 
 ### Production secrets
 
-The local overlay generates `gamemesh-secrets` from dev values
-(`overlays/local/secrets.env`). The production overlay generates no Secret:
+The local overlay generates `gamemesh-secrets` from
+`overlays/local/.env.local`, which is gitignored and filled with random values
+by `make k8s-secrets` (run by `make k8s-apply`). Postgres sets its password only
+when it initialises its volume: after changing `POSTGRES_PASSWORD`, delete the
+`postgres-data` PVC (local data is lost) or `ALTER USER`; otherwise the new pods
+fail with `password authentication failed` while the old ones keep serving.
+The production overlay generates no Secret:
 the cluster must hold one, created out of band and never committed:
 
 ```bash
@@ -83,8 +88,14 @@ kubectl -n gamemesh create secret generic gamemesh-secrets \
   --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
   --from-literal=POSTGRES_USER=gamemesh \
   --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 32)" \
-  --from-literal=POSTGRES_DB=gamemesh
+  --from-literal=POSTGRES_DB=gamemesh \
+  --from-literal=REDIS_PASSWORD="$(openssl rand -hex 32)"
 ```
+
+With `APP_ENV=production` (the base config) every service refuses to start if
+a secret it uses is missing, shorter than 32 characters or a known development
+default (`config.Validate`): a forgotten or weak Secret stalls the rollout and
+the running pods keep serving.
 
 (or External Secrets Operator / Sealed Secrets / a cloud secret manager).
 

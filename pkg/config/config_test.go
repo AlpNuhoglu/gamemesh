@@ -1,10 +1,12 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -96,4 +98,77 @@ func TestServiceVersionFromBuild(t *testing.T) {
 
 	t.Setenv("SERVICE_VERSION", "override")
 	assert.Equal(t, "override", Load("gateway").ServiceVersion)
+}
+
+// strongSecret is long enough and not a known default. Built at run time: as
+// a literal assigned to a name with "secret" in it, it matched gitleaks'
+// generic-api-key rule (see .gitleaksignore for the commit that had it).
+var strongSecret = strings.Repeat("0123456789abcdef", 4)
+
+func TestValidateAcceptsDefaultsOutsideProduction(t *testing.T) {
+	cfg := Load("player")
+	assert.NoError(t, cfg.Validate(NeedJWT, NeedPostgres, NeedRedis))
+}
+
+// TestValidateRefusesWeakSecretsInProduction: each weak shape is refused with
+// the setting's name, and the message never contains the value. An empty
+// JWT_SECRET falls back to the code's default, so "not set" shows on
+// REDIS_PASSWORD, whose default is empty.
+func TestValidateRefusesWeakSecretsInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		need Need
+		want string
+	}{
+		"JWT default":    {map[string]string{}, NeedJWT, "JWT_SECRET is a known development default"},
+		"JWT empty":      {map[string]string{"JWT_SECRET": ""}, NeedJWT, "JWT_SECRET is a known development default"},
+		"JWT too short":  {map[string]string{"JWT_SECRET": "short-secret"}, NeedJWT, "JWT_SECRET is shorter than 32 characters"},
+		"Redis not set":  {map[string]string{}, NeedRedis, "REDIS_PASSWORD is not set"},
+		"Postgres short": {map[string]string{"POSTGRES_DSN": "host=db password=short-password"}, NeedPostgres, "the password in POSTGRES_DSN is shorter than 32 characters"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg := Load("gateway")
+			err := cfg.Validate(tc.need)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			for _, secret := range []string{cfg.JWTSecret, cfg.RedisPassword, dsnPassword(cfg.PostgresDSN)} {
+				if secret != "" {
+					assert.NotContains(t, err.Error(), secret)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateChecksOnlyWhatTheServiceNeeds(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("REDIS_PASSWORD", strongSecret)
+	// leaderboard never talks to Postgres or signs tokens: the DSN and JWT
+	// defaults do not concern it.
+	assert.NoError(t, Load("leaderboard").Validate(NeedRedis))
+
+	err := Load("player").Validate(NeedJWT, NeedPostgres, NeedRedis)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JWT_SECRET")
+	assert.Contains(t, err.Error(), "the password in POSTGRES_DSN")
+	assert.NotContains(t, err.Error(), "REDIS_PASSWORD")
+}
+
+func TestValidateAcceptsStrongSecretsInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", strongSecret)
+	t.Setenv("REDIS_PASSWORD", strongSecret)
+	t.Setenv("POSTGRES_DSN", "host=postgres user=gamemesh password="+strongSecret+" dbname=gamemesh sslmode=disable connect_timeout=5")
+	assert.NoError(t, Load("player").Validate(NeedJWT, NeedPostgres, NeedRedis))
+}
+
+func TestDSNPassword(t *testing.T) {
+	assert.Equal(t, "s3cret", dsnPassword("host=db user=u password=s3cret dbname=x"))
+	assert.Equal(t, "s3cret", dsnPassword("host=db password='s3cret' dbname=x"))
+	assert.Equal(t, "s3cret", dsnPassword("postgres://u:s3cret@db:5432/x?sslmode=disable"))
+	assert.Equal(t, "", dsnPassword("host=db user=u dbname=x"))
 }

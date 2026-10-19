@@ -1,4 +1,4 @@
-.PHONY: help build test test-integration lint cover up down k8s-build k8s-context k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
+.PHONY: help build test test-integration lint cover up down k8s-build k8s-secrets k8s-context k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
 
 # Every directory under cmd/, as CI's image matrix: the hand-written list had
 # lost outbox-relay, so k8s-build skipped an image the cluster needs.
@@ -48,7 +48,10 @@ k8s-context:
 	@test "$$(kubectl config current-context)" = "$(K3D_CONTEXT)" || \
 		{ echo "kubectl context is '$$(kubectl config current-context)', not $(K3D_CONTEXT); refusing" >&2; exit 1; }
 
-k8s-apply: k8s-context ## Deploy the local overlay to the k3d cluster
+k8s-secrets: ## Generate the local overlay's secrets (.env.local, gitignored)
+	@scripts/k8s/local-secrets.sh
+
+k8s-apply: k8s-context k8s-secrets ## Deploy the local overlay to the k3d cluster
 	kubectl apply -k deployments/k8s/overlays/local
 
 k8s-delete: k8s-context ## Tear down the local overlay
