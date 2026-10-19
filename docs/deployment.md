@@ -88,8 +88,14 @@ kubectl -n gamemesh create secret generic gamemesh-secrets \
   --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
   --from-literal=POSTGRES_USER=gamemesh \
   --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 32)" \
-  --from-literal=POSTGRES_DB=gamemesh
+  --from-literal=POSTGRES_DB=gamemesh \
+  --from-literal=REDIS_PASSWORD="$(openssl rand -hex 32)"
 ```
+
+With `APP_ENV=production` (the base config) every service refuses to start if
+a secret it uses is missing, shorter than 32 characters or a known development
+default (`config.Validate`): a forgotten or weak Secret stalls the rollout and
+the running pods keep serving.
 
 (or External Secrets Operator / Sealed Secrets / a cloud secret manager).
 
