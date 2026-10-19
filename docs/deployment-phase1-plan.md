@@ -1115,6 +1115,42 @@ Her adım şu yapıda:
      Traefik herkesi aynı iç IP olarak görür. Çözüm adayı, `HelmChartConfig` ile
      `externalTrafficPolicy: Local`. k3d'de node'un önünde k3d'nin kendi proxy'si de
      olduğu için kesin sonuç B4'te, VPS üzerinde gerçek bir dış istemciyle alınmalı.
+- **Kararlar (2026-10-19):** prod overlay'i ayrı bir k3d cluster'ında (`gamemesh-prod`, API
+  `127.0.0.1:6551`, Traefik `127.0.0.1:18081`, `--secrets-encryption` ile) provası; Traefik
+  `HelmChartConfig` (`externalTrafficPolicy: Local`) `deployments/k8s/cluster/` altında;
+  kalan ölçümler bu cluster'da Traefik üzerinden.
+- **Prod provası (2026-10-19/20):** Secret elle (`kubectl create secret`, `openssl rand -hex
+  32`, değerler hiç basılmadan), overlay'in kopyasında `kustomize edit set image` ile
+  `main`'in SHA'sı (`4348c89`). İlk denemede 10/10 `1/1`, 0 restart; 7 uygulama imajı GHCR'dan,
+  üçüncü taraf digest'ler sabitlenenlerle aynı; fail-fast'a takılan servis yok; Traefik +
+  `Host: api.gamemesh.invalid` ile `/health` 200 ve `version` = commit SHA'sı. Not: k3d
+  cluster oluştururken aktif kubectl context'ini sessizce yeni cluster'a geçirdi; geri
+  alındı, prova komutları açık `--context` ile verildi.
+
+  | # | Kontrol | Sonuç |
+  |---|---|---|
+  | 1 | WS fan-out | ✅ A7-3 (iki pod, port-forward ile 3/3). Prod'da websocket 1 replica |
+  | 2 | Rollout'ta tek matchmaking | ✅ A7-1 (36/88 → 0) |
+  | 3 | Rolling update'te hata yok; WS 1001 | ✅ gateway rollout'u (1 replica), `/health` 50 ms'de bir: 1050/1050 200; leaderboard rollout'u, proxy'lenen rota: 1032/1032 200; websocket rollout'unda Traefik üzerinden bağlı istemci `1001 "server shutting down"` |
+  | 4 | Redis kapalıyken | ✅ gateway `1/1`, `/health` 200; Redis'e bağlı 5 servis `0/1`, 0 restart; outbox-relay `1/1`; Redis'e bağlı rotalar 502; Redis dönünce 10/10 |
+  | 5 | ConfigMap değişikliği | ✅ `RATE_LIMIT_RPS` 50 → 60: yeni hash'li ConfigMap, 7 Deployment kendiliğinden yeniden başladı; `rollout undo` gateway'i eski ConfigMap'e (50) döndürdü |
+  | 6 | Hatalı deploy | ✅ A9 (zayıf JWT, yanlış Postgres şifresi): yeni pod takılıyor, eski pod'lar trafik alıyor |
+  | 7 | Drain | ✅ 37 sn'de tamamlandı, PDB kilitlemedi; tek node'da pod'lar `Pending`, uncordon sonrası 10/10 |
+  | 8 | Logout sonrası WS | ✅ Traefik üzerinden: önce 101, logout 200, sonra 401 |
+  | 9 | Gerçek istemci IP'si | Kısmen: `Cluster` politikasıyla herkes `10.42.0.1` (SNAT); `Local` ile bağlantının gerçek kaynağı (`172.21.0.4`, k3d'nin önündeki proxy). Kesin sonuç B4 |
+  | + | WS boşta kalma (Traefik) | ✅ 130 sn boşta açık kaldı, sunucudan 2 ping (54 sn) |
+
+  - `rollout undo` uyarısı: "Rolling back will not update the last-applied-configuration
+    annotation": bir sonraki `apply` geri alınanı yeniden uygular. CI'lı bir sistemde asıl
+    geri alma, önceki commit'i yeniden deploy etmek (D).
+  - Gateway, hazır endpoint'i olmayan bir arka servis için 502 dönüyor; geçici bir durum
+    için 503 + `Retry-After` daha açık olurdu (Faz 1 sonrası).
+  - Gözlem: A10 sırasında `commit.sh`'teki `go test -race` bir kez tek bir testte düştü
+    (iki k3d cluster'ı ve compose aynı anda çalışırken); adı kaydedilmemişti, ardından üç tam
+    tekrarda yeniden üretilemedi. `checks.sh` artık test çıktısının tamamını saklıyor.
+- **Bitti sayılır (2026-10-20):** `/health` Traefik üzerinden 200 (local ve prod provası),
+  WebSocket Traefik üzerinden bağlanıyor (101), Redis pod'u silinip yeniden oluşturulunca
+  veri duruyor (A7-2). Yukarıdaki 9 kontrolün 8'i tamam, 9. madde B4'te.
 
 ---
 
@@ -1442,6 +1478,8 @@ Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
 - **Monitoring ve tracing imajlarının major yükseltmesi (#68):** Prometheus 3, Grafana 12/13,
   Jaeger v2 (config biçimi değişiyor), collector 0.16x. Yapıldıktan sonra #66 taramasındaki
   `REPORT_ONLY` listesinden çıkarılmalı.
+- **Gateway'de upstream yokken 503 + `Retry-After` (A10):** Bugün 502; geçici bir durum için
+  503 istemciye yeniden denemeyi açıkça söyler.
 - **Kalan iki taşınabilir referans (A5a):** Dockerfile'daki `# syntax=docker/dockerfile:1`
   satırı bir tag (digest ile sabitlenebilir; Dependabot'un bu satırı güncelleyip
   güncellemediği test edilmedi). Trivy sürümü action'ın varsayılanına bağlı; `version:`
@@ -1530,3 +1568,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 71 | Dependabot sonek taşıyan tek mimarili bir tag'i (`otel-collector:0.162.0-386`, sadece `linux/386`) yeni sürüm sandı; CI yeşil, çünkü collector sadece taranıyor | M7 | Ölçüldü (`imagetools inspect`: tek manifest, `linux 386`) | PR #58 (collector Dependabot'ta ignore; #68 ile elle) |
 | 72 | Ingress `/health`'i yönlendirmiyordu (sadece `/api`, `/ws`); Faz 1'in hedef komutu sınıf düzeltilse de 404 olurdu | M5 | Ölçüldü (k3d: Traefik 404) | A8 (çözüldü: `/health` Exact) |
 | 73 | k8s DSN'lerinde `connect_timeout` yok (A3a düzeltmesi k8s'e ulaşmamış); tek deneme 39 sn asılı kalıp player'ı restart ettirdi | M4 | Ölçüldü (k3d) | A8 (çözüldü: `connect_timeout=5`, 0 restart) |
+| 74 | k3s'te Secret'lar diskte şifrelenmiyor (`Encryption Status: Disabled`); datastore dosyası ya da yedeği bütün Secret'ları base64 olarak içeriyor | M8 | Ölçüldü (k3d: `k3s secrets-encrypt status`) | B (k3s `--secrets-encryption` ile kurulacak; prova cluster'ında `Enabled` doğrulandı) |
+| 75 | Local overlay'de her secret değişikliği yeni hash'li bir Secret üretiyor, eskileri eski değerlerle cluster'da kalıyor | M8 | Ölçüldü (k3d: 3 `gamemesh-secrets-*`) | Sadece local (prod'da generator yok); `kubectl apply --prune` ya da elle temizlik |
