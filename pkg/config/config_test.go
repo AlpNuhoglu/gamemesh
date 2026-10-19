@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -99,8 +100,10 @@ func TestServiceVersionFromBuild(t *testing.T) {
 	assert.Equal(t, "override", Load("gateway").ServiceVersion)
 }
 
-// strongSecret is long enough and not a known default.
-const strongSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+// strongSecret is long enough and not a known default. Built at run time: as
+// a literal assigned to a name with "secret" in it, it matched gitleaks'
+// generic-api-key rule (see .gitleaksignore for the commit that had it).
+var strongSecret = strings.Repeat("0123456789abcdef", 4)
 
 func TestValidateAcceptsDefaultsOutsideProduction(t *testing.T) {
 	cfg := Load("player")

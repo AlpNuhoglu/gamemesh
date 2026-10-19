@@ -220,6 +220,9 @@ jobs:
   # request brings in, with rules kept in the repository. The image is pinned
   # by digest; it marks every directory git-safe itself, so the runner's uid
   # owning the checkout is not a problem.
+  # --verbose prints each finding's file, line, rule and commit (the value stays
+  # REDACTED), so a red run says where to look; accepted false positives are
+  # listed by fingerprint in .gitleaksignore.
   gitleaks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -231,7 +234,7 @@ jobs:
         run: >-
           docker run --rm -v "$PWD":/repo:ro
           zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          git --redact --no-banner --exit-code 1 /repo
+          git --redact --verbose --no-banner --exit-code 1 /repo
 
   # The third-party images the manifests and docker-compose run (NATS, Redis,
   # Postgres, monitoring, tracing). The image scan above covers only the
