@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: player
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: player
 spec:
   replicas: 2
   selector:
@@ -12,6 +14,8 @@ spec:
     metadata:
       labels:
         app: player
+        app.kubernetes.io/name: player
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8081"
@@ -93,6 +97,8 @@ kind: Service
 metadata:
   name: player
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: player
 spec:
   selector:
     app: player

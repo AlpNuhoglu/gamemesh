@@ -8,6 +8,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: gamemesh
+# On every object's own metadata only. Not on selectors: Deployment and
+# StatefulSet selectors cannot change after creation, so a label added there
+# fails every apply on a running cluster (commonLabels does that). Not on
+# templates either: with includeTemplates the transformer also labels the
+# StatefulSets' volumeClaimTemplates, which are immutable too ("Forbidden:
+# updates to statefulset spec", server dry-run on k3d). The pod templates carry
+# the label in the manifests themselves.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: gamemesh
+    includeSelectors: false
+    includeTemplates: false
 resources:
   - namespace.yaml
   - secret.yaml

@@ -5,6 +5,8 @@ kind: Deployment
 metadata:
   name: websocket
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: websocket
 spec:
   replicas: 2
   selector:
@@ -14,6 +16,8 @@ spec:
     metadata:
       labels:
         app: websocket
+        app.kubernetes.io/name: websocket
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8084"
@@ -93,6 +97,8 @@ kind: Service
 metadata:
   name: websocket
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: websocket
 spec:
   selector:
     app: websocket

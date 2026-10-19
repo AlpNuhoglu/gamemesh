@@ -6,6 +6,8 @@ kind: Deployment
 metadata:
   name: matchmaking
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: matchmaking
 spec:
   replicas: 1
   # Recreate stops the old pod completely before starting the new one. The
@@ -22,6 +24,8 @@ spec:
     metadata:
       labels:
         app: matchmaking
+        app.kubernetes.io/name: matchmaking
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8082"
@@ -101,6 +105,8 @@ kind: Service
 metadata:
   name: matchmaking
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: matchmaking
 spec:
   selector:
     app: matchmaking

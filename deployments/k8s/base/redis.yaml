@@ -10,6 +10,8 @@ kind: Service
 metadata:
   name: redis
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: redis
 spec:
   # Headless: the StatefulSet's governing Service; redis:6379 resolves to
   # the pod.
@@ -25,6 +27,8 @@ kind: StatefulSet
 metadata:
   name: redis
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: redis
 spec:
   serviceName: redis
   replicas: 1
@@ -35,6 +39,8 @@ spec:
     metadata:
       labels:
         app: redis
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: gamemesh
     spec:
       automountServiceAccountToken: false
       # The image's redis user is uid 999, gid 1000 (not 999). Run as it from

@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: leaderboard
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: leaderboard
 spec:
   replicas: 2
   selector:
@@ -12,6 +14,8 @@ spec:
     metadata:
       labels:
         app: leaderboard
+        app.kubernetes.io/name: leaderboard
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8083"
@@ -91,6 +95,8 @@ kind: Service
 metadata:
   name: leaderboard
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: leaderboard
 spec:
   selector:
     app: leaderboard

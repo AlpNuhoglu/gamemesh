@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: outbox-relay
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: outbox-relay
 spec:
   # Three replicas for HA. The relay claims rows with FOR UPDATE SKIP LOCKED
   # (internal/outbox/store.go), so replicas never publish the same outbox row —
@@ -16,6 +18,8 @@ spec:
     metadata:
       labels:
         app: outbox-relay
+        app.kubernetes.io/name: outbox-relay
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8085"
@@ -111,6 +115,8 @@ kind: Service
 metadata:
   name: outbox-relay
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: outbox-relay
 spec:
   selector:
     app: outbox-relay
