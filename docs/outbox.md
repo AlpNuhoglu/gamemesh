@@ -301,7 +301,7 @@ never be delivered without operator action, so alert on
 
 **Alert rules.** These signals are shipped as Prometheus rules in
 `config/prometheus/alerts.yml` (compose) and the `prometheus-config` ConfigMap in
-`deployments/k8s/30-monitoring.yaml` (k8s):
+`deployments/k8s/components/monitoring/monitoring.yaml` (k8s):
 
 | Alert                     | Severity | Fires when                                                       |
 | ------------------------- | -------- | ---------------------------------------------------------------- |
@@ -322,7 +322,7 @@ never be delivered without operator action, so alert on
   throughput.
 - **Ordering.** The relay processes oldest-first but does not guarantee strict
   global ordering under concurrency. Consumers must not assume cross-event order.
-- **Kubernetes.** `deployments/k8s/15-outbox-relay.yaml` runs the relay in-cluster
+- **Kubernetes.** `deployments/k8s/base/outbox-relay.yaml` runs the relay in-cluster
   with **3 replicas** and a `PodDisruptionBudget` of `minAvailable: 2`, so node
   drains and rollouts never evict the whole relay at once. The replicas are safe
   by construction — `FOR UPDATE SKIP LOCKED` hands each outbox row to exactly one

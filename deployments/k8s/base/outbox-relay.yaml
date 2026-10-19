@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: outbox-relay
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: outbox-relay
 spec:
   # Three replicas for HA. The relay claims rows with FOR UPDATE SKIP LOCKED
   # (internal/outbox/store.go), so replicas never publish the same outbox row —
@@ -16,6 +18,8 @@ spec:
     metadata:
       labels:
         app: outbox-relay
+        app.kubernetes.io/name: outbox-relay
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8085"
@@ -59,8 +63,11 @@ spec:
             # (0 = retry forever). Caps poison rows from wedging a worker.
             - name: OUTBOX_MAX_ATTEMPTS
               value: "5"
+            # connect_timeout bounds each connection attempt, as in
+            # docker-compose: without it one attempt to a Postgres with no
+            # endpoint hung for 39 s and used up database.Open's 30 s wait.
             - name: POSTGRES_DSN
-              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable
+              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable connect_timeout=5
           envFrom:
             - configMapRef:
                 name: gamemesh-config
@@ -111,6 +118,8 @@ kind: Service
 metadata:
   name: outbox-relay
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: outbox-relay
 spec:
   selector:
     app: outbox-relay
@@ -118,16 +127,18 @@ spec:
     - port: 8085
       targetPort: 8085
 ---
-# Keep at least 2 relays running during voluntary disruptions (node drains,
-# rollouts). Without this a cluster autoscaler or upgrade could evict all three
-# replicas at once and stall outbox publishing until they reschedule.
+# Evict at most one relay at a time during voluntary disruptions (node drains,
+# upgrades; a PDB does not govern rollouts). Without it a drain could evict
+# every replica at once and stall outbox publishing until they reschedule.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: outbox-relay
   namespace: gamemesh
 spec:
-  minAvailable: 2
+  # Not minAvailable: 2, which one replica (as in production) can never meet:
+  # every drain then waits forever. maxUnavailable: 1 holds for any count.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: outbox-relay

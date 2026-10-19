@@ -1,0 +1,43 @@
+# Everything that is the same in every environment. The overlays
+# (../overlays/local for k3d, ../overlays/prod for the VPS) add only what has
+# to differ: image addresses, replica counts, the host, secrets.
+#
+# Render and apply an overlay, never the files here directly:
+#   kubectl kustomize deployments/k8s/overlays/local
+#   kubectl apply -k deployments/k8s/overlays/local
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gamemesh
+# On every object's own metadata only. Not on selectors: Deployment and
+# StatefulSet selectors cannot change after creation, so a label added there
+# fails every apply on a running cluster (commonLabels does that). Not on
+# templates either: with includeTemplates the transformer also labels the
+# StatefulSets' volumeClaimTemplates, which are immutable too ("Forbidden:
+# updates to statefulset spec", server dry-run on k3d). The pod templates carry
+# the label in the manifests themselves.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: gamemesh
+    includeSelectors: false
+    includeTemplates: false
+# No Secret here: the services read gamemesh-secrets (JWT key, Postgres
+# credentials), which the local overlay generates from dev values and
+# production creates in the cluster, so no value in the repository can reach
+# production.
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - redis.yaml
+  - nats.yaml
+  - gateway.yaml
+  - player.yaml
+  - matchmaking.yaml
+  - leaderboard.yaml
+  - websocket.yaml
+  - outbox-relay.yaml
+  - presence.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: gamemesh-config
+    envs:
+      - config.env

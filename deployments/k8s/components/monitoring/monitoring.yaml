@@ -1,4 +1,4 @@
-# Minimal in-cluster Prometheus + Grafana for Minikube demos. A production
+# Minimal in-cluster Prometheus + Grafana for the local k3d cluster. A production
 # cluster would use kube-prometheus-stack (Helm) instead.
 apiVersion: v1
 kind: ServiceAccount
@@ -96,6 +96,8 @@ kind: Deployment
 metadata:
   name: prometheus
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: prometheus
 spec:
   replicas: 1
   selector:
@@ -105,6 +107,8 @@ spec:
     metadata:
       labels:
         app: prometheus
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/part-of: gamemesh
     spec:
       serviceAccountName: prometheus
       # Unlike the services, Prometheus needs its token: it discovers the pods
@@ -166,6 +170,8 @@ kind: Service
 metadata:
   name: prometheus
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: prometheus
 spec:
   selector:
     app: prometheus
@@ -178,6 +184,8 @@ kind: Deployment
 metadata:
   name: grafana
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: grafana
 spec:
   replicas: 1
   selector:
@@ -187,6 +195,8 @@ spec:
     metadata:
       labels:
         app: grafana
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/part-of: gamemesh
     spec:
       automountServiceAccountToken: false
       # The image runs as uid 472 in the root group (gid 0); nothing it reads
@@ -254,6 +264,8 @@ kind: Service
 metadata:
   name: grafana
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: grafana
 spec:
   selector:
     app: grafana

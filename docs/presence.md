@@ -137,7 +137,7 @@ So closing one of three devices keeps the player ONLINE.
   player. The atomic Lua writes make concurrent updates safe.
 - **No sticky sessions, no leader election, no per-replica ownership.** Scale the
   Presence Service and the WS gateway horizontally by raising replicas
-  ([`deployments/k8s/16-presence.yaml`](../deployments/k8s/16-presence.yaml),
+  ([`deployments/k8s/base/presence.yaml`](../deployments/k8s/base/presence.yaml),
   `replicas: 2`).
 
 ---

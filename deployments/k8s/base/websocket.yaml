@@ -1,20 +1,26 @@
+# Multiple WS replicas are safe: every replica subscribes to all events via
+# Redis Pub/Sub, so a client connected to any replica receives every event.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: player
+  name: websocket
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: websocket
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: player
+      app: websocket
   template:
     metadata:
       labels:
-        app: player
+        app: websocket
+        app.kubernetes.io/name: websocket
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8081"
+        prometheus.io/port: "8084"
         prometheus.io/path: /metrics
     spec:
       # Worst case before the kubelet sends SIGKILL: preStop 5 s + HTTP
@@ -33,16 +39,14 @@ spec:
         runAsGroup: 10001
         seccompProfile: { type: RuntimeDefault }
       containers:
-        - name: player
-          image: gamemesh/player:latest
+        - name: websocket
+          image: gamemesh/websocket:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8081
+            - containerPort: 8084
           env:
             - name: HTTP_PORT
-              value: "8081"
-            - name: POSTGRES_DSN
-              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable
+              value: "8084"
           envFrom:
             - configMapRef:
                 name: gamemesh-config
@@ -52,7 +56,7 @@ spec:
           # so a slow start (Postgres retry, migrations) is not killed and restarted
           # in a loop; it replaces the old initialDelaySeconds guesses.
           startupProbe:
-            httpGet: { path: /livez, port: 8081 }
+            httpGet: { path: /livez, port: 8084 }
             periodSeconds: 2
             failureThreshold: 30
           # Readiness is quick to drop a pod from the Service (4 s) when a
@@ -60,12 +64,12 @@ spec:
           # 3 s stall, since a 1 s timeout under a 500m CPU limit can fail on CFS
           # throttling alone and restart healthy pods under load.
           readinessProbe:
-            httpGet: { path: /readyz, port: 8081 }
+            httpGet: { path: /readyz, port: 8084 }
             periodSeconds: 2
             timeoutSeconds: 2
             failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /livez, port: 8081 }
+            httpGet: { path: /livez, port: 8084 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
@@ -85,17 +89,19 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
           resources:
-            requests: { cpu: 100m, memory: 64Mi }
-            limits: { cpu: 500m, memory: 128Mi }
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 256Mi }
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: player
+  name: websocket
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: websocket
 spec:
   selector:
-    app: player
+    app: websocket
   ports:
-    - port: 8081
-      targetPort: 8081
+    - port: 8084
+      targetPort: 8084

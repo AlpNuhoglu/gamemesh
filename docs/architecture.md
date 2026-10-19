@@ -81,7 +81,7 @@ Two seams isolate transport from business logic:
 
 ## Scaling to millions of players
 
-| Component | Today (Minikube) | At scale |
+| Component | Today (single-node k3s) | At scale |
 |---|---|---|
 | Gateway / Player / Leaderboard / WS | 2 replicas | Stateless → HPA on CPU/RPS. WS replicas all receive all events; shard topics (`events.room.{hash}`) when fan-out volume demands. |
 | Matchmaking | 1 replica | Leader lock (Redis `SET NX EX`) or partition the queue into rank bands, one worker per band. |

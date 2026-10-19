@@ -1,30 +1,24 @@
-# NOTE: single replica by design — the match loop has no leader election yet.
-# Scaling this horizontally requires a distributed lock around MatchOnce
-# (e.g. Redis SET NX EX) or partitioning the queue by rank band.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: matchmaking
+  name: leaderboard
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: leaderboard
 spec:
-  replicas: 1
-  # Recreate stops the old pod completely before starting the new one. The
-  # default RollingUpdate starts the new pod first (maxSurge rounds up to 1),
-  # so for the old pod's whole shutdown, preStop included, two match loops
-  # pop the same queue. The cost is a short gap with no matching; the queue
-  # itself is in Redis and survives it.
-  strategy:
-    type: Recreate
+  replicas: 2
   selector:
     matchLabels:
-      app: matchmaking
+      app: leaderboard
   template:
     metadata:
       labels:
-        app: matchmaking
+        app: leaderboard
+        app.kubernetes.io/name: leaderboard
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8082"
+        prometheus.io/port: "8083"
         prometheus.io/path: /metrics
     spec:
       # Worst case before the kubelet sends SIGKILL: preStop 5 s + HTTP
@@ -43,14 +37,14 @@ spec:
         runAsGroup: 10001
         seccompProfile: { type: RuntimeDefault }
       containers:
-        - name: matchmaking
-          image: gamemesh/matchmaking:latest
+        - name: leaderboard
+          image: gamemesh/leaderboard:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8082
+            - containerPort: 8083
           env:
             - name: HTTP_PORT
-              value: "8082"
+              value: "8083"
           envFrom:
             - configMapRef:
                 name: gamemesh-config
@@ -60,7 +54,7 @@ spec:
           # so a slow start (Postgres retry, migrations) is not killed and restarted
           # in a loop; it replaces the old initialDelaySeconds guesses.
           startupProbe:
-            httpGet: { path: /livez, port: 8082 }
+            httpGet: { path: /livez, port: 8083 }
             periodSeconds: 2
             failureThreshold: 30
           # Readiness is quick to drop a pod from the Service (4 s) when a
@@ -68,12 +62,12 @@ spec:
           # 3 s stall, since a 1 s timeout under a 500m CPU limit can fail on CFS
           # throttling alone and restart healthy pods under load.
           readinessProbe:
-            httpGet: { path: /readyz, port: 8082 }
+            httpGet: { path: /readyz, port: 8083 }
             periodSeconds: 2
             timeoutSeconds: 2
             failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /livez, port: 8082 }
+            httpGet: { path: /livez, port: 8083 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
@@ -99,11 +93,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: matchmaking
+  name: leaderboard
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: leaderboard
 spec:
   selector:
-    app: matchmaking
+    app: leaderboard
   ports:
-    - port: 8082
-      targetPort: 8082
+    - port: 8083
+      targetPort: 8083

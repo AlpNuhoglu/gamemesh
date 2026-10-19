@@ -1,0 +1,56 @@
+# The local k3d cluster: images built and imported on this machine, dev
+# secrets, monitoring included, the base's replica counts (two websocket
+# replicas exercise the event fan-out).
+#
+#   kubectl apply -k deployments/k8s/overlays/local
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Also places what this overlay generates (the Secret) in gamemesh: without it
+# the Secret had no namespace, and the workloads' references to it were not
+# rewritten to its hashed name.
+namespace: gamemesh
+resources:
+  - ../../base
+components:
+  - ../../components/monitoring
+# Images built from the working tree and loaded with k3d image import; the
+# base's imagePullPolicy IfNotPresent then uses them without a registry.
+images:
+  - name: gamemesh/gateway
+    newTag: dev
+  - name: gamemesh/player
+    newTag: dev
+  - name: gamemesh/matchmaking
+    newTag: dev
+  - name: gamemesh/leaderboard
+    newTag: dev
+  - name: gamemesh/websocket
+    newTag: dev
+  - name: gamemesh/outbox-relay
+    newTag: dev
+  - name: gamemesh/presence
+    newTag: dev
+secretGenerator:
+  - name: gamemesh-secrets
+    envs:
+      - secrets.env
+patches:
+  # Traefik's pods are the gateway's only direct clients; k3s's default pod
+  # CIDR. Without it the gateway takes Traefik's address for the client's and
+  # every user shares one rate-limit bucket (finding #52).
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: TRUSTED_PROXIES
+          value: 10.42.0.0/16
+  - target:
+      kind: Ingress
+      name: gamemesh
+    patch: |-
+      - op: add
+        path: /spec/rules/0/host
+        value: gamemesh.localhost

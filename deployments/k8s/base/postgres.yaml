@@ -21,6 +21,8 @@ kind: Deployment
 metadata:
   name: postgres
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: postgres
 spec:
   replicas: 1
   # Never two servers on the same data directory: the old pod stops before
@@ -34,6 +36,8 @@ spec:
     metadata:
       labels:
         app: postgres
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: gamemesh
     spec:
       automountServiceAccountToken: false
       # The image's postgres user (uid/gid 70) from the start; fsGroup makes
@@ -105,6 +109,8 @@ kind: Service
 metadata:
   name: postgres
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: postgres
 spec:
   selector:
     app: postgres

@@ -1,20 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: gateway
+  name: player
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: player
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: gateway
+      app: player
   template:
     metadata:
       labels:
-        app: gateway
+        app: player
+        app.kubernetes.io/name: player
+        app.kubernetes.io/part-of: gamemesh
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "8081"
         prometheus.io/path: /metrics
     spec:
       # Worst case before the kubelet sends SIGKILL: preStop 5 s + HTTP
@@ -33,14 +37,19 @@ spec:
         runAsGroup: 10001
         seccompProfile: { type: RuntimeDefault }
       containers:
-        - name: gateway
-          image: gamemesh/gateway:latest
+        - name: player
+          image: gamemesh/player:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8080
+            - containerPort: 8081
           env:
             - name: HTTP_PORT
-              value: "8080"
+              value: "8081"
+            # connect_timeout bounds each connection attempt, as in
+            # docker-compose: without it one attempt to a Postgres with no
+            # endpoint hung for 39 s and used up database.Open's 30 s wait.
+            - name: POSTGRES_DSN
+              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable connect_timeout=5
           envFrom:
             - configMapRef:
                 name: gamemesh-config
@@ -50,7 +59,7 @@ spec:
           # so a slow start (Postgres retry, migrations) is not killed and restarted
           # in a loop; it replaces the old initialDelaySeconds guesses.
           startupProbe:
-            httpGet: { path: /livez, port: 8080 }
+            httpGet: { path: /livez, port: 8081 }
             periodSeconds: 2
             failureThreshold: 30
           # Readiness is quick to drop a pod from the Service (4 s) when a
@@ -58,12 +67,12 @@ spec:
           # 3 s stall, since a 1 s timeout under a 500m CPU limit can fail on CFS
           # throttling alone and restart healthy pods under load.
           readinessProbe:
-            httpGet: { path: /readyz, port: 8080 }
+            httpGet: { path: /readyz, port: 8081 }
             periodSeconds: 2
             timeoutSeconds: 2
             failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /livez, port: 8080 }
+            httpGet: { path: /livez, port: 8081 }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
@@ -89,11 +98,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: gateway
+  name: player
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: player
 spec:
   selector:
-    app: gateway
+    app: player
   ports:
-    - port: 8080
-      targetPort: 8080
+    - port: 8081
+      targetPort: 8081

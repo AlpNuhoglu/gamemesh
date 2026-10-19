@@ -68,7 +68,11 @@ updates:
   # Prometheus, Grafana). Majors are their own decision: Redis 8, Postgres 17,
   # Prometheus 3 and Grafana 12 each change behaviour or data formats.
   - package-ecosystem: docker
-    directory: /deployments/k8s
+    # Every directory holding image references; GitHub's docs ask for one per
+    # directory of Kubernetes manifests.
+    directories:
+      - /deployments/k8s/base
+      - /deployments/k8s/components/monitoring
     patterns: ["*"]
     multi-ecosystem-group: third-party-images
     ignore:

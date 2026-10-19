@@ -119,7 +119,7 @@ Full discussion: [docs/architecture.md](docs/architecture.md)
 
 Go 1.26 · Gin · GORM · PostgreSQL 16 · Redis 7 · NATS JetStream ·
 Gorilla WebSocket · golang-jwt v5 · zap · Prometheus · Grafana ·
-OpenTelemetry · Jaeger · Docker Compose · Kubernetes (Minikube) ·
+OpenTelemetry · Jaeger · Docker Compose · Kubernetes (k3s, Kustomize) ·
 Testcontainers · k6 · GitHub Actions
 
 ## Services
@@ -248,19 +248,17 @@ reconnect/party/rematch flows never require editing the state machine.
 
 Details: [docs/presence.md](docs/presence.md)
 
-## Kubernetes (Minikube)
+## Kubernetes (k3d)
 
 ```bash
-minikube start
-minikube addons enable ingress
+k3d cluster create gamemesh --image rancher/k3s:v1.35.5-k3s1 \
+  --api-port 127.0.0.1:6550 -p "127.0.0.1:18080:80@loadbalancer" --agents 0 --wait
 
-make k8s-build     # builds images inside Minikube's Docker daemon
-make k8s-apply     # kubectl apply -f deployments/k8s/
+make k8s-build     # builds gamemesh/<service>:dev and loads it into k3d
+make k8s-apply     # kubectl apply -k deployments/k8s/overlays/local
 
 kubectl -n gamemesh get pods
-kubectl -n gamemesh logs deploy/gateway -f
-kubectl -n gamemesh port-forward svc/gateway 8080:8080
-kubectl -n gamemesh port-forward svc/grafana 3000:3000
+curl -H 'Host: gamemesh.localhost' http://127.0.0.1:18080/health
 ```
 
 Full guide with ingress/hosts setup: [docs/deployment.md](docs/deployment.md)

@@ -11,6 +11,8 @@ kind: Service
 metadata:
   name: nats
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: nats
 spec:
   # Headless: the StatefulSet's governing Service. Clients still connect to
   # nats:4222, which resolves to the pod.
@@ -30,6 +32,8 @@ kind: StatefulSet
 metadata:
   name: nats
   namespace: gamemesh
+  labels:
+    app.kubernetes.io/name: nats
 spec:
   serviceName: nats
   replicas: 1
@@ -40,6 +44,8 @@ spec:
     metadata:
       labels:
         app: nats
+        app.kubernetes.io/name: nats
+        app.kubernetes.io/part-of: gamemesh
     spec:
       automountServiceAccountToken: false
       # The image starts as root but needs nothing root can do: it runs as
