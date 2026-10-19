@@ -945,6 +945,56 @@ Her adım şu yapıda:
      sokar. Diğer servislerde boş kalır (karar, 2026-10-13: gateway dışında hiçbir servis
      proxy'ye güvenmez). Downstream loglarında `client_ip` gateway'in IP'sidir; gerçek IP
      aynı `request_id` ile gateway logunda bulunur.
+- **Kararlar (2026-10-19):** monitoring bir Kustomize component'i, sadece local'de; dev
+  secret'ları local `secretGenerator`'ında, prod'da Secret yok; prod imaj tag'i
+  `set-by-deploy` (deploy'da `kustomize edit set image`); prod'da replica 1; PDB
+  `maxUnavailable: 1`; `TRUSTED_PROXIES` iki overlay'de; `configMapGenerator`; Ingress
+  `traefik`, host overlay'den; etiketler seçicisiz; manifest doğrulaması PR'larda.
+- **Yapılanlar (`build/k8s-kustomize`, 2026-10-19), CI kanıtı bekleniyor:**
+  1. Saf taşıma: base, düz klasörle aynı 34 nesneyi veriyor (nesne nesne karşılaştırıldı);
+     `git mv` ile dosya geçmişi korundu, numaralı önekler kalktı.
+  2. Monitoring `components/monitoring`'e: base 26 nesne; base + component eskisiyle aynı 34.
+  3. `configMapGenerator` (#37): 23 anahtar aynı, ad `gamemesh-config-<hash>`, bütün
+     `envFrom` referansları yeni ada; tek bir değer değişince ad değişiyor.
+  4. Ingress (#38, #72): k3d'de `nginx` sınıfıyla adres yok, Traefik 404; `traefik` sınıfı
+     ve sadece `/health` (Exact), `/api`, `/ws` ile: `/health` 200, `/api` player'a ulaşıyor,
+     `/ws` 401, `/livez` ve `/metrics` 404. Eski Ingress `/health`'i hiç yönlendirmiyordu.
+  5. PDB (#35): tek replica ile `minAvailable: 2` → `disruptionsAllowed 0`, eviction "would
+     violate the pod's disruption budget"; `maxUnavailable: 1` → 1, eviction başarılı.
+  6. Etiketler: `includeTemplates: true` StatefulSet'lerin değiştirilemez
+     `volumeClaimTemplates`'ini de etiketliyordu (server dry-run: "Forbidden: updates to
+     statefulset spec"); transformer sadece nesne metadata'sına, pod şablonlarına elle.
+     Seçiciler ve `volumeClaimTemplates` değişmedi, k3d'ye dry-run 0 hata.
+  7. Local overlay: `:dev` imajlar, `secretGenerator`, monitoring, `gamemesh.localhost`,
+     `TRUSTED_PROXIES`. `namespace:` olmadan üretilen Secret namespace'siz kalıyor ve 8
+     referans hash'siz adda kalıyordu (kubeconform bunu yakalamıyor). k3d'de 19/19 `1/1`;
+     Traefik + host ile `/health` 200, başka host 404; kayıt + giriş çalışıyor.
+  8. Prod overlay: 25 nesne, Secret ve monitoring yok, her şey 1 replica, 10 pod 950m CPU /
+     960Mi bellek (#36; k3s'in kendisi k3d'de 200m/140Mi). `set-by-deploy` GHCR'da 404;
+     `kustomize edit set image` bir kopyada 7 imajı SHA'ya çevirdi. Host
+     `api.gamemesh.invalid` (B2'de gerçek domain).
+  9. CI: `manifests` job'u iki overlay'i her PR'da kubeconform'dan geçiriyor (önce sadece
+     `main`'de); `ci-ok` bekliyor; Dependabot'un k8s girişi `base` ve
+     `components/monitoring`'e. Trivy misconfig base ve component dosyalarını tarıyor (14,
+     0 HIGH), overlay'leri yanlış okumuyor ama render edilmiş overlay'leri de taramıyor;
+     orada namespace'teki PSS `enforce` son kapı.
+  10. Makefile/docs: `make k8s-build` (`:dev` + `k3d image import`) ve `k8s-apply`/`delete`
+     (`-k overlays/local`, context `k3d-gamemesh` değilse reddediyor; denendi). Servis
+     listesi `cmd/`'den: elle yazılan liste `outbox-relay`'i kaybetmişti. `make help` adında
+     rakam olan hedefleri hiç listelemiyordu (regex), düzeltildi. Minikube anlatımları
+     k3d'ye çevrildi; "`kubectl apply -f deployments/k8s/`" hiçbir yerde kalmadı.
+  11. #73: k8s DSN'lerinde `connect_timeout` yoktu (A3a'nın düzeltmesi k8s'e ulaşmamış);
+     Postgres yeniden başlarken tek deneme 39 sn asılı kalıp player'ı restart ettirdi.
+     Eklendi: deneme 5 sn'de bitiyor, iki tekrarlı denemede 0 restart.
+  - Ölçüm (A10 madde 9 için): `TRUSTED_PROXIES` çalışıyor (gateway Traefik'in IP'sini
+    istemci saymıyor), ama gateway herkesi `10.42.0.1` görüyor: ServiceLB bağlantıyı
+    Traefik'e gelmeden SNAT'lıyor. Gerçek istemci IP'si için Traefik'te
+    `externalTrafficPolicy: Local` (k3s `HelmChartConfig`) gerekecek; kesin sonuç B4'te.
+  - Not: `kubectl apply` her seferinde StatefulSet'ler ve PDB için "configured" diyor, ama
+    `kubectl diff` fark göstermiyor ve pod'lar yeniden başlamıyor (kozmetik).
+- **Bitti sayılır (k3d, 2026-10-19):** iki overlay de render ediliyor ve kubeconform'dan
+  geçiyor (local 34/34, prod 25/25). Ek olarak `make k8s-build` + `make k8s-apply` ve bütün
+  iş yükleri aynı anda yeniden başlatıldıktan sonra 19/19 `1/1`, 0 restart (2 dk sonra da).
 
 ### A9. Secret'ları repodan çıkar
 
@@ -1405,10 +1455,10 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 32 | `startupProbe` yok; probe timeout'ları varsayılan (1 sn) | M6 | Kod | A7 (çözüldü: startup/readiness/liveness ayrı ayarlarla) |
 | 33 | Redis'in PVC'si yok; k8s imajdaki `VOLUME` tanımını yok sayıyor | M2, M5 | Ölçüldü (compose) | A7 (çözüldü: StatefulSet + AOF, veri pod silinince duruyor) |
 | 34 | Postgres probe'unda kullanıcı adı sabit; liveness yok; init SQL ConfigMap'i | M5 | Kod | A7 (çözüldü: Secret'tan probe, liveness, init SQL kaldırıldı) |
-| 35 | **PDB `minAvailable: 2` tek replica ile node drain'i kilitliyor** | M5 | Kod | A8, A10 |
-| 36 | Toplam requests 1800m CPU, 2 vCPU'ya sığmıyor | M5 | Ölçüldü (hesap) | A8, B1 |
-| 37 | ConfigMap değişikliği pod'ları yeniden başlatmıyor | M5 | Ölçüldü (Docker analog) | A8 |
-| 38 | Ingress nginx'e özel; k3s'te sessizce yok sayılır | M5 | Kod | A8, C4 |
+| 35 | **PDB `minAvailable: 2` tek replica ile node drain'i kilitliyor** | M5 | Kod | A8 (çözüldü: `maxUnavailable: 1`, k3d'de eviction başarılı), A10'da drain |
+| 36 | Toplam requests 1800m CPU, 2 vCPU'ya sığmıyor | M5 | Ölçüldü (hesap) | A8 (prod 10 pod, 950m/960Mi), B1 |
+| 37 | ConfigMap değişikliği pod'ları yeniden başlatmıyor | M5 | Ölçüldü (Docker analog) | A8 (çözüldü: `configMapGenerator`, hash'li ad) |
+| 38 | Ingress nginx'e özel; k3s'te sessizce yok sayılır | M5 | Kod | A8 (çözüldü: `traefik` sınıfı, k3d'de `/health` 200), C4 |
 | 39 | Secret'lar repoda (`01-secrets.yaml`) | M5, M8 | Kod | A9 |
 | 40 | **Uygulama production'da güvensiz secret ile sessizce açılıyor** | M8 | Kod | A9 |
 | 41 | Otomatik secret taraması yok | M8 | Kod | A9, A5a (gitleaks; GitHub secret scanning ve push protection zaten açıktı, API ile doğrulandı) |
@@ -1417,12 +1467,12 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 44 | `/ws` ingress'te gateway'i atlıyor | M8 | Kod | A3b (çözüldü: websocket artık oturumu kendisi kontrol ediyor); C4'te `/ws` açılabilir |
 | 45 | `rollout status` shallow readiness ile anlamsız | M6 | Kod | D2 |
 | 46 | `docs/deployment.md` CI ve servis sayısı bilgisi hatalı | M7 | Kod | D4 |
-| 47 | Şema dört ayrı yerde; `AutoMigrate` yarışı | M2, M5 | Kod | Faz 1 sonrası (k3d'de 2 replica ile ölçüldü: `fk_players_stats ... already exists`, 1 restart; prod replica sayısı A8) |
+| 47 | Şema dört ayrı yerde; `AutoMigrate` yarışı | M2, M5 | Kod | Faz 1 sonrası (k3d'de 2 replica ile ölçüldü: `fk_players_stats ... already exists`, 1 restart; prod'da replica 1, A8) |
 | 48 | HS256: üç servis token üretebilir | M8 | Kod | Faz 1 sonrası |
 | 49 | Secret'lar env çıktılarında düz metin | M8 | Ölçüldü | Faz 1 sonrası |
 | 50 | Prometheus `ClusterRole` kullanıyor | M5 | Kod | Faz 1 sonrası |
 | 51 | Yeni CVE-2026-78669 (`x/net` v0.58.0, HIGH) bütün PR'larda security job'unu kırıyor; düzeltmesi Go 1.26 istiyor | M7 | Ölçüldü (CI run 38411117929, yerel Trivy) | `fix/deps-x-net` (çözüldü), kalıcı çözüm A5a |
-| 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (çözüldü: sahte XFF ile 200×200 → 119×200/81×429); prod ayarı A8, doğrulama A10/B4 |
+| 52 | **Gateway bütün proxy'lere güveniyor; sahte `X-Forwarded-For` rate limit'i tamamen atlatıyor** | M3 | Ölçüldü (200 istek: 108×200/92×429 → 200×200) | `fix/gateway-trusted-proxies` (çözüldü: sahte XFF ile 200×200 → 119×200/81×429); prod ayarı A8 (iki overlay'de `10.42.0.0/16`); k3d'de SNAT yüzünden herkes `10.42.0.1`, doğrulama A10/B4 |
 | 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` (çözüldü) |
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a (çözüldü: ayrı job'lar) |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
@@ -1441,3 +1491,6 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 68 | Monitoring ve tracing imajları major sürüm geride (Prometheus v2.54.1, Grafana 11.2.0, Jaeger 1.62.0, collector 0.111.0); CI'da rapor modunda | M7 | Ölçüldü (#66 taraması) | Faz 1 sonrası; A8'de monitoring prod overlay'inin dışında |
 | 69 | Dependabot k8s ve compose imajlarını ayrı PR'larda güncelliyor; "ortak imajlar aynı olmalı" kontrolü zorunlu `ci-ok` altında her PR'ı tek başına kırmızı yapıyor, hiçbiri merge edilemiyor (#46'nın tasarım hatası) | M7 | Ölçüldü (#48, #50, #52, #53: `lint` fail, `grafana differs`) | `ci/dependabot-image-group` (multi-ecosystem group) |
 | 70 | CI job'larında `timeout-minutes` yok (varsayılan 360 dk); asılı bir job `main` kuyruğunu ve deploy'u saatlerce bekletebilir | M7 | Ölçüldü (`main`'de websocket build'i 785 sn, PR'da aynı kod 103/105 sn) | `ci/job-timeouts` |
+| 71 | Dependabot sonek taşıyan tek mimarili bir tag'i (`otel-collector:0.162.0-386`, sadece `linux/386`) yeni sürüm sandı; CI yeşil, çünkü collector sadece taranıyor | M7 | Ölçüldü (`imagetools inspect`: tek manifest, `linux 386`) | PR #58 (collector Dependabot'ta ignore; #68 ile elle) |
+| 72 | Ingress `/health`'i yönlendirmiyordu (sadece `/api`, `/ws`); Faz 1'in hedef komutu sınıf düzeltilse de 404 olurdu | M5 | Ölçüldü (k3d: Traefik 404) | A8 (çözüldü: `/health` Exact) |
+| 73 | k8s DSN'lerinde `connect_timeout` yok (A3a düzeltmesi k8s'e ulaşmamış); tek deneme 39 sn asılı kalıp player'ı restart ettirdi | M4 | Ölçüldü (k3d) | A8 (çözüldü: `connect_timeout=5`, 0 restart) |
