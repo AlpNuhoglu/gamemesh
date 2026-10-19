@@ -118,16 +118,18 @@ spec:
     - port: 8085
       targetPort: 8085
 ---
-# Keep at least 2 relays running during voluntary disruptions (node drains,
-# rollouts). Without this a cluster autoscaler or upgrade could evict all three
-# replicas at once and stall outbox publishing until they reschedule.
+# Evict at most one relay at a time during voluntary disruptions (node drains,
+# upgrades; a PDB does not govern rollouts). Without it a drain could evict
+# every replica at once and stall outbox publishing until they reschedule.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: outbox-relay
   namespace: gamemesh
 spec:
-  minAvailable: 2
+  # Not minAvailable: 2, which one replica (as in production) can never meet:
+  # every drain then waits forever. maxUnavailable: 1 holds for any count.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: outbox-relay
