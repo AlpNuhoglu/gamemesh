@@ -16,6 +16,6 @@ add() { # key value
 }
 add POSTGRES_USER gamemesh
 add POSTGRES_DB gamemesh
-for key in JWT_SECRET POSTGRES_PASSWORD REDIS_PASSWORD; do
+for key in JWT_SECRET POSTGRES_PASSWORD REDIS_PASSWORD GRAFANA_ADMIN_PASSWORD; do
   add "$key" "$(openssl rand -hex 32)"
 done

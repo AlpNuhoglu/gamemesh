@@ -234,8 +234,11 @@ spec:
           env:
             - name: GF_SECURITY_ADMIN_USER
               value: admin
+            # From the overlay's Secret, not written here: with value admin
+            # anyone who reached Grafana logged in as admin with admin/admin.
             - name: GF_SECURITY_ADMIN_PASSWORD
-              value: admin
+              valueFrom:
+                secretKeyRef: { name: gamemesh-secrets, key: GRAFANA_ADMIN_PASSWORD }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
