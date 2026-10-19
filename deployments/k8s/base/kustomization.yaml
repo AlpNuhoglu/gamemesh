@@ -11,7 +11,6 @@ namespace: gamemesh
 resources:
   - namespace.yaml
   - secret.yaml
-  - configmap.yaml
   - postgres.yaml
   - redis.yaml
   - nats.yaml
@@ -23,3 +22,7 @@ resources:
   - outbox-relay.yaml
   - presence.yaml
   - ingress.yaml
+configMapGenerator:
+  - name: gamemesh-config
+    envs:
+      - config.env
