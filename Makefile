@@ -1,6 +1,11 @@
-.PHONY: help build test test-integration lint cover up down k8s-build k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
+.PHONY: help build test test-integration lint cover up down k8s-build k8s-context k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
 
-SERVICES := gateway player matchmaking leaderboard websocket presence
+# Every directory under cmd/, as CI's image matrix: the hand-written list had
+# lost outbox-relay, so k8s-build skipped an image the cluster needs.
+SERVICES := $(notdir $(patsubst %/,%,$(wildcard cmd/*/)))
+# The local k3d cluster the k8s-* targets act on (see docs/deployment.md).
+K3D_CLUSTER := gamemesh
+K3D_CONTEXT := k3d-$(K3D_CLUSTER)
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -30,18 +35,24 @@ up: ## Start the full local stack
 down: ## Stop the local stack
 	docker compose down
 
-k8s-build: ## Build images into Minikube's Docker daemon
-	@eval $$(minikube docker-env) && \
-	for svc in $(SERVICES); do \
-		echo "building gamemesh/$$svc:latest"; \
-		docker build -f deployments/docker/Dockerfile --build-arg SERVICE=$$svc -t gamemesh/$$svc:latest .; \
+k8s-build: ## Build the images and load them into the local k3d cluster
+	@for svc in $(SERVICES); do \
+		echo "building gamemesh/$$svc:dev"; \
+		docker build -f deployments/docker/Dockerfile --build-arg SERVICE=$$svc -t gamemesh/$$svc:dev . || exit 1; \
 	done
+	k3d image import $(addprefix gamemesh/,$(addsuffix :dev,$(SERVICES))) -c $(K3D_CLUSTER)
 
-k8s-apply: ## Deploy everything to the cluster
-	kubectl apply -f deployments/k8s/
+# Refuses unless kubectl points at the local cluster: these targets must never
+# reach production, which is deployed only from CI (overlays/prod).
+k8s-context:
+	@test "$$(kubectl config current-context)" = "$(K3D_CONTEXT)" || \
+		{ echo "kubectl context is '$$(kubectl config current-context)', not $(K3D_CONTEXT); refusing" >&2; exit 1; }
 
-k8s-delete: ## Tear down the K8s deployment
-	kubectl delete -f deployments/k8s/ --ignore-not-found
+k8s-apply: k8s-context ## Deploy the local overlay to the k3d cluster
+	kubectl apply -k deployments/k8s/overlays/local
+
+k8s-delete: k8s-context ## Tear down the local overlay
+	kubectl delete -k deployments/k8s/overlays/local --ignore-not-found
 
 k6-leaderboard: ## 10k leaderboard updates
 	@mkdir -p scripts/k6/reports

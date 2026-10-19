@@ -1,4 +1,4 @@
-# Minimal in-cluster Prometheus + Grafana for Minikube demos. A production
+# Minimal in-cluster Prometheus + Grafana for the local k3d cluster. A production
 # cluster would use kube-prometheus-stack (Helm) instead.
 apiVersion: v1
 kind: ServiceAccount

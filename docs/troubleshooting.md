@@ -24,31 +24,39 @@ Tokens expire after `JWT_EXPIRY` (24h default). Re-login. If you changed
 Raise the gateway limits: `RATE_LIMIT_RPS=1000 RATE_LIMIT_BURST=2000` in
 `.env`, then `docker compose up -d gateway`.
 
-## Kubernetes / Minikube
+## Kubernetes (k3d)
 
-**`ImagePullBackOff`**
-Images weren't built into Minikube's Docker daemon. Run `make k8s-build`
-(which wraps `eval $(minikube docker-env)` + builds). Verify with
-`minikube image ls | grep gamemesh`.
+**`ErrImagePull` / `ImagePullBackOff` on gamemesh images**
+The local overlay uses `gamemesh/<service>:dev` loaded into the cluster, not a
+registry. Run `make k8s-build` (builds every `cmd/` service and runs
+`k3d image import`). In the production overlay the tag is `set-by-deploy`
+until CI sets the commit's SHA, so a pull failure there means it was applied
+by hand.
 
 **Pods `Pending`**
-Insufficient cluster resources: `kubectl describe pod <pod>` → look at
-Events. Start Minikube bigger: `minikube start --cpus=4 --memory=6g`.
+Insufficient resources or an unbound volume: `kubectl describe pod <pod>` →
+Events. NATS, Redis and Postgres need the `local-path` StorageClass k3s ships.
 
-**Ingress 404 / connection refused**
-`minikube addons enable ingress`, wait for the controller pod in
-`ingress-nginx` namespace, and confirm the `/etc/hosts` entry points at
-`minikube ip` (it changes between `minikube start`s).
+**Every request through Traefik returns 404**
+Send the Ingress host: `curl -H 'Host: gamemesh.localhost'
+http://127.0.0.1:18080/health`. Only `/health`, `/api` and `/ws` are routed.
+An Ingress with a class other than `traefik` is ignored without an error
+(`kubectl -n gamemesh get ingress` shows no address).
 
-**Player pods CrashLoopBackOff with Postgres connection errors**
-Postgres may still be initialising on first boot. The readiness probe gates
-traffic but not startup order; pods retry and recover. If it persists:
-`kubectl -n gamemesh logs deploy/postgres`.
+**Pods cannot find `gamemesh-secrets`**
+The local overlay generates `gamemesh-secrets-<hash>` and rewrites the
+references; the production overlay expects a Secret created in the cluster.
+Check with `kubectl kustomize deployments/k8s/overlays/<env> | grep -n
+gamemesh-secrets`.
 
-**WebSocket drops after ~60s through ingress**
-The provided ingress sets `proxy-read-timeout: 3600`. If you customised the
-ingress, restore those annotations; the app side keeps connections alive with
-pings every 54s.
+**Player pods restart once on a fresh database**
+Two replicas can run GORM's AutoMigrate at the same moment and one fails on
+an existing constraint; the restarted pod finds the schema and starts. Waiting
+for Postgres itself is retried (`database.Open`), not a crash.
+
+**WebSocket drops through the ingress**
+Not yet checked on Traefik (A10 in the deployment plan); the app side pings
+every 54s.
 
 ## Matchmaking
 

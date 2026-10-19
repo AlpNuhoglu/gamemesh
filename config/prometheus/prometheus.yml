@@ -1,6 +1,6 @@
 # Prometheus scrape config for the docker-compose stack.
 # In Kubernetes, scraping is driven by pod annotations instead
-# (see deployments/k8s/30-monitoring.yaml).
+# (see deployments/k8s/components/monitoring/monitoring.yaml).
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
