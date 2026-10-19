@@ -1006,7 +1006,7 @@ Her adım şu yapıda:
 
 ### A9. Secret'ları repodan çıkar
 
-- [ ] **Ne:** `01-secrets.yaml`'ı base'den kaldırmak.
+- [x] **Ne:** `01-secrets.yaml`'ı base'den kaldırmak.
   - **local overlay:** dev değerleri `secretGenerator` ile, gitignore'daki bir
     `.env.local`'dan okunuyor.
   - **prod:** Secret repoda **hiç yer almıyor**. CI, GitHub Environment secret'larından
@@ -1067,6 +1067,15 @@ Her adım şu yapıda:
   - Not: eski dev değerleri git geçmişinde duruyor; hiçbir zaman local dışında kullanılmadı.
 - **Bitti sayılır:** `git grep -i jwt_secret deployments/` sadece anahtarın adını veren bir
   yorum satırı buluyor; `deployments/` altında hiçbir dosya bir secret'a değer atamıyor.
+- **Sonuç (2026-10-19), PR #63 → `main` `4348c89`:** İlk CI'da gitleaks kırmızıydı ve bulgunun
+  yerini göstermiyordu (`--verbose` yoktu). Yerelde `--verbose --redact`: `generic-api-key`,
+  `pkg/config/config_test.go:103`, test sabiti `strongSecret`; gerçek bir secret değil. Geçmiş
+  yeniden yazılamadığı için test değeri çalışma anında üretiliyor ve o tek bulgu
+  `.gitleaksignore`'da parmak iziyle (commit SHA'sına bağlı; branch merge commit'le
+  güncellendi, SHA `main`'de korundu) kabul edildi; CI'daki gitleaks artık `--verbose`. Sonra
+  24 check yeşil, gitleaks 161 commit "no leaks found". Ölçümler: Secret API'de base64 (88
+  karakter), `base64 -d` değeri anahtarsız geri veriyor; k3s'te diskte şifreleme kapalı (#74);
+  uygulama ServiceAccount'u Secret okuyamıyor (`can-i` → no).
 
 ### A10. Prova: yerel k3s (k3d) üzerinde prod'a en yakın deploy
 
@@ -1552,7 +1561,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
 | 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 (çözüldü: `requirepass`, şifresiz erişim `NOAUTH`) |
 | 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a (çözüldü: 75 sn → 5 sn, açılışta retry) |
-| 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (Docker Desktop yeniden açılışında doğrulanacak) |
+| 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (çözüldü, 2026-10-19: Docker Desktop yeniden açılınca 14/14 container kendiliğinden ayağa kalktı) |
 | 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |
 | 60 | Trivy'ye `scanners` verilmemiş; step adı "misconfig" dese de manifest'ler hiç taranmıyordu (33 HIGH görünmüyordu) | M7 | Ölçüldü (yerel Trivy 0.70.0) | A5a (misconfig sadece rapor; bloklama A7) |
 | 61 | `main` ruleset'inde zorunlu check'ler sadece `lint`, `test`, `integration`; taramalar, gitleaks ve imaj build/taramaları kırmızıyken de merge mümkün (A5a'daki "bloklayan" iddiasının düzeltmesi) | M7 | Ölçüldü (rulesets API) | A5a takibi: `ci-ok` toplayıcı job'u; ruleset değişikliği kullanıcı tarafından |
