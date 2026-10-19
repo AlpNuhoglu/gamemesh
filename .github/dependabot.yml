@@ -2,6 +2,15 @@
 # commits, image digests, module versions) do not quietly age. Each PR runs
 # the full CI, scans included, before anyone merges it.
 version: 2
+# One pull request for the third-party images in the manifests and in
+# docker-compose. As two ecosystems they came as two PRs per image (Grafana
+# #50 and #52, Prometheus #48 and #53); CI requires an image the two files
+# share to be the same in both, so each PR alone failed and neither could be
+# merged. Grouped, both files move in the same PR.
+multi-ecosystem-groups:
+  third-party-images:
+    schedule:
+      interval: weekly
 updates:
   # The commit SHAs in .github/workflows; Dependabot rewrites the SHA and the
   # "# vX.Y.Z" comment next to it together.
@@ -60,23 +69,18 @@ updates:
   # Prometheus 3 and Grafana 12 each change behaviour or data formats.
   - package-ecosystem: docker
     directory: /deployments/k8s
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: build
+    patterns: ["*"]
+    multi-ecosystem-group: third-party-images
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
 
-  # The same images in docker-compose.yml, plus Jaeger and the collector.
-  # Dependabot updates this file and the manifests in separate PRs; CI fails
-  # while an image they share differs, so both are merged together.
+  # The same images in docker-compose.yml, plus Jaeger and the collector; in
+  # the same group as the manifests above.
   - package-ecosystem: docker-compose
     directory: /
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: chore
+    patterns: ["*"]
+    multi-ecosystem-group: third-party-images
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
