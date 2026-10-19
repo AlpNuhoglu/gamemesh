@@ -896,7 +896,7 @@ Her adım şu yapıda:
 
 ### A8. Kustomize ile base / overlay yapısı
 
-- [ ] **Ne:** Düz `deployments/k8s/` klasörünü şuna dönüştürmek:
+- [x] **Ne:** Düz `deployments/k8s/` klasörünü şuna dönüştürmek:
   ```
   deployments/k8s/
     base/                 # ortamdan bağımsız: Deployment, Service, StatefulSet, ConfigMap
@@ -995,6 +995,14 @@ Her adım şu yapıda:
 - **Bitti sayılır (k3d, 2026-10-19):** iki overlay de render ediliyor ve kubeconform'dan
   geçiyor (local 34/34, prod 25/25). Ek olarak `make k8s-build` + `make k8s-apply` ve bütün
   iş yükleri aynı anda yeniden başlatıldıktan sonra 19/19 `1/1`, 0 restart (2 dk sonra da).
+- **Sonuç (2026-10-19), PR #60 → `main`:** CI yeşil (24 check, `ci-ok` zorunlu). Yeni
+  `manifests` job'u runner'da da çalıştı: `kubeconform.tar.gz: OK`, local 34/34, prod 25/25.
+  Merge sonrası Dependabot'un k8s girişi yeni dizinleri okudu (`docker in
+  /deployments/k8s/base, /deployments/k8s/components/monitoring`). Takip: Dependabot'un grup
+  PR'ı (#59) eski `30-monitoring.yaml` yolunda takıldı; Dependabot aynı güncellemeyi yeni
+  yollarda hesapladı ama ne #59'u yeniden yazdı ne de yeni PR açtı. Aynı üç güncelleme
+  (Prometheus 2.55.1, Grafana 11.6.16, Jaeger 1.76.0) #61 ile yeni yollarda yapıldı; Grafana
+  ve Jaeger artık EOL Alpine üzerinde değil.
 
 ### A9. Secret'ları repodan çıkar
 
