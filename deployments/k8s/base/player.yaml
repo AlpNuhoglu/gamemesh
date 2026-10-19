@@ -45,8 +45,11 @@ spec:
           env:
             - name: HTTP_PORT
               value: "8081"
+            # connect_timeout bounds each connection attempt, as in
+            # docker-compose: without it one attempt to a Postgres with no
+            # endpoint hung for 39 s and used up database.Open's 30 s wait.
             - name: POSTGRES_DSN
-              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable
+              value: host=postgres user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) dbname=$(POSTGRES_DB) port=5432 sslmode=disable connect_timeout=5
           envFrom:
             - configMapRef:
                 name: gamemesh-config
