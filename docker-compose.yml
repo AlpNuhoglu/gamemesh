@@ -310,7 +310,7 @@ services:
   # on :16686. In-memory storage — fine for local dev; swap for Badger/ES in prod.
   jaeger:
     restart: always
-    image: jaegertracing/all-in-one:1.62.0@sha256:836e9b69c88afbedf7683ea7162e179de63b1f981662e83f5ebb68badadc710f
+    image: jaegertracing/all-in-one:1.76.0@sha256:ab6f1a1f0fb49ea08bcd19f6b84f6081d0d44b364b6de148e1798eb5816bacac
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
@@ -327,7 +327,7 @@ services:
   # for Tempo/Datadog by editing config/otel/collector.yaml — no service rebuilds.
   otel-collector:
     restart: always
-    image: otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
+    image: otel/opentelemetry-collector-contrib:0.162.0-386@sha256:8b9211dbe1b3642eca91b237f39ede8baae9abaf97d6dcc88116f77f29545359
     command: ["--config=/etc/otel/collector.yaml"]
     volumes:
       - ./config/otel/collector.yaml:/etc/otel/collector.yaml:ro
@@ -340,7 +340,7 @@ services:
 
   prometheus:
     restart: always
-    image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
+    image: prom/prometheus:v2.55.1@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
     command:
       - --config.file=/etc/prometheus/prometheus.yml
     ports:
@@ -353,7 +353,7 @@ services:
 
   grafana:
     restart: always
-    image: grafana/grafana:11.2.0@sha256:408afb9726de5122b00a2576763a8a57a3c86d5b0eff5305bc994ceb3eb96c3f
+    image: grafana/grafana:11.6.16@sha256:d67af92050b8d93b393dc741864752a69c9da1ffa39c1bb9af49ad5d9e47d2c3
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
