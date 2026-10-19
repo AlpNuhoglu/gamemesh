@@ -1,20 +1,30 @@
-# Requires the Minikube ingress addon: minikube addons enable ingress
-# Add to /etc/hosts:  $(minikube ip)  gamemesh.local
+# Routes from Traefik, the ingress controller k3s ships. The host comes from
+# the overlay (gamemesh.localhost on k3d, the real domain on the VPS); TLS
+# follows in C4.
+#
+# The class must be traefik: under the old nginx class (from Minikube) k3s's
+# Traefik ignored this Ingress silently, no address and every request a 404.
+# Only these paths are public. The gateway also serves /livez, /readyz and
+# /metrics, which stay inside the cluster.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gamemesh
   namespace: gamemesh
-  annotations:
-    # WebSocket connections are long-lived; don't let nginx kill them.
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
-    - host: gamemesh.local
-      http:
+    - http:
         paths:
+          # The public health check (status and version): curl
+          # https://api.<domain>/health is what phase 1 is done on.
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
           - path: /api
             pathType: Prefix
             backend:
