@@ -37,6 +37,12 @@ type Config struct {
 
 	// Workers bounds NATS consume-side concurrency (ignored by Redis).
 	Workers int
+
+	// Broadcast delivers every event to every instance of the service instead
+	// of one of them, for services that fan events out to connections they
+	// hold (the WebSocket gateway). See WithBroadcast. Redis Pub/Sub already
+	// broadcasts, so it ignores this.
+	Broadcast bool
 }
 
 // NewBus constructs the configured transport. It is the single place the
@@ -49,7 +55,11 @@ type Config struct {
 func NewBus(cfg Config, rdb *redis.Client, natsURL string, m *metrics.Metrics, log *zap.Logger) (Bus, error) {
 	switch cfg.Transport {
 	case "nats":
-		return NewNATSBus(natsURL, cfg.DurableName, cfg.Workers, m, log)
+		var opts []NATSOption
+		if cfg.Broadcast {
+			opts = append(opts, WithBroadcast())
+		}
+		return NewNATSBus(natsURL, cfg.DurableName, cfg.Workers, m, log, opts...)
 	case "redis", "":
 		return NewRedisBus(rdb, log, m), nil
 	default:
