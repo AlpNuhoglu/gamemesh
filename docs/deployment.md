@@ -72,6 +72,20 @@ kubectl -n gamemesh exec redis-0 -- redis-cli zcard matchmaking:queue
 make k8s-delete                                        # remove the local overlay
 ```
 
+### Cluster settings (once per new cluster)
+
+Settings for the k3s cluster itself, outside the overlays:
+
+```bash
+# k3s installed with encryption at rest for Secrets (off by default):
+#   curl -sfL https://get.k3s.io | sh -s - --secrets-encryption
+k3s secrets-encrypt status              # Encryption Status: Enabled
+
+# Traefik keeps the client's address (externalTrafficPolicy: Local); without
+# it every client reaches the gateway as 10.42.0.1 and shares one rate limit.
+kubectl apply -f deployments/k8s/cluster/traefik-config.yaml
+```
+
 ### Production secrets
 
 The local overlay generates `gamemesh-secrets` from
