@@ -36,6 +36,11 @@ func run() int {
 		Thereafter: cfg.LogSampleThereafter,
 	})
 	defer func() { _ = log.Sync() }()
+	// In production, refuse to start with a secret that is unset, short or a
+	// known default rather than run with one anyone can read in the repository.
+	if err := cfg.Validate(config.NeedPostgres); err != nil {
+		log.Fatal("refusing to start with weak secrets", zap.Error(err))
+	}
 
 	shutdownTracing := tracing.MustInit(context.Background(), tracing.Config{
 		Enabled:          cfg.OTelEnabled,
