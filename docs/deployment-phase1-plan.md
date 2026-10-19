@@ -1039,6 +1039,34 @@ Her adım şu yapıda:
      pod (ele geçirilmiş biri de) Redis'e tam erişir. Compose'daki gibi
      (`redis-server --requirepass`, A2a) şifre prod Secret'ından gelmeli; servisler
      `REDIS_PASSWORD`'ü zaten okuyor.
+- **Kararlar (2026-10-19):** local secret'lar repo dışında ve rastgele (`make k8s-secrets`);
+  fail fast servis başına ihtiyaçla (`Validate(NeedJWT, NeedPostgres, NeedRedis)`); k8s'te
+  Redis `requirepass`; Grafana şifresi Secret'tan; prod Secret'ının cluster'da oluşturulması
+  B/D'de (değerler kullanıcının makinesinde `openssl` ile, hiçbir zaman bana ya da loglara
+  gelmeden).
+- **Yapılanlar (`feat/production-secrets`, 2026-10-19), CI kanıtı bekleniyor:**
+  1. `overlays/local/secrets.env` (commit'li dev değerleri) kalktı. Yerine gitignore'daki
+     `.env.local`, `scripts/k8s/local-secrets.sh` ile: eksik her anahtar `openssl rand -hex
+     32` (64 karakter), izin 600, değer hiç basılmıyor, var olanlar korunuyor. Dosya yoksa
+     render hata veriyor; CI `manifests` job'u atılacak değerler üretiyor. k3d: yeni
+     Postgres şifresi eski volume'la `password authentication failed` (28P01) verdi, yeni
+     pod'lar takıldı, eski pod'lar trafiği almaya devam etti; volume yenilenince 19/19.
+  2. Redis `--requirepass` (#56): önce gateway pod'undan şifresiz `PING` → `+PONG`,
+     `DBSIZE` yanıt verdi; sonra `-NOAUTH`, yanlış şifre `-WRONGPASS`; kayıt, oturum ve
+     kuyruk çalışıyor. Şifre süreç listesinde görünmüyor (Redis başlığı `redis-server
+     *:6379` olarak yeniden yazıyor).
+  3. Grafana (#67): önce `admin/admin` 200; sonra 401, üretilen şifre 200.
+  4. Fail fast (#40): `Config.Validate`; production'da eksik, 32 karakterden kısa ya da
+     bilinen varsayılan (koddaki ve `.env.example`'daki JWT) değerleri, ayarın adıyla ve
+     değeri yazmadan reddediyor. gateway imajı: varsayılanlarla iki hatayı birlikte
+     raporlayıp çıkıyor, güçlü değerlerle açılıyor. k3d: zayıf JWT ile gateway deploy'u →
+     yeni pod `CrashLoopBackOff`, eski 2 pod `1/1`, `/health` 200, rollout `undo` ile geri.
+  5. Prod Secret sözleşmesi prod overlay'inde ve `docs/deployment.md`'de: `JWT_SECRET`,
+     `POSTGRES_PASSWORD`, `REDIS_PASSWORD` (her biri `openssl rand -hex 32`),
+     `POSTGRES_USER`, `POSTGRES_DB`.
+  - Not: eski dev değerleri git geçmişinde duruyor; hiçbir zaman local dışında kullanılmadı.
+- **Bitti sayılır:** `git grep -i jwt_secret deployments/` sadece anahtarın adını veren bir
+  yorum satırı buluyor; `deployments/` altında hiçbir dosya bir secret'a değer atamıyor.
 
 ### A10. Prova: yerel k3s (k3d) üzerinde prod'a en yakın deploy
 
@@ -1467,8 +1495,8 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 36 | Toplam requests 1800m CPU, 2 vCPU'ya sığmıyor | M5 | Ölçüldü (hesap) | A8 (prod 10 pod, 950m/960Mi), B1 |
 | 37 | ConfigMap değişikliği pod'ları yeniden başlatmıyor | M5 | Ölçüldü (Docker analog) | A8 (çözüldü: `configMapGenerator`, hash'li ad) |
 | 38 | Ingress nginx'e özel; k3s'te sessizce yok sayılır | M5 | Kod | A8 (çözüldü: `traefik` sınıfı, k3d'de `/health` 200), C4 |
-| 39 | Secret'lar repoda (`01-secrets.yaml`) | M5, M8 | Kod | A9 |
-| 40 | **Uygulama production'da güvensiz secret ile sessizce açılıyor** | M8 | Kod | A9 |
+| 39 | Secret'lar repoda (`01-secrets.yaml`) | M5, M8 | Kod | A9 (çözüldü: local `.env.local` gitignore'da ve rastgele; prod Secret repoda yok) |
+| 40 | **Uygulama production'da güvensiz secret ile sessizce açılıyor** | M8 | Kod | A9 (çözüldü: `Config.Validate`, k3d'de zayıf JWT ile rollout takıldı) |
 | 41 | Otomatik secret taraması yok | M8 | Kod | A9, A5a (gitleaks; GitHub secret scanning ve push protection zaten açıktı, API ile doğrulandı) |
 | 42 | `kubeconform` anlamsal hataları yakalayamıyor | M5, M7 | Kod | A10 |
 | 43 | Docker/k3s `ufw`'yi atlıyor | M2 | Bilgi | B2 |
@@ -1484,7 +1512,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 53 | `ReverseProxy.Director` Go 1.26'da deprecated; `Rewrite`'a geçiş XFF ve `Host` davranışını değiştiriyor | M3 | Ölçüldü (staticcheck SA1019) | `fix/gateway-trusted-proxies` (çözüldü) |
 | 54 | GO-2026-6505 (otel otlptrace v1.44.0, erişilebilir); Trivy kırmızıyken govulncheck adımı hiç çalışmadığı için görünmüyordu | M7 | Ölçüldü (CI run 38416862319, yerel govulncheck) | `fix/deps-x-net` (çözüldü), maskeleme A5a (çözüldü: ayrı job'lar) |
 | 55 | Presence (8086) ve websocket (8084) compose'da `0.0.0.0`'a yayınlı; presence kimliksiz bir iç API (LAN'dan herhangi bir oyuncunun durumu değiştirilebilir) | M2 | Ölçüldü (token'sız `POST /presence/connect` → 200) | A2a (çözüldü) |
-| 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 |
+| 56 | k8s'teki Redis şifresiz; NetworkPolicy olmadan cluster'daki her pod erişebiliyor | M5, M8 | Kod | A9 (çözüldü: `requirepass`, şifresiz erişim `NOAUTH`) |
 | 57 | Postgres DSN'inde `connect_timeout`/`statement_timeout` yok; ağ bölünmesinde sorgular ve açılış asılı kalabilir | M4 | Kod | A3a (çözüldü: 75 sn → 5 sn, açılışta retry) |
 | 58 | Docker Desktop kapanırken container'ları "elle durduruldu" işaretliyor; `unless-stopped` stack'i geri getirmiyor (A2a iddiasının düzeltmesi) | M2 | Ölçüldü (`HasBeenManuallyStopped: true`, 14/14) | Karar: `restart: always` (Docker Desktop yeniden açılışında doğrulanacak) |
 | 59 | Açık WS bağlantısı JWT'nin süresi dolduktan sonra da açık kalıyor (token sadece el sıkışmada kontrol ediliyordu) | M8 | Kod, test ile doğrulandı | A3b (çözüldü: tarama `1008 "token expired"`) |
@@ -1495,7 +1523,7 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 64 | Event bus bağlantısında açılış retry'ı yok; bağımlılık geç kalkınca servis `fatal` verip yeniden başlıyor | M4 | Ölçüldü (k3d: websocket 2 restart, `event bridge failed`) | A7 (çözüldü: 30 sn'lik bağlantı retry'ı; k3d'de 0 restart) |
 | 65 | Tracing kapanışı sınırsız (`shutdownTracing(context.Background())`, 7 servis); collector yokken her pod kapanışı ~18 sn uzuyor | M4 | Ölçüldü (k3d: ~24 sn → `OTEL_ENABLED=false` ile ~6 sn) | PR #44 (çözüldü: 10,01 → 3,00 sn; k3d'de 24 → 9 sn) |
 | 66 | Üçüncü taraf imajlar (NATS, Redis, Postgres, monitoring, tracing) hiç taranmıyordu; yerelde 7'den 6'sı düşüyor, ikisi EOL Alpine üzerinde | M7 | Ölçüldü (Trivy 0.70.0, yerel) | A7-2 (prod imajları bloklayan, `.trivyignore.yaml` süreli) |
-| 67 | Grafana admin şifresi manifest'te düz metin (`admin`/`admin`) | M8 | Kod | A9 |
+| 67 | Grafana admin şifresi manifest'te düz metin (`admin`/`admin`) | M8 | Kod | A9 (çözüldü: Secret'tan; `admin/admin` 401) |
 | 68 | Monitoring ve tracing imajları major sürüm geride (Prometheus v2.54.1, Grafana 11.2.0, Jaeger 1.62.0, collector 0.111.0); CI'da rapor modunda | M7 | Ölçüldü (#66 taraması) | Faz 1 sonrası (minor'lar 2026-10-19'da yükseltildi: Grafana 11.6.16 ve Jaeger 1.76 artık EOL Alpine üzerinde değil, 141→74 / 76→73; major'lar bekliyor); A8'de monitoring prod overlay'inin dışında |
 | 69 | Dependabot k8s ve compose imajlarını ayrı PR'larda güncelliyor; "ortak imajlar aynı olmalı" kontrolü zorunlu `ci-ok` altında her PR'ı tek başına kırmızı yapıyor, hiçbiri merge edilemiyor (#46'nın tasarım hatası) | M7 | Ölçüldü (#48, #50, #52, #53: `lint` fail, `grafana differs`) | `ci/dependabot-image-group` (multi-ecosystem group) |
 | 70 | CI job'larında `timeout-minutes` yok (varsayılan 360 dk); asılı bir job `main` kuyruğunu ve deploy'u saatlerce bekletebilir | M7 | Ölçüldü (`main`'de websocket build'i 785 sn, PR'da aynı kod 103/105 sn) | `ci/job-timeouts` |
