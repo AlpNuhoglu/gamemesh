@@ -23,4 +23,3 @@ resources:
   - outbox-relay.yaml
   - presence.yaml
   - ingress.yaml
-  - monitoring.yaml
