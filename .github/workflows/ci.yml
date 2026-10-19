@@ -287,6 +287,35 @@ jobs:
           exit-code: ${{ matrix.blocking && '1' || '0' }}
           trivyignores: .trivyignore.yaml
 
+  # Renders both overlays and checks them against the Kubernetes API schemas,
+  # on every pull request. It used to run only in the deploy job, on main, so
+  # a broken manifest was found after the merge. Schema-valid is not working:
+  # a reference to a Secret that does not exist passes (the local overlay had
+  # one); k3d is where that shows.
+  manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A pinned release whose hash is checked before it runs: "latest" could
+      # change under us, and a replaced release asset would run unchecked in
+      # CI. The hash is the release's own CHECKSUMS entry,
+      # recorded once, so a later swap of the file fails here. Bump both
+      # together.
+      - name: Validate Kubernetes manifests (kubeconform, offline schema check)
+        env:
+          KUBECONFORM_VERSION: v0.8.0
+          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+        run: |
+          curl -fsSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
+          tar xzf kubeconform.tar.gz kubeconform
+          # Against the Kubernetes version k3s runs, overlay by overlay.
+          for overlay in local prod; do
+            echo "== overlays/${overlay}"
+            kubectl kustomize "deployments/k8s/overlays/${overlay}" | ./kubeconform -strict -summary -kubernetes-version 1.35.0 -
+          done
+
   govulncheck:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -320,7 +349,7 @@ jobs:
   # required check passes.
   ci-ok:
     if: always()
-    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party]
+    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party, manifests]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -383,9 +412,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   deploy:
-    # Example deploy stage: validates the manifests and shows what a real
-    # deploy job would run. Replace with `kubectl apply` against a real
-    # cluster (credentials via OIDC or a KUBECONFIG secret).
+    # Example deploy stage: shows what a real deploy job would run (step D
+    # replaces it). The manifests are validated on every run by the manifests
+    # job, which ci-ok waits for.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Every gate, through the one job that checks them all, and the
@@ -395,23 +424,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # A pinned release whose hash is checked before it runs: "latest" could
-      # change under us, and a replaced release asset would run unchecked in
-      # the job that deploys. The hash is the release's own CHECKSUMS entry,
-      # recorded once, so a later swap of the file fails here. Bump both
-      # together.
-      - name: Validate Kubernetes manifests (kubeconform, offline schema check)
-        env:
-          KUBECONFORM_VERSION: v0.8.0
-          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
-        run: |
-          curl -fsSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
-          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
-          tar xzf kubeconform.tar.gz kubeconform
-          # The manifests are a Kustomize tree now: validate what it renders.
-          kubectl kustomize deployments/k8s/base | ./kubeconform -strict -summary -kubernetes-version 1.35.0 -
       - name: Deploy (example)
         run: |
           echo "Would run:"
-          echo "  kubectl apply -f deployments/k8s/"
+          echo "  kustomize edit set image ...=ghcr.io/alpnuhoglu/gamemesh-<service>:${GITHUB_SHA}"
+          echo "  kubectl apply -k deployments/k8s/overlays/prod"
           echo "  kubectl -n gamemesh rollout status deploy/gateway"
