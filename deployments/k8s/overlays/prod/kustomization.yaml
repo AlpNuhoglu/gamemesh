@@ -1,0 +1,76 @@
+# Production on the VPS (single-node k3s).
+#
+#   kubectl apply -k deployments/k8s/overlays/prod     (only from CI, step D)
+#
+# No Secret is generated here: the cluster must already hold gamemesh-secrets
+# (JWT_SECRET, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB), created there
+# with values from openssl rand -hex 32 (A9). Monitoring stays out (finding
+# #68).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gamemesh
+resources:
+  - ../../base
+# The images CI published, at the commit being deployed: the deploy job sets
+# the tag with kustomize edit set image <name>=...:<sha> before applying
+# (step D). The value here is a deliberate placeholder: an apply by hand pulls
+# nothing and fails visibly instead of quietly running some older image.
+images:
+  - name: gamemesh/gateway
+    newName: ghcr.io/alpnuhoglu/gamemesh-gateway
+    newTag: set-by-deploy
+  - name: gamemesh/player
+    newName: ghcr.io/alpnuhoglu/gamemesh-player
+    newTag: set-by-deploy
+  - name: gamemesh/matchmaking
+    newName: ghcr.io/alpnuhoglu/gamemesh-matchmaking
+    newTag: set-by-deploy
+  - name: gamemesh/leaderboard
+    newName: ghcr.io/alpnuhoglu/gamemesh-leaderboard
+    newTag: set-by-deploy
+  - name: gamemesh/websocket
+    newName: ghcr.io/alpnuhoglu/gamemesh-websocket
+    newTag: set-by-deploy
+  - name: gamemesh/outbox-relay
+    newName: ghcr.io/alpnuhoglu/gamemesh-outbox-relay
+    newTag: set-by-deploy
+  - name: gamemesh/presence
+    newName: ghcr.io/alpnuhoglu/gamemesh-presence
+    newTag: set-by-deploy
+# One replica each. On a single node a second replica adds no availability
+# (the node is the failure domain) and costs memory; the outbox-relay
+# PodDisruptionBudget (maxUnavailable: 1) still lets a drain through.
+replicas:
+  - name: gateway
+    count: 1
+  - name: player
+    count: 1
+  - name: leaderboard
+    count: 1
+  - name: websocket
+    count: 1
+  - name: outbox-relay
+    count: 1
+  - name: presence
+    count: 1
+patches:
+  # Traefik's pods are the gateway's only direct clients (k3s's default pod
+  # CIDR); see finding #52.
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: TRUSTED_PROXIES
+          value: 10.42.0.0/16
+  # Placeholder until the domain exists (B2): .invalid never resolves
+  # (RFC 2606), so it cannot route anyone's traffic by accident.
+  - target:
+      kind: Ingress
+      name: gamemesh
+    patch: |-
+      - op: add
+        path: /spec/rules/0/host
+        value: api.gamemesh.invalid
