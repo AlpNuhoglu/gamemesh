@@ -723,7 +723,7 @@ Her adım şu yapıda:
 
 ### A7. K8s manifest'lerindeki eksikleri tamamla
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. **NATS** StatefulSet'i: JetStream açık (`-js -sd /data`), `volumeClaimTemplates` ile
      kalıcı disk, `:8222/healthz` probe'ları, Service.
   2. ConfigMap'e `EVENT_BUS: nats` ve `NATS_URL: nats://nats:4222`.
@@ -888,6 +888,11 @@ Her adım şu yapıda:
   StatefulSet'ler (NATS ve Redis dahil) aynı anda yeniden başlatıldı: 19/19 pod
   `Running 1/1`, toplam restart 0; iki dakika sonra da aynı. (Önceki aynı denemede
   bus retry'ı olmadığı için outbox-relay ve websocket restart ediyordu.)
+- **Sonuç (2026-10-19):** Üç PR'ın üçü de CI'dan yeşil geçti (#45, #46, #54; `ci-ok` zorunlu
+  check). #46'nın CI'ında üçüncü taraf taraması yereldekiyle aynı sonucu verdi: bloklayan
+  NATS/Redis/Postgres 0 bulgu, rapor modundakiler 112/141/76/84; misconfig 0. Ek olarak
+  tracing kapanışı düzeltmesi #44. Sonradan çıkan Bulgu #69 (Dependabot'un eşli imaj PR'ları
+  merge edilemiyor) ayrı PR'la düzeltiliyor.
 
 ### A8. Kustomize ile base / overlay yapısı
 
