@@ -1,5 +1,5 @@
-# The local k3d cluster: images built and imported on this machine, dev
-# secrets, monitoring included, the base's replica counts (two websocket
+# The local k3d cluster: images built and imported on this machine, secrets
+# generated on this machine, monitoring included, the base's replica counts (two websocket
 # replicas exercise the event fan-out).
 #
 #   kubectl apply -k deployments/k8s/overlays/local
@@ -30,10 +30,13 @@ images:
     newTag: dev
   - name: gamemesh/presence
     newTag: dev
+# Values from .env.local, which is gitignored and written by
+# make k8s-secrets (random, openssl rand -hex 32): no secret value is in the
+# repository, not even a development one. A render fails until it exists.
 secretGenerator:
   - name: gamemesh-secrets
     envs:
-      - secrets.env
+      - .env.local
 patches:
   # Traefik's pods are the gateway's only direct clients; k3s's default pod
   # CIDR. Without it the gateway takes Traefik's address for the client's and

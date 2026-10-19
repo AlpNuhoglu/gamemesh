@@ -310,6 +310,9 @@ jobs:
           curl -fsSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
           tar xzf kubeconform.tar.gz kubeconform
+          # The local overlay reads its secrets from a gitignored file; generate
+          # throwaway values so it renders here too.
+          scripts/k8s/local-secrets.sh
           # Against the Kubernetes version k3s runs, overlay by overlay.
           for overlay in local prod; do
             echo "== overlays/${overlay}"
