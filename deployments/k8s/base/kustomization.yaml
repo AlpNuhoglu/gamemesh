@@ -1,0 +1,26 @@
+# Everything that is the same in every environment. The overlays
+# (../overlays/local for k3d, ../overlays/prod for the VPS) add only what has
+# to differ: image addresses, replica counts, the host, secrets.
+#
+# Render and apply an overlay, never the files here directly:
+#   kubectl kustomize deployments/k8s/overlays/local
+#   kubectl apply -k deployments/k8s/overlays/local
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gamemesh
+resources:
+  - namespace.yaml
+  - secret.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - nats.yaml
+  - gateway.yaml
+  - player.yaml
+  - matchmaking.yaml
+  - leaderboard.yaml
+  - websocket.yaml
+  - outbox-relay.yaml
+  - presence.yaml
+  - ingress.yaml
+  - monitoring.yaml

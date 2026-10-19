@@ -408,7 +408,8 @@ jobs:
           curl -fsSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
           tar xzf kubeconform.tar.gz kubeconform
-          ./kubeconform -strict -summary deployments/k8s/
+          # The manifests are a Kustomize tree now: validate what it renders.
+          kubectl kustomize deployments/k8s/base | ./kubeconform -strict -summary -kubernetes-version 1.35.0 -
       - name: Deploy (example)
         run: |
           echo "Would run:"
