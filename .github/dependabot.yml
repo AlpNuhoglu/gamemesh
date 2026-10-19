@@ -84,3 +84,10 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # The collector publishes per-architecture tags such as 0.162.0-386 next
+      # to its multi-platform ones, and Dependabot took the suffix for a newer
+      # version: it proposed a linux/386-only image (#51, then again in the
+      # group PR #57) that would not start on amd64 or arm64. It runs in
+      # docker-compose only, so it is upgraded by hand with the plain tag,
+      # with the other monitoring images (finding #68).
+      - dependency-name: otel/opentelemetry-collector-contrib
