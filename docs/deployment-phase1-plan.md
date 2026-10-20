@@ -1230,7 +1230,7 @@ Her adım şu yapıda:
 
 ### B2. Sunucu sertleştirme
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. Root olmayan, sudo yetkili bir kullanıcı. SSH: `PasswordAuthentication no`,
      `PermitRootLogin no`.
   2. **Sağlayıcı firewall'u** (netcup SCP Firewall; sunucunun dışında, ağ seviyesinde): gelen trafikte
@@ -1282,6 +1282,21 @@ Her adım şu yapıda:
     açmak ise kimlik doğrulama öncesi sshd açıklarına (ör. regreSSHion, CVE-2024-6387) kapı
     açardı. Tailscale apt deposundan (imzalı), `--auto-update`, Tailscale SSH kapalı (kimlik
     doğrulama sshd'de kalıyor), sunucunun node key expiry'si kapalı.
+- **Sonuç (2026-10-20):**
+  - **Başka bir ağdan** (telefon hotspot'u, farklı public IP): 22 ve 6443 `Operation timed
+    out`; `ssh gamemesh` tailnet üzerinden çalışıyor. Ev ağından 80/443 REFUSED (dinleyen
+    yok), 22/6443/10250 TIMEOUT.
+  - **SSH:** root geçerli anahtarla reddediliyor, `alp`'e parola yöntemi hiç sunulmuyor,
+    `AllowUsers` dışındaki kullanıcı reddediliyor. `reload` açık oturumları kesmedi.
+  - **Tailscale:** UDP 41641 kuralı olmadan yol `DERP(nue)` (medyan ~59 ms); kuralla
+    `direct` (44 ms, public ping ile aynı). netcheck: `MappingVariesByDestIP: false`.
+  - **Host anahtarı** (`SHA256:RoCk…BPU8`) VNC konsolundan bağımsız olarak doğrulandı; ilk
+    bağlantıdaki TOFU riski kapandı.
+  - **Diğer:** saat dilimi UTC, NTP senkronize, swap yok (fstab, swap dosyası ve zram
+    kontrol edildi), `alp` 700/600 `alp:alp`, `sudo -n` parola istiyor.
+  - **B3'e kalanlar:** pod DNS'inin NAT sonrası kaynak portları (`iptables-save | grep
+    random-fully`), CoreDNS'in upstream olarak netcup çözücülerini kullandığı, flannel
+    backend (8472/udp), reboot sonrası k3s'in kendiliğinden gelmesi.
 
 ### B3. k3s kurulumu
 
