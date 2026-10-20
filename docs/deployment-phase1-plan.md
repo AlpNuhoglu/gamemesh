@@ -1300,7 +1300,7 @@ Her adım şu yapıda:
 
 ### B3. k3s kurulumu
 
-- [ ] **Ne:**
+- [x] **Ne:**
   ```bash
   curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL=stable \
     sh -s - --tls-san <public-ip> --write-kubeconfig-mode 600
@@ -1338,6 +1338,22 @@ Her adım şu yapıda:
     `secretbox` seçeneği ise "(experimental)". Anahtar verinin yanında aynı diskte durduğu
     için iki sağlayıcının pratik farkı küçük; deneysel bir şifreleme yönetiminin bozulması
     ise Secret'ları okunamaz yapabilir.
+- **Sonuç (2026-10-20):**
+  - **Mac'ten `kubectl --context gamemesh-prod get nodes`:** `gamemesh-prod-1 Ready
+    control-plane v1.35.9+k3s1`, API tailnet üzerinden. Sistem pod'ları 7/7 (Traefik,
+    svclb, CoreDNS, metrics-server, local-path, iki helm-install işi tamamlandı).
+  - **Doğrulamalar:** betik ve binary özetleri beklenenle aynı; `Encryption Status:
+    Enabled`; UDP'de sadece 41641 ve yerel DNS dinleniyor (8472 yok); Traefik servisi
+    `externalTrafficPolicy: Local`; CoreDNS `forward . /etc/resolv.conf` → netcup'ın 4
+    çözücüsü; pod'dan 50 farklı isim 50/50 çözüldü.
+  - **Dışarıdan:** 80/443 açık (Traefik 404, varsayılan sertifika); 22, 6443, 10250, NodePort'lar
+    (30136, 32625) ve sağlık kontrolü portu (31514) TIMEOUT. API tailnet'ten 401, public'ten
+    cevap yok.
+  - **Kaynaklar (uygulama yokken):** 57m CPU (%2), 859 MiB (%21); allocatable 2 CPU / 3,8 GiB.
+  - **Reboot:** komuttan Traefik'in cevap vermesine 44 sn, elle müdahale yok (kernel +14 sn,
+    tailscaled +23, tailnet SSH +28, k3s +36, ilk kubelet heartbeat +37, pod'lar +40).
+    API, kubelet raporlamadan önce eski `Ready` durumunu döndürüyor (`lastTransition`
+    değişmedi), yani `Ready` tek başına toparlanmanın kanıtı değil.
 
 ### B4. İlk deploy (TLS'siz, IP üzerinden)
 
