@@ -1,0 +1,27 @@
+# GameMesh production k3s server (plan B3).
+# Install as /etc/rancher/k3s/config.yaml (mode 600) BEFORE running the
+# installer; k3s reads it on every start, so the settings survive upgrades
+# and reinstalls. Replace TAILNET_IP with `tailscale ip -4` on the server
+# (the repo keeps no addresses).
+
+# Encrypt Secrets at rest in the datastore (finding #74). Turning it on later
+# means re-encrypting every existing Secret, so it is set before the first
+# start.
+secrets-encryption: true
+
+# Names the API certificate is valid for. kubectl reaches the API over the
+# tailnet only; 6443 is dropped by the provider firewall, so the public
+# address is deliberately not listed.
+tls-san:
+  - TAILNET_IP
+  - gamemesh-prod-1
+
+# The kubeconfig k3s writes holds cluster-admin credentials.
+write-kubeconfig-mode: "0600"
+
+# host-gw routes pod traffic directly instead of wrapping it in VXLAN, so
+# nothing listens on UDP 8472. netcup's firewall is stateless for UDP and
+# its reply rules let some forged packets through (finding #77); with no
+# VXLAN port there is nothing for them to reach. Works on a single node; a
+# second node over the public network would need wireguard-native.
+flannel-backend: host-gw
