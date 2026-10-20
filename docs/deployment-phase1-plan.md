@@ -1167,7 +1167,7 @@ Her adım şu yapıda:
 
 ### B1. VPS seçimi
 
-- [ ] **Ne:** Sağlayıcı, boyut, mimari ve lokasyon seçmek.
+- [x] **Ne:** Sağlayıcı, boyut, mimari ve lokasyon seçmek.
 - **Boyutlandırma hesabı:** Toplam ihtiyaç kabaca k3s control-plane (~500–700 MB) +
   Postgres (256 MB) + Redis (128 MB) + NATS (~64 MB) + 7 Go servisi × ~30–60 MB + Traefik +
   cert-manager (~150 MB). Toplam ~1,8–2,2 GB. Rahat çalışmak, build/pull sırasındaki ani
@@ -1209,6 +1209,23 @@ Her adım şu yapıda:
     coğrafi olarak yakın olduğu halde daha yavaş (yol Almanya üzerinden).
   - SSH: `~/.ssh/gamemesh_ed25519` (ed25519, passphrase'li, bcrypt KDF 100 tur, macOS
     Keychain'de).
+- **Sonuç (2026-10-20):** Sunucu Nuremberg'de; netcup Debian 13 kurulu teslim etti
+  (`publickey,password` açıktı), SCP'den Ubuntu 24.04.5 Minimal (UEFI) yeniden kuruldu: hostname
+  `gamemesh-prod-1`, `en_US.UTF-8`, SSH anahtarı root'a, parolayla giriş kapalı. Ölçülenler:
+  - **SSH:** sadece `publickey` kabul ediliyor; `authorized_keys`'te tek anahtar; dinleyen tek
+    dış servis `sshd` (22). Host anahtarı TOFU ile kabul edildi; parmak izi B2'de VNC
+    konsolundan karşılaştırılacak.
+  - **Firewall (Mac'ten):** ping 43,9 ms; 22 açık (sadece kendi IP'm), 80/443 44 ms'de
+    REFUSED (firewall geçiriyor, dinleyen yok), 6443/10250/3389 4 sn TIMEOUT (firewall
+    düşürüyor; firewall olmasaydı bunlar da REFUSED dönerdi).
+  - **Giden trafik çalışıyor:** DNS (UDP 53 kuralı), NTP senkronize (UDP 123 kuralı), HTTPS
+    ile `archive.ubuntu.com` / `get.k3s.io` / `ghcr.io`. "netcup Mail block" egress
+    kuralları geri kalan giden trafiği kapatmıyor.
+  - **Kaynaklar:** 2 vCPU (AMD EPYC-Rome), 3,8 GiB RAM, swap yok, 62 GB disk (%5 dolu).
+    IPv6 SLAAC ile yapılandırılmış.
+  - **B2'ye kalanlar:** `PermitRootLogin yes`, saat dilimi Europe/Berlin (formda UTC yoktu),
+    `unattended-upgrades` kurulu ve açık (ayarları B2'de gözden geçirilecek). #77 için
+    daraltılacak kaynaklar: DNS netcup çözücüleri (`resolvectl dns`), NTP `ntp.ubuntu.com`.
 
 ### B2. Sunucu sertleştirme
 
