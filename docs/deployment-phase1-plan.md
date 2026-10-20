@@ -1222,14 +1222,15 @@ Her adım şu yapıda:
     ile `archive.ubuntu.com` / `get.k3s.io` / `ghcr.io`. "netcup Mail block" egress
     kuralları geri kalan giden trafiği kapatmıyor.
   - **Kaynaklar:** 2 vCPU (AMD EPYC-Rome), 3,8 GiB RAM, swap yok, 62 GB disk (%5 dolu).
-    IPv6 SLAAC ile yapılandırılmış.
+    IPv6 adresi netplan'de sabit (sonek MAC'ten EUI-64; ilk notta yanlışlıkla SLAAC
+    yazılmıştı, B2'de netplan dosyasından düzeltildi).
   - **B2'ye kalanlar:** `PermitRootLogin yes`, saat dilimi Europe/Berlin (formda UTC yoktu),
     `unattended-upgrades` kurulu ve açık (ayarları B2'de gözden geçirilecek). #77 için
     daraltılacak kaynaklar: DNS netcup çözücüleri (`resolvectl dns`), NTP `ntp.ubuntu.com`.
 
 ### B2. Sunucu sertleştirme
 
-- [ ] **Ne:**
+- [x] **Ne:**
   1. Root olmayan, sudo yetkili bir kullanıcı. SSH: `PasswordAuthentication no`,
      `PermitRootLogin no`.
   2. **Sağlayıcı firewall'u** (netcup SCP Firewall; sunucunun dışında, ağ seviyesinde): gelen trafikte
@@ -1259,6 +1260,43 @@ Her adım şu yapıda:
   `/etc/resolv.conf`'taki DNS sunucularına ve kullanılan NTP sunucularına daraltmak; B3'te
   UDP kullanmayan bir flannel backend'i (`host-gw`) değerlendirmek; dışarıdan UDP taramasıyla
   doğrulamak.
+- **Kararlar (2026-10-20):** Bir incelemeye karşı ölçülerek verildi.
+  - **Yönetici kullanıcı `alp`:** sudo parola istiyor (`NOPASSWD` yok). Parolayı kullanıcı
+    kendisi koyuyor, hiçbir log'a girmiyor; aynı parola VNC konsolundan acil giriş için.
+  - **SSH politikası repoda** (`deployments/server/sshd_config.d/10-gamemesh.conf`).
+    sshd çoğu ayarda **ilk okunan değeri** kullanıyor ve Ubuntu `sshd_config.d`'yi dosyanın
+    en başında (12. satır) içeri alıyor; bu yüzden dosyamız netcup'ın en alta eklediği
+    `PermitRootLogin yes` satırını eziyor.
+  - **Otomatik reboot koşullu:** sadece `/var/run/reboot-required` varsa, 03:30 UTC'de
+    (`deployments/server/apt.conf.d/52gamemesh-unattended-upgrades`). apt'de sshd'nin
+    tersine **sonraki dosya kazanıyor**, bu yüzden 52 > 50.
+  - **UDP kuralları (#77):** DNS kuralının kaynağı netcup'ın 4 çözücüsü, hedef port serbest.
+    Hedef portu ephemeral aralığa daraltmak pod trafiğini bozabilir: kube-proxy/flannel
+    MASQUERADE'i `--random-fully` ile yapıyorsa pod'ların kaynak portu 1024–65535 arasından
+    seçilir (kod okuması, B3'te ölçülecek). NTP'yi sadece host yapıyor (kaynak portu ölçüldü),
+    o yüzden `src 123 → dst 32768–60999`. Adresler sabit olduğu için DHCP kuralları silindi.
+    DNS TCP'ye düşerse ek kural gerekmiyor (TCP stateful, 1176 baytlık cevap ölçüldü).
+  - **`ufw` ve `fail2ban` yok:** k3s ile `ufw` çakışıyor; SSH internete hiç açık değil.
+  - **Tailscale B2'ye çekildi** (D1'de 6443 için zaten öneriydi). Ev IP'si dinamik ("Tellcom
+    Fiber Dynamic"), tek IP'ye açık 22 her IP değişiminde erişimi kesiyordu; 22'yi dünyaya
+    açmak ise kimlik doğrulama öncesi sshd açıklarına (ör. regreSSHion, CVE-2024-6387) kapı
+    açardı. Tailscale apt deposundan (imzalı), `--auto-update`, Tailscale SSH kapalı (kimlik
+    doğrulama sshd'de kalıyor), sunucunun node key expiry'si kapalı.
+- **Sonuç (2026-10-20):**
+  - **Başka bir ağdan** (telefon hotspot'u, farklı public IP): 22 ve 6443 `Operation timed
+    out`; `ssh gamemesh` tailnet üzerinden çalışıyor. Ev ağından 80/443 REFUSED (dinleyen
+    yok), 22/6443/10250 TIMEOUT.
+  - **SSH:** root geçerli anahtarla reddediliyor, `alp`'e parola yöntemi hiç sunulmuyor,
+    `AllowUsers` dışındaki kullanıcı reddediliyor. `reload` açık oturumları kesmedi.
+  - **Tailscale:** UDP 41641 kuralı olmadan yol `DERP(nue)` (medyan ~59 ms); kuralla
+    `direct` (44 ms, public ping ile aynı). netcheck: `MappingVariesByDestIP: false`.
+  - **Host anahtarı** (`SHA256:RoCk…BPU8`) VNC konsolundan bağımsız olarak doğrulandı; ilk
+    bağlantıdaki TOFU riski kapandı.
+  - **Diğer:** saat dilimi UTC, NTP senkronize, swap yok (fstab, swap dosyası ve zram
+    kontrol edildi), `alp` 700/600 `alp:alp`, `sudo -n` parola istiyor.
+  - **B3'e kalanlar:** pod DNS'inin NAT sonrası kaynak portları (`iptables-save | grep
+    random-fully`), CoreDNS'in upstream olarak netcup çözücülerini kullandığı, flannel
+    backend (8472/udp), reboot sonrası k3s'in kendiliğinden gelmesi.
 
 ### B3. k3s kurulumu
 
@@ -1386,7 +1424,9 @@ Her adım şu yapıda:
   - (b) cluster içinde self-hosted runner,
   - (c) 6443'ü açıp yalnızca token kimlik doğrulamasına güvenmek (en zayıf seçenek).
 
-  Bu karar bu adımda verilecek.
+  Bu karar bu adımda verilecek. B2'de sunucu zaten tailnet'e katıldı (yönetici SSH'si
+  tailnet üzerinden), bu yüzden (a) en az ek iş gerektiren seçenek; kalan iş CI için bir
+  tag ve sadece 6443'e izin veren bir ACL.
 - **Öğrenilecek:** Kubernetes RBAC (Role ile ClusterRole farkı), ServiceAccount token'ları,
   GitHub Environments ve protection rule'ları.
 - **Bitti sayılır:** Bu kubeconfig ile `kubectl -n gamemesh get pods` çalışıyor ama
@@ -1627,4 +1667,6 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 74 | k3s'te Secret'lar diskte şifrelenmiyor (`Encryption Status: Disabled`); datastore dosyası ya da yedeği bütün Secret'ları base64 olarak içeriyor | M8 | Ölçüldü (k3d: `k3s secrets-encrypt status`) | B (k3s `--secrets-encryption` ile kurulacak; prova cluster'ında `Enabled` doğrulandı) |
 | 75 | Local overlay'de her secret değişikliği yeni hash'li bir Secret üretiyor, eskileri eski değerlerle cluster'da kalıyor | M8 | Ölçüldü (k3d: 3 `gamemesh-secrets-*`) | Sadece local (prod'da generator yok); `kubectl apply --prune` ya da elle temizlik |
 | 76 | Plandaki sağlayıcı Hetzner'de hiçbir cloud planı satın alınamıyor (CX/CAX/CPX/CCX "currently unavailable", durum sayfasında 2026-06-26'dan beri kısıtlı kapasite notu) | B1 | Ölçüldü (Hetzner ürün sayfaları ve durum sayfası, 2026-10-20) | B1 (netcup VPS 500 G12.5 seçildi) |
-| 77 | netcup firewall'u UDP'de stateless; DNS/NTP/DHCP cevapları için gereken kaynak port kuralları, kaynak portu 53/123/67/547 olan her paketi bütün UDP portlarına geçiriyor (k3s'te flannel 8472/udp) | B1 | Kod (netcup dokümanı ve rehberler; dışarıdan tarama B2'de) | B2 (kaynakları daralt), B3 (flannel backend) |
+| 77 | netcup firewall'u UDP'de stateless; DNS/NTP/DHCP cevapları için gereken kaynak port kuralları, kaynak portu 53/123/67/547 olan her paketi bütün UDP portlarına geçiriyor (k3s'te flannel 8472/udp) | B1 | Kısmen ölçüldü (daraltmadan sonra 1.1.1.1'in DNS cevabı düşüyor; evden sahte kaynak portlu paket gönderilemedi, ev NAT'ı kaynak portu değiştiriyor) | B2 (çözüldü: DNS kaynağı netcup çözücüleri, NTP hedefi ephemeral aralık, DHCP kuralları silindi), B3 (flannel backend; pod NAT portları) |
+| 78 | CI imajları sadece amd64 olarak build edip tarıyor, `publish` ise arm64'ü de GHCR'a gönderiyor: arm64 imajları hiç taranmadan yayınlanıyor | M7 | Kod (`docker` job'unda `platforms` yok, runner amd64; `publish`'te `linux/amd64,linux/arm64`) | Faz 1 sonrası (sunucu x86, prod'u etkilemiyor): arm64'ü bırak ya da tara |
+| 79 | VNC konsolu US klavye düzeniyle tuş kodu gönderiyor; Türkçe Q klavyeyle sembollü/`i`'li parola yazılamıyor, acil durum girişi çalışmıyor | B2 | Ölçüldü (`Login incorrect`; `localectl`: `X11 Layout: us`; test karakterleri farklı çıktı) | B2 (çözüldü: parola sadece harf/rakam, `i` yok, 24 karakter; konsoldan giriş doğrulandı) |
