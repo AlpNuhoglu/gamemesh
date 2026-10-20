@@ -1,0 +1,13 @@
+// GameMesh production server (plan B2).
+// Install as /etc/apt/apt.conf.d/52gamemesh-unattended-upgrades.
+//
+// Security updates are already installed daily by Ubuntu's defaults. This
+// adds the reboot that kernel and libc updates need: unattended-upgrades
+// reboots only when an update created /var/run/reboot-required, and then at
+// 03:30 server time (UTC), not every day.
+//
+// Unlike sshd, apt lets a later file override an earlier one, and it reads
+// apt.conf.d in lexical order, so 52 overrides Ubuntu's 50unattended-upgrades.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "03:30";
