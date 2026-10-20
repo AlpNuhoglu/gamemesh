@@ -113,7 +113,75 @@ the running pods keep serving.
 
 (or External Secrets Operator / Sealed Secrets / a cloud secret manager).
 
-## 3. Grafana dashboard import (non-provisioned Grafana)
+## 3. Production server (VPS)
+
+One netcup VPS (Ubuntu 24.04, x86) runs the single-node k3s cluster. Its
+address stays out of the repo; `ssh gamemesh` (an `~/.ssh/config` entry on the
+admin's machine) reaches it over Tailscale.
+
+### Provider firewall
+
+netcup's SCP Firewall filters traffic before it reaches the VM. That matters
+because Docker and k3s write their own iptables rules, which `ufw` does not
+govern. It is stateful for TCP but **not for UDP**, so UDP replies need their
+own rules. Every rule is INBOUND / ACCEPT; everything else is dropped:
+
+| Policy | Rule | Why |
+|---|---|---|
+| `gamemesh-base` | UDP src 53 from netcup's four resolvers only | DNS replies; a reply from any other server is dropped |
+| | UDP src 123 → dst 32768-60999 | NTP replies reach the kernel's ephemeral range only |
+| | ICMP, ICMPv6 | ping, path MTU, IPv6 neighbour discovery |
+| `gamemesh-tailscale` | UDP dst 41641 | direct WireGuard path; without it traffic falls back to a DERP relay |
+| `gamemesh-web` | TCP 80, 443 | HTTP-01 challenges and the API |
+| `gamemesh-ssh` | TCP 22 from one admin IP | **not assigned**; break-glass only, re-add with a current IP |
+
+The addresses are static (netplan, no DHCP), so no DHCP rules. netcup's
+default "Mail block" and "Ping allow" policies stay assigned.
+
+### Admin access
+
+- SSH only over the tailnet, as `alp` with a key; root logs in through `sudo`
+  (which asks for `alp`'s password). The policy is
+  `deployments/server/sshd_config.d/10-gamemesh.conf`.
+- Break-glass: the SCP VNC console with `alp`'s password. The console uses a
+  US keymap, so the password is letters and digits only (no `i`).
+- The server's Tailscale node has key expiry disabled; otherwise it would
+  drop off the tailnet after 180 days and leave only the console.
+
+### Setup (once per new server)
+
+```bash
+# 1. Admin user with the same key as root (run as root over SSH)
+useradd -m -s /bin/bash -G sudo alp
+install -d -m 700 -o alp -g alp /home/alp/.ssh
+install -m 600 -o alp -g alp /root/.ssh/authorized_keys /home/alp/.ssh/authorized_keys
+passwd alp
+
+# 2. SSH policy: check before reloading, keep the root session open until a
+#    new `alp` login works. sshd keeps the FIRST value it reads, and the main
+#    config includes sshd_config.d at its top, so this file wins.
+install -m 644 10-gamemesh.conf /etc/ssh/sshd_config.d/
+sshd -t && sshd -T | grep -E '^(permitrootlogin|passwordauthentication|allowusers) '
+systemctl reload ssh
+
+# 3. Reboot after updates that need it (at 03:30 UTC, only when
+#    /var/run/reboot-required exists). apt lets later files win, so 52 > 50.
+install -m 644 52gamemesh-unattended-upgrades /etc/apt/apt.conf.d/
+timedatectl set-timezone UTC
+
+# 4. Tailscale from its signed apt repository; no Tailscale SSH (sshd stays)
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+  | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+  | tee /etc/apt/sources.list.d/tailscale.list
+apt-get update && apt-get install -y tailscale
+tailscale up --ssh=false && tailscale set --auto-update
+```
+
+Then disable key expiry for the node in the Tailscale admin console, and
+unassign `gamemesh-ssh` once `ssh gamemesh` works.
+
+## 4. Grafana dashboard import (non-provisioned Grafana)
 
 1. Grafana → **Dashboards → New → Import**
 2. Upload `config/grafana/dashboards/gamemesh.json`
@@ -121,7 +189,7 @@ the running pods keep serving.
 
 In the compose stack this happens automatically via provisioning.
 
-## 4. CI/CD
+## 5. CI/CD
 
 `.github/workflows/ci.yml` runs on every push/PR:
 
