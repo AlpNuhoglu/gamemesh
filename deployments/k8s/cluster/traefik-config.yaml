@@ -1,0 +1,20 @@
+# k3s settings for the cluster itself, not the application: applied once to
+# a new cluster (B), kept out of the overlays. kubectl apply -f this file.
+#
+# HelmChartConfig is k3s's way to override the values of a chart it ships
+# (here Traefik, in kube-system). k3s re-renders the chart when it changes.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        # With the default (Cluster) ServiceLB SNATs every connection before
+        # it reaches Traefik: the gateway saw each client as 10.42.0.1, so
+        # all users shared one rate-limit bucket (finding #52). Local keeps
+        # the client's source address; on a single node it costs nothing,
+        # since every Traefik pod is local.
+        externalTrafficPolicy: Local
