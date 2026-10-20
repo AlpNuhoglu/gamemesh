@@ -1079,7 +1079,7 @@ Her adım şu yapıda:
 
 ### A10. Prova: yerel k3s (k3d) üzerinde prod'a en yakın deploy
 
-- [ ] **Ne:** `brew install k3d` ile Docker içinde gerçek bir **k3s** cluster'ı kurmak
+- [x] **Ne:** `brew install k3d` ile Docker içinde gerçek bir **k3s** cluster'ı kurmak
   (VPS'teki k3s ile aynı dağıtım, aynı Traefik ingress, aynı `local-path` storage). Local
   overlay'i bunun üzerine deploy etmek.
 - **Neden:** Minikube nginx ingress kullanıyor, VPS'te Traefik olacak. Annotation'lar
@@ -1167,7 +1167,7 @@ Her adım şu yapıda:
 
 ### B1. VPS seçimi
 
-- [ ] **Ne:** Sağlayıcı, boyut, mimari ve lokasyon seçmek.
+- [x] **Ne:** Sağlayıcı, boyut, mimari ve lokasyon seçmek.
 - **Boyutlandırma hesabı:** Toplam ihtiyaç kabaca k3s control-plane (~500–700 MB) +
   Postgres (256 MB) + Redis (128 MB) + NATS (~64 MB) + 7 Go servisi × ~30–60 MB + Traefik +
   cert-manager (~150 MB). Toplam ~1,8–2,2 GB. Rahat çalışmak, build/pull sırasındaki ani
@@ -1187,13 +1187,52 @@ Her adım şu yapıda:
      request toplamına göre yapılmalı.
   3. **Rolling update payı (M4):** Tek replica ile kesintisiz deploy, deploy sırasında
      geçici olarak bir pod fazlası (`maxSurge: 1`) için yer gerektirir.
+- **Kararlar (2026-10-20):**
+  - **Hetzner satın alınamıyor (Bulgu #76):** web sitesinde CX, CAX, CPX ve CCX planlarının
+    hepsi "currently unavailable"; durum sayfasında 2026-06-26'dan beri "Limited
+    availability of cloud instances" notu var. Sağlayıcıları karşılaştırmak için ayrı bir
+    araştırma yapıldı; sabit şartlar: KVM, sabit IPv4, sağlayıcı seviyesinde firewall,
+    yaklaşık €10/ay.
+  - **Seçim: netcup VPS 500 G12.5** (2 vCore x86, 4 GB, 64 GB), aylık sözleşme, lokasyon
+    "No preference Europe" (Nuremberg/Viyana/Amsterdam). Belirli bir lokasyon seçmek
+    €1,20/ay daha pahalı; ölçülen fark en fazla ~12 ms, Faz 1 için önemsiz. Lokasyon
+    sonradan değişmiyor, ama kurulum tekrarlanabilir olduğu için taşımak yeni bir sunucu
+    demek.
+  - **x86, ARM değil:** CI imajları sadece amd64 olarak tarıyor (Mac'teki prova arm64'tü),
+    x86 sunucuda çalışan imaj taranan imajın aynısı.
+  - **Firewall:** netcup'ın SCP Firewall'u ücretsiz ve TCP için stateful (G9+). OVH'nin Edge
+    Network Firewall'u stateless ve sadece IPv4'ü filtreliyor, bu yüzden elendi. netcup'ta
+    **UDP stateless**: DNS/NTP/DHCP cevapları için kaynak porta göre kural gerekiyor
+    (Bulgu #77).
+  - Ölçülen gecikme (Mac'ten TCP connect, medyan): netcup Nuremberg 42–46 ms, Hetzner
+    nbg1 46, fsn1 48, hel1 72 ms; Amsterdam (AMS-IX) 51 ms, Viyana (ACOnet) 58 ms. Viyana
+    coğrafi olarak yakın olduğu halde daha yavaş (yol Almanya üzerinden).
+  - SSH: `~/.ssh/gamemesh_ed25519` (ed25519, passphrase'li, bcrypt KDF 100 tur, macOS
+    Keychain'de).
+- **Sonuç (2026-10-20):** Sunucu Nuremberg'de; netcup Debian 13 kurulu teslim etti
+  (`publickey,password` açıktı), SCP'den Ubuntu 24.04.5 Minimal (UEFI) yeniden kuruldu: hostname
+  `gamemesh-prod-1`, `en_US.UTF-8`, SSH anahtarı root'a, parolayla giriş kapalı. Ölçülenler:
+  - **SSH:** sadece `publickey` kabul ediliyor; `authorized_keys`'te tek anahtar; dinleyen tek
+    dış servis `sshd` (22). Host anahtarı TOFU ile kabul edildi; parmak izi B2'de VNC
+    konsolundan karşılaştırılacak.
+  - **Firewall (Mac'ten):** ping 43,9 ms; 22 açık (sadece kendi IP'm), 80/443 44 ms'de
+    REFUSED (firewall geçiriyor, dinleyen yok), 6443/10250/3389 4 sn TIMEOUT (firewall
+    düşürüyor; firewall olmasaydı bunlar da REFUSED dönerdi).
+  - **Giden trafik çalışıyor:** DNS (UDP 53 kuralı), NTP senkronize (UDP 123 kuralı), HTTPS
+    ile `archive.ubuntu.com` / `get.k3s.io` / `ghcr.io`. "netcup Mail block" egress
+    kuralları geri kalan giden trafiği kapatmıyor.
+  - **Kaynaklar:** 2 vCPU (AMD EPYC-Rome), 3,8 GiB RAM, swap yok, 62 GB disk (%5 dolu).
+    IPv6 SLAAC ile yapılandırılmış.
+  - **B2'ye kalanlar:** `PermitRootLogin yes`, saat dilimi Europe/Berlin (formda UTC yoktu),
+    `unattended-upgrades` kurulu ve açık (ayarları B2'de gözden geçirilecek). #77 için
+    daraltılacak kaynaklar: DNS netcup çözücüleri (`resolvectl dns`), NTP `ntp.ubuntu.com`.
 
 ### B2. Sunucu sertleştirme
 
 - [ ] **Ne:**
   1. Root olmayan, sudo yetkili bir kullanıcı. SSH: `PasswordAuthentication no`,
      `PermitRootLogin no`.
-  2. **Hetzner Cloud Firewall** (sunucunun dışında, ağ seviyesinde): gelen trafikte
+  2. **Sağlayıcı firewall'u** (netcup SCP Firewall; sunucunun dışında, ağ seviyesinde): gelen trafikte
      22 (sadece senin IP'n, mümkünse), 80, 443. Kubernetes API portu **6443 sadece senin
      IP'ne** açık, ya da hiç açılmaz ve SSH tüneliyle erişilir.
   3. `unattended-upgrades` ile otomatik güvenlik güncellemeleri.
@@ -1210,8 +1249,16 @@ Her adım şu yapıda:
   kendi `DOCKER` zincirini yazar ve bu kurallar `ufw`'den **önce** değerlendirilir. Yani
   `ufw deny 5432` olsa bile Docker'ın yayınladığı port internete açık kalır. k3s de
   iptables'ı kendisi yönettiği için host firewall'una güvenilmemeli. Sağlayıcı seviyesindeki
-  firewall (Hetzner Cloud Firewall) bu yüzden zorunlu. Sunucuda Docker ile port
+  firewall (netcup SCP Firewall) bu yüzden zorunlu. Sunucuda Docker ile port
   yayınlanmamalı.
+- **B1'den eklenenler (Bulgu #77):** netcup'ın firewall'u UDP'de bağlantı takibi yapmıyor;
+  DNS (53), NTP (123) ve DHCP (67/547) cevapları için *kaynak porta* göre gelen kuralı
+  gerekiyor. Kaynak portu gönderen seçtiği için bu kurallar, kaynak portu 53 olan herhangi
+  bir paketi sunucudaki **her** UDP portuna geçirir. k3s kurulunca flannel'ın VXLAN portu
+  (8472/udp) bu yoldan erişilebilir olur. Yapılacak: kuralların kaynağını
+  `/etc/resolv.conf`'taki DNS sunucularına ve kullanılan NTP sunucularına daraltmak; B3'te
+  UDP kullanmayan bir flannel backend'i (`host-gw`) değerlendirmek; dışarıdan UDP taramasıyla
+  doğrulamak.
 
 ### B3. k3s kurulumu
 
@@ -1579,3 +1626,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 73 | k8s DSN'lerinde `connect_timeout` yok (A3a düzeltmesi k8s'e ulaşmamış); tek deneme 39 sn asılı kalıp player'ı restart ettirdi | M4 | Ölçüldü (k3d) | A8 (çözüldü: `connect_timeout=5`, 0 restart) |
 | 74 | k3s'te Secret'lar diskte şifrelenmiyor (`Encryption Status: Disabled`); datastore dosyası ya da yedeği bütün Secret'ları base64 olarak içeriyor | M8 | Ölçüldü (k3d: `k3s secrets-encrypt status`) | B (k3s `--secrets-encryption` ile kurulacak; prova cluster'ında `Enabled` doğrulandı) |
 | 75 | Local overlay'de her secret değişikliği yeni hash'li bir Secret üretiyor, eskileri eski değerlerle cluster'da kalıyor | M8 | Ölçüldü (k3d: 3 `gamemesh-secrets-*`) | Sadece local (prod'da generator yok); `kubectl apply --prune` ya da elle temizlik |
+| 76 | Plandaki sağlayıcı Hetzner'de hiçbir cloud planı satın alınamıyor (CX/CAX/CPX/CCX "currently unavailable", durum sayfasında 2026-06-26'dan beri kısıtlı kapasite notu) | B1 | Ölçüldü (Hetzner ürün sayfaları ve durum sayfası, 2026-10-20) | B1 (netcup VPS 500 G12.5 seçildi) |
+| 77 | netcup firewall'u UDP'de stateless; DNS/NTP/DHCP cevapları için gereken kaynak port kuralları, kaynak portu 53/123/67/547 olan her paketi bütün UDP portlarına geçiriyor (k3s'te flannel 8472/udp) | B1 | Kod (netcup dokümanı ve rehberler; dışarıdan tarama B2'de) | B2 (kaynakları daralt), B3 (flannel backend) |
