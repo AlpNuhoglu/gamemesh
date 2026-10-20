@@ -1316,6 +1316,28 @@ Her adım şu yapıda:
   `kubectl` context'leri arasında güvenli geçiş. Yanlış cluster'a `apply` etmemek için
   context adını prompt'ta göstermek iyi bir alışkanlık.
 - **Bitti sayılır:** Mac'ten `kubectl --context gamemesh-prod get nodes` → `Ready`.
+- **Kararlar (2026-10-20):** Plandaki komut B1–B2'den önce yazılmıştı; değişenler:
+  - **Sürüm `v1.35.9+k3s1`, sabit:** manifest'ler 1.35'e göre doğrulanıyor (kubeconform,
+    PSS `v1.35`), prova 1.35'te koştu; `stable` kanalı 1.36.5'i kurardı. 1.36'ya geçiş ayrı
+    bir adım.
+  - **Kurulum betiği önce okundu**, sha256'sı sunucuda karşılaştırıldı; `curl | sh` yok.
+    Betik binary'yi release'in sha256 listesiyle doğruluyor (aynı kaynak: bütünlük, köken
+    değil); binary'nin özeti ayrıca Mac'ten alınan listeyle karşılaştırıldı.
+  - **Ayarlar `deployments/server/k3s/config.yaml`'da:** `secrets-encryption` (#74),
+    `tls-san` tailnet IP'si + hostname (public IP yok: 6443 sadece tailnet'ten),
+    `flannel-backend: host-gw` (#77: UDP 8472 hiç dinlenmiyor).
+  - **API `0.0.0.0`'da kalıyor:** sadece tailnet IP'sine bağlamak, Tailscale açılışta k3s'ten
+    geç kalırsa k3s'in hiç açılmaması demekti; erişimi firewall belirliyor (ölçüldü).
+  - **Traefik `HelmChartConfig` k3s'in auto-deploy klasöründen** uygulandı; uzaktan
+    `kubectl apply` gerekmedi.
+  - **Admin kubeconfig ayrı dosyada** (`~/.kube/gamemesh-prod.yaml`, context
+    `gamemesh-prod`); varsayılan `~/.kube/config` ile birleştirilmedi, düz `kubectl` hep
+    yerel cluster'a gidiyor.
+  - **Secret şifreleme sağlayıcısı `aescbc` kaldı (Bulgu #80):** Kubernetes dokümanı
+    aescbc'yi "Weak / not recommended" (padding oracle) olarak işaretliyor; k3s'in
+    `secretbox` seçeneği ise "(experimental)". Anahtar verinin yanında aynı diskte durduğu
+    için iki sağlayıcının pratik farkı küçük; deneysel bir şifreleme yönetiminin bozulması
+    ise Secret'ları okunamaz yapabilir.
 
 ### B4. İlk deploy (TLS'siz, IP üzerinden)
 
@@ -1664,9 +1686,10 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 71 | Dependabot sonek taşıyan tek mimarili bir tag'i (`otel-collector:0.162.0-386`, sadece `linux/386`) yeni sürüm sandı; CI yeşil, çünkü collector sadece taranıyor | M7 | Ölçüldü (`imagetools inspect`: tek manifest, `linux 386`) | PR #58 (collector Dependabot'ta ignore; #68 ile elle) |
 | 72 | Ingress `/health`'i yönlendirmiyordu (sadece `/api`, `/ws`); Faz 1'in hedef komutu sınıf düzeltilse de 404 olurdu | M5 | Ölçüldü (k3d: Traefik 404) | A8 (çözüldü: `/health` Exact) |
 | 73 | k8s DSN'lerinde `connect_timeout` yok (A3a düzeltmesi k8s'e ulaşmamış); tek deneme 39 sn asılı kalıp player'ı restart ettirdi | M4 | Ölçüldü (k3d) | A8 (çözüldü: `connect_timeout=5`, 0 restart) |
-| 74 | k3s'te Secret'lar diskte şifrelenmiyor (`Encryption Status: Disabled`); datastore dosyası ya da yedeği bütün Secret'ları base64 olarak içeriyor | M8 | Ölçüldü (k3d: `k3s secrets-encrypt status`) | B (k3s `--secrets-encryption` ile kurulacak; prova cluster'ında `Enabled` doğrulandı) |
+| 74 | k3s'te Secret'lar diskte şifrelenmiyor (`Encryption Status: Disabled`); datastore dosyası ya da yedeği bütün Secret'ları base64 olarak içeriyor | M8 | Ölçüldü (k3d: `k3s secrets-encrypt status`) | B3 (çözüldü: prod k3s `secrets-encryption: true`, `Encryption Status: Enabled`; sağlayıcı için #80) |
 | 75 | Local overlay'de her secret değişikliği yeni hash'li bir Secret üretiyor, eskileri eski değerlerle cluster'da kalıyor | M8 | Ölçüldü (k3d: 3 `gamemesh-secrets-*`) | Sadece local (prod'da generator yok); `kubectl apply --prune` ya da elle temizlik |
 | 76 | Plandaki sağlayıcı Hetzner'de hiçbir cloud planı satın alınamıyor (CX/CAX/CPX/CCX "currently unavailable", durum sayfasında 2026-06-26'dan beri kısıtlı kapasite notu) | B1 | Ölçüldü (Hetzner ürün sayfaları ve durum sayfası, 2026-10-20) | B1 (netcup VPS 500 G12.5 seçildi) |
-| 77 | netcup firewall'u UDP'de stateless; DNS/NTP/DHCP cevapları için gereken kaynak port kuralları, kaynak portu 53/123/67/547 olan her paketi bütün UDP portlarına geçiriyor (k3s'te flannel 8472/udp) | B1 | Kısmen ölçüldü (daraltmadan sonra 1.1.1.1'in DNS cevabı düşüyor; evden sahte kaynak portlu paket gönderilemedi, ev NAT'ı kaynak portu değiştiriyor) | B2 (çözüldü: DNS kaynağı netcup çözücüleri, NTP hedefi ephemeral aralık, DHCP kuralları silindi), B3 (flannel backend; pod NAT portları) |
+| 77 | netcup firewall'u UDP'de stateless; DNS/NTP/DHCP cevapları için gereken kaynak port kuralları, kaynak portu 53/123/67/547 olan her paketi bütün UDP portlarına geçiriyor (k3s'te flannel 8472/udp) | B1 | Kısmen ölçüldü (daraltmadan sonra 1.1.1.1'in DNS cevabı düşüyor; evden sahte kaynak portlu paket gönderilemedi, ev NAT'ı kaynak portu değiştiriyor) | B2 (çözüldü: DNS kaynağı netcup çözücüleri, NTP hedefi ephemeral aralık, DHCP kuralları silindi), B3 (çözüldü: `host-gw`, UDP'de sadece 41641 dinleniyor; pod NAT'ı `MASQUERADE --random-fully` ölçüldü, pod'lardan 50/50 DNS) |
 | 78 | CI imajları sadece amd64 olarak build edip tarıyor, `publish` ise arm64'ü de GHCR'a gönderiyor: arm64 imajları hiç taranmadan yayınlanıyor | M7 | Kod (`docker` job'unda `platforms` yok, runner amd64; `publish`'te `linux/amd64,linux/arm64`) | Faz 1 sonrası (sunucu x86, prod'u etkilemiyor): arm64'ü bırak ya da tara |
 | 79 | VNC konsolu US klavye düzeniyle tuş kodu gönderiyor; Türkçe Q klavyeyle sembollü/`i`'li parola yazılamıyor, acil durum girişi çalışmıyor | B2 | Ölçüldü (`Login incorrect`; `localectl`: `X11 Layout: us`; test karakterleri farklı çıktı) | B2 (çözüldü: parola sadece harf/rakam, `i` yok, 24 karakter; konsoldan giriş doğrulandı) |
+| 80 | k3s Secret'ları `aescbc` ile şifreliyor; Kubernetes dokümanı bu sağlayıcıyı "Weak" ve padding oracle yüzünden önerilmez olarak işaretliyor. Anahtar (`server/cred/encryption-config.json`) verinin yanında, aynı diskte: disk ya da tam snapshot sızarsa şifreleme bir şey korumuyor | M8 | Ölçüldü (`k3s secrets-encrypt status`: `AES-CBC`; `k3s server --help`: `secretbox` "(experimental)") | Faz 1 sonrası: `secretbox` k3s'te stable olunca ya da KMS; yedeklerde `cred/` datastore'dan ayrı saklanmalı |
