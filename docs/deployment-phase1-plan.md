@@ -1079,7 +1079,7 @@ Her adım şu yapıda:
 
 ### A10. Prova: yerel k3s (k3d) üzerinde prod'a en yakın deploy
 
-- [ ] **Ne:** `brew install k3d` ile Docker içinde gerçek bir **k3s** cluster'ı kurmak
+- [x] **Ne:** `brew install k3d` ile Docker içinde gerçek bir **k3s** cluster'ı kurmak
   (VPS'teki k3s ile aynı dağıtım, aynı Traefik ingress, aynı `local-path` storage). Local
   overlay'i bunun üzerine deploy etmek.
 - **Neden:** Minikube nginx ingress kullanıyor, VPS'te Traefik olacak. Annotation'lar
