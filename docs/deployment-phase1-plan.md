@@ -1466,7 +1466,7 @@ Her adım şu yapıda:
 
 ### C3. ClusterIssuer: önce staging, sonra prod
 
-- [ ] **Ne:** İki `ClusterIssuer`: `letsencrypt-staging` ve `letsencrypt-prod`. İkisi de
+- [x] **Ne:** İki `ClusterIssuer`: `letsencrypt-staging` ve `letsencrypt-prod`. İkisi de
   ACME **HTTP-01** solver'ı ve `ingressClassName: traefik` kullanıyor. İlk denemeyi
   **staging** ile yap.
 - **Neden:** Let's Encrypt prod ortamında sıkı rate limit'ler var (aynı domain için haftada
@@ -1502,10 +1502,13 @@ Her adım şu yapıda:
   yazıyordu), `notBefore` 1 saat geriye, yenileme süresinin 2/3'ünde (3 Aralık), RSA 2048
   (prod'da ECDSA). Solver kaynakları kendiliğinden silindi, test sertifikası silindi.
   `letsencrypt-prod` hesabı açıldı (`Ready=True`).
+- **Prod sonucu (2026-10-21, C4 ile):** Ingress'ten gelen ilk prod `Certificate` (`api-tls`)
+  ~29 sn'de `Ready` (apply 13:45:46, challenge `valid` 13:46:15). **Prod 90 gün** geçerli
+  (yenileme 60. günde, 2026-12-20); 64 gün sadece staging'deydi.
 
 ### C4. Ingress'e TLS ve HTTPS yönlendirmesi
 
-- [ ] **Ne:** Prod overlay'deki Ingress'te:
+- [x] **Ne:** Prod overlay'deki Ingress'te:
   - `cert-manager.io/cluster-issuer: letsencrypt-prod` annotation'ı
   - `tls: [{hosts: [api.<domain>], secretName: api-tls}]`
   - Traefik `Middleware` ile HTTP→HTTPS yönlendirmesi (redirectScheme)
@@ -1530,6 +1533,36 @@ Her adım şu yapıda:
      listesi, hata oranları, kuyruk boyutları).
   2. **`/ws` doğrudan websocket servisine gidiyor (M8):** Gateway'in kimlik ve oturum
      kontrolü atlanıyor. A3b tamamlanmadan bu route internete açılmamalı.
+- **Kararlar (2026-10-21):**
+  - **Sertifika Ingress'ten** (ingress-shim): `cert-manager.io/cluster-issuer: letsencrypt-prod`,
+    `tls` → `api-tls`; anahtar **ECDSA P-256** (RSA 2048 yerine).
+  - **Yönlendirme sadece bu Ingress'e** bağlı bir Traefik `Middleware` (`redirectScheme`,
+    kalıcı) ile; global entrypoint yönlendirmesi değil. ACME solver kendi Ingress'ini
+    kullandığı için challenge yolu yönlendirilmiyor, yenilemeler çalışıyor.
+  - **HSTS başlığı yok:** `.app` zaten preload listesinde.
+  - **CI'da CRD şemaları:** kubeconform `Middleware`'i tanımıyordu (`could not find schema`,
+    `-strict` altında hata); şemalar commit'e sabitlenmiş CRDs-catalog'dan geliyor. Bilerek
+    bozulmuş bir alan (`schemee`) ve tip (`permanent: "yes"`) reddedildi.
+  - Nginx annotation'ları zaten yoktu (A8'de Traefik'e geçilmişti).
+- **Sonuç (2026-10-21, deploy `0d91079`):**
+  - **`curl -sSf https://api.gamemesh.app/health`** → 200 (`-k` yok, `ssl_verify_result 0`);
+    20 ardışık istek 20/20 200, medyan 143 ms. **İlk istek 421 sn asılı kalıp `SSL connection
+    timeout` verdi** (sertifika ve router'lar yeni yüklenirken); tekrarlanamadı, sebebi
+    kanıtlanmadı.
+  - **`curl -sI http://…/health`** → `308`, `Location: https://api.gamemesh.app/health` (`/api` için
+    de).
+  - **Sertifika:** Let's Encrypt **YE2** (ECDSA ara sertifikası), P-256, 90 gün; `Verify return
+    code: 0`. TLS 1.3, anahtar değişimi `X25519MLKEM768` (post-kuantum hibrit); TLS 1.2'de
+    `ECDHE-ECDSA-AES128-GCM-SHA256`.
+  - **TLS 1.0 ve 1.1 reddediliyor** (`alert protocol version`, istemci eski sürümlere izinliyken;
+    ilk denemede Mac'in OpenSSL'i bu sürümleri hiç göndermemişti, o sonuç sunucu hakkında
+    değildi).
+  - **ACME yolu** `http://…/.well-known/acme-challenge/test` → 404, yönlendirme yok;
+    `/metrics`, `/readyz`, `/livez`, `/healthz` → 404; IP ile (SNI eşleşmeden) Traefik'in
+    varsayılan sertifikası ve 404.
+  - **`wss://`:** el sıkışma 101; logout 200; aynı token'la yeniden bağlanma 401 (A3b).
+  - **İstemci IP'si TLS'ten sonra da gerçek** (gateway log'unda `client_ip`). Bu ölçüm prod
+    veritabanına bir test kullanıcısı (`a10p…`) yazdı.
 
 ---
 
