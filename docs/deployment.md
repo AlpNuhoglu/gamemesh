@@ -217,6 +217,25 @@ alias kprod='kubectl --kubeconfig ~/.kube/gamemesh-prod.yaml --context gamemesh-
 kprod get nodes
 ```
 
+### Deploying by hand (until CI does it, step D)
+
+Only images CI has published are deployed, by the commit SHA they were built
+from; the overlay's `set-by-deploy` placeholder is replaced for the apply and
+restored afterwards, never committed:
+
+```bash
+SHA=$(git rev-parse origin/main)       # its CI run, including publish, is green
+F=deployments/k8s/overlays/prod/kustomization.yaml
+sed -i '' "s/newTag: set-by-deploy/newTag: $SHA/" "$F"
+kprod apply -k deployments/k8s/overlays/prod --dry-run=server   # admission, PSS included
+kprod apply -k deployments/k8s/overlays/prod
+git checkout -- "$F"
+curl -H 'Host: api.gamemesh.invalid' http://<public-ip>/health   # {"status":"ok","version":"<SHA>"}
+```
+
+The `gamemesh-secrets` Secret must exist first (see "Production secrets"); the
+namespace is created by hand for it, and the first apply adds its labels.
+
 After a reboot everything comes back by itself in about 40 s (measured:
 reboot to Traefik answering, 44 s). The node's `Ready` condition is not
 evidence of that: the API serves the last stored status before the kubelet
