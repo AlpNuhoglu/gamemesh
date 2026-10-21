@@ -258,7 +258,21 @@ Around it:
 token exchange fails, its first step says why (a mismatched Client ID and
 Audience shows as `WARN audience is api.tailscale.com/<client id>`).
 
-### Deploying by hand (until CI does it, step D)
+### Deploying
+
+Every push to `main` deploys itself: after `ci-ok` and `publish`, the `deploy`
+job in `.github/workflows/ci.yml` (environment `production`, one at a time,
+never cancelled halfway) points the prod overlay at the commit's images,
+applies it after a server-side dry run, waits for every Deployment and
+StatefulSet, and waits for `https://api.gamemesh.app/health` to report the
+commit. Measured on the first one: merge to live in 6 min 46 s (CI about
+4 min, publish 1.5 min, deploy 38 s), 3494 of 3494 public requests answered
+200 during it.
+
+The job logs the image that ran before it. The procedure below is the same
+thing by hand, for when CI cannot run.
+
+### Deploying by hand
 
 Only images CI has published are deployed, by the commit SHA they were built
 from; the overlay's `set-by-deploy` placeholder is replaced for the apply and
