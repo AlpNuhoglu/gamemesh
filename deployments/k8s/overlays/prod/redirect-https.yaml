@@ -1,0 +1,14 @@
+# Plain HTTP on the API's routes is answered with a permanent redirect to
+# HTTPS (plan C4). It is attached to the gamemesh Ingress only, so it covers
+# /health, /api and /ws: cert-manager's HTTP-01 solver brings its own Ingress
+# for /.well-known/acme-challenge/, which stays plain HTTP and is not
+# redirected, and renewals keep working. On HTTPS requests the middleware
+# does nothing, since the scheme already matches.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
