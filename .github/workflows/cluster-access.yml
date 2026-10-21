@@ -30,6 +30,49 @@ jobs:
       # Client ID and audience are not secrets (they identify the trust
       # relationship, not a credential), but environment secrets keep them
       # with the environment's other settings.
+      # Tailscale answers a bad trust setup with a bare "token exchange failed
+      # with status 400: invalid request". This says what is wrong instead:
+      # the shape of the two values (never the values: secrets are masked and
+      # only checks are printed), and the claims GitHub puts in the token it
+      # issues for Tailscale, to compare with the trust credential (subject,
+      # custom claim repository_id).
+      - name: Check the Tailscale trust inputs
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, re, sys, urllib.parse, urllib.request
+          cid, aud = os.environ["TS_OAUTH_CLIENT_ID"], os.environ["TS_AUDIENCE"]
+          checks = {
+              "client id set": bool(cid),
+              "client id has no whitespace": cid == cid.strip() and not re.search(r"\s", cid),
+              "audience set": bool(aud),
+              "audience has no whitespace": aud == aud.strip() and not re.search(r"\s", aud),
+          }
+          # The documented form; a warning only, in case the form changes.
+          hints = {
+              "audience has no scheme": not aud.startswith(("http://", "https://")),
+              "audience is api.tailscale.com/<client id>": aud == f"api.tailscale.com/{cid}",
+          }
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(aud, safe="")
+          req = urllib.request.Request(url, headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          token = json.load(urllib.request.urlopen(req))["value"]
+          print(f"::add-mask::{token}")
+          p = token.split(".")[1]
+          c = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+          checks["token aud equals the audience secret"] = c.get("aud") == aud
+          for name, ok in checks.items():
+              print(f"{'ok  ' if ok else 'FAIL'} {name}")
+          for name, ok in hints.items():
+              print(f"{'ok  ' if ok else 'WARN'} {name}")
+          print("issuer:", c.get("iss"))
+          print("sub:", c.get("sub"))
+          print("repository_id:", repr(c.get("repository_id")), type(c.get("repository_id")).__name__)
+          print("environment:", c.get("environment"), "| ref:", c.get("ref"))
+          sys.exit(0 if all(checks.values()) else 1)
+          PY
+
       - name: Join the tailnet (ephemeral, tag:ci)
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
