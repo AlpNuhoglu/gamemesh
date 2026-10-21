@@ -198,6 +198,8 @@ sed "s/TAILNET_IP/$(tailscale ip -4)/" config.yaml | sudo tee /etc/rancher/k3s/c
 sudo chmod 600 /etc/rancher/k3s/config.yaml
 # Files in this directory are applied by k3s itself, on every start
 sudo install -D -m 600 traefik-config.yaml /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+# cert-manager (chart via k3s's helm-controller); can also be added later
+sudo install -m 600 cert-manager.yaml /var/lib/rancher/k3s/server/manifests/cert-manager.yaml
 sudo INSTALL_K3S_VERSION='v1.35.9+k3s1' sh /tmp/k3s-install.sh
 sha256sum /usr/local/bin/k3s           # compare with the release's sha256sum-amd64.txt
 sudo k3s secrets-encrypt status        # Encryption Status: Enabled
