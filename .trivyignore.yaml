@@ -188,6 +188,28 @@ vulnerabilities:
       (3.3.7-r2); the image has not been rebuilt yet. Dependabot proposes the
       new digest once it is; revisit if it has not by then.
     expired_at: 2026-11-18
+  - id: CVE-2026-111943
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  # Finding #88. Unlike gosu, nats-server runs: it is NATS itself, built with
+  # go1.27.2, and no fixed release exists yet (2.15.1 is the latest). The flaw
+  # is in certificate chain verification, which NATS only performs with TLS,
+  # and ours has none: no TLS on clients, no cluster, leafnode or gateway
+  # (measured on the running server via /varz: tls_required unset, 0
+  # routes). Short expiry on purpose: Dependabot proposes the patched image
+  # when it ships, and this entry goes with it. Invalid as soon as NATS gets
+  # TLS.
+  - id: CVE-2026-111943
+    paths: ["usr/local/bin/nats-server"]
+    statement: >-
+      nats:2.15.1-alpine's nats-server is built with go1.27.2 (fixed in
+      1.27.3). The vulnerable path is x509 chain verification, used only with
+      TLS; this NATS has no TLS, cluster, leafnode or gateway.
+    expired_at: 2026-11-04
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.
 misconfigurations:
