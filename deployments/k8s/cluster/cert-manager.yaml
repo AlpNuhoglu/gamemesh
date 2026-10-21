@@ -1,0 +1,62 @@
+# cert-manager for the production cluster (plan C2): issues and renews the
+# API's TLS certificate from Let's Encrypt.
+#
+# Like traefik-config.yaml this is cluster-level, not part of the app's
+# overlays: on the server it is copied into
+# /var/lib/rancher/k3s/server/manifests/, and k3s applies it by itself on
+# every start; its helm-controller installs the chart. The deploy job's
+# ServiceAccount (step D) only reaches the gamemesh namespace.
+#
+# Version: 1.21 supports Kubernetes 1.33 to 1.36. Images are pinned by their
+# multi-platform digest, like every other third-party image here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.35
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.35
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.35
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cert-manager
+  namespace: kube-system
+spec:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  version: v1.21.2
+  targetNamespace: cert-manager
+  valuesContent: |-
+    # The CRDs come with the chart and stay if it is ever uninstalled:
+    # deleting them would delete every Certificate and Issuer with them.
+    crds:
+      enabled: true
+      keep: true
+    global:
+      # Keep the leader-election lease (and the permission for it) in
+      # cert-manager's own namespace instead of kube-system.
+      leaderElection:
+        namespace: cert-manager
+    # No monitoring stack in production yet (finding #68).
+    prometheus:
+      enabled: false
+    image:
+      digest: sha256:70f532fd9cfde0b09d55687200942399d89838bc2d5d5b45152eb799a15912b8
+    webhook:
+      image:
+        digest: sha256:a60e2dac46dbb8a7f3df95c54ce941012f54c2fe022f0ee55aaa1ab40ed957ae
+    cainjector:
+      image:
+        digest: sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562
+    startupapicheck:
+      image:
+        digest: sha256:46e75b6866359ffb5d82624f41e3ed1c70b2994982702ced547ce5edb418a8f5
+    # The short-lived pod that answers Let's Encrypt's HTTP-01 challenge.
+    acmesolver:
+      image:
+        digest: sha256:699b40d622211ab7accad8a21b04c5fbaa1841ef7a12621e8de492dbe27b2503
