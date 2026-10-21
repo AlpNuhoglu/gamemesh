@@ -219,6 +219,45 @@ alias kprod='kubectl --kubeconfig ~/.kube/gamemesh-prod.yaml --context gamemesh-
 kprod get nodes
 ```
 
+### CI access to the cluster
+
+CI holds no long-lived credential for the cluster or the tailnet. A job in the
+`production` environment (deployable from `main` only):
+
+1. joins the tailnet with `tailscale/github-action` and workload identity
+   federation: GitHub's OIDC token is traded for an ephemeral `tag:ci` node;
+2. asks GitHub for another OIDC token, audience `gamemesh-k8s`, lifetime 300 s;
+3. calls the API server with it. The API server trusts GitHub's issuer
+   (`deployments/server/k3s/authentication-config.yaml`) only for this
+   repository's and owner's numeric IDs, `refs/heads/main` and environment
+   `production`, and maps it to the user
+   `github:repo:AlpNuhoglu/gamemesh:environment:production`;
+4. RBAC (`deployments/k8s/cluster/ci-deployer.yaml`) lets that user write what
+   the prod overlay holds in `gamemesh`, and read pods, logs and rollouts.
+   No Secrets, exec, delete, namespace or RBAC rights.
+
+Around it:
+
+- Tailscale policy (admin console): `tag:ci` may reach only `tag:prod:6443`,
+  with policy tests that refuse 22, 80 and 10250; the server is tagged
+  `tag:prod`.
+- Trust credential (Tailscale, OpenID Connect, issuer GitHub): subject
+  `repo:AlpNuhoglu/gamemesh:environment:production`, custom claim
+  `repository_id`, scope Auth Keys write, tag `tag:ci`.
+- Environment `production`: secrets `TS_OAUTH_CLIENT_ID` and `TS_AUDIENCE`
+  (the credential's Client ID and Audience, which is
+  `api.tailscale.com/<client id>`), variables `K8S_HOST` (tailnet address)
+  and `K8S_CA_DATA` (the cluster CA certificate, public).
+- An admission policy (`gamemesh-admission-policy.yaml`) keeps Services
+  ClusterIP without externalIPs and Ingresses on class traefik and host
+  `api.gamemesh.app`, whoever writes them.
+- The namespace (`deployments/k8s/namespace/`), the policy and the RBAC are
+  cluster-level: copied into k3s's auto-deploy directory by the admin.
+
+`Actions → cluster-access → Run workflow` checks all of it. If Tailscale's
+token exchange fails, its first step says why (a mismatched Client ID and
+Audience shows as `WARN audience is api.tailscale.com/<client id>`).
+
 ### Deploying by hand (until CI does it, step D)
 
 Only images CI has published are deployed, by the commit SHA they were built
