@@ -201,6 +201,8 @@ jobs:
           scanners: misconfig
           severity: HIGH,CRITICAL
           exit-code: "1"
+          # Accepted findings, each scoped to one file and expiring.
+          trivyignores: .trivyignore.yaml
       # The scanners are named: left empty, Trivy runs vuln and secret only, and
       # a step once called "deps + misconfig" never checked a single manifest.
       - name: Trivy dependency and secret scan
