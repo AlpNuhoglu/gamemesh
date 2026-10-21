@@ -1146,7 +1146,7 @@ Her adım şu yapıda:
   | 6 | Hatalı deploy | ✅ A9 (zayıf JWT, yanlış Postgres şifresi): yeni pod takılıyor, eski pod'lar trafik alıyor |
   | 7 | Drain | ✅ 37 sn'de tamamlandı, PDB kilitlemedi; tek node'da pod'lar `Pending`, uncordon sonrası 10/10 |
   | 8 | Logout sonrası WS | ✅ Traefik üzerinden: önce 101, logout 200, sonra 401 |
-  | 9 | Gerçek istemci IP'si | Kısmen: `Cluster` politikasıyla herkes `10.42.0.1` (SNAT); `Local` ile bağlantının gerçek kaynağı (`172.21.0.4`, k3d'nin önündeki proxy). Kesin sonuç B4 |
+  | 9 | Gerçek istemci IP'si | ✅ B4 (VPS): gateway log'unda `client_ip` istemcinin gerçek public IP'si; sahte `X-Forwarded-For` bunu değiştirmiyor; rate limit istemci başına (300 paralel istekte 134×404 / 166×429). k3d'de `Cluster` ile herkes `10.42.0.1` (SNAT) idi |
   | + | WS boşta kalma (Traefik) | ✅ 130 sn boşta açık kaldı, sunucudan 2 ping (54 sn) |
 
   - `rollout undo` uyarısı: "Rolling back will not update the last-applied-configuration
@@ -1159,7 +1159,7 @@ Her adım şu yapıda:
     tekrarda yeniden üretilemedi. `checks.sh` artık test çıktısının tamamını saklıyor.
 - **Bitti sayılır (2026-10-20):** `/health` Traefik üzerinden 200 (local ve prod provası),
   WebSocket Traefik üzerinden bağlanıyor (101), Redis pod'u silinip yeniden oluşturulunca
-  veri duruyor (A7-2). Yukarıdaki 9 kontrolün 8'i tamam, 9. madde B4'te.
+  veri duruyor (A7-2). Yukarıdaki 9 kontrolün 8'i tamam, 9. madde B4'te tamamlandı.
 
 ---
 
@@ -1367,6 +1367,18 @@ Her adım şu yapıda:
 - **İncelemeden eklenenler (M5/M8):** **Asla** `kubectl apply -f deployments/k8s/`
   (eski, düz klasör) kullanılmamalı; o yol dev secret'larını ve Minikube ayarlarını
   production'a taşır. A9'daki fail-fast kontrolü bu hatayı yakalayacak son savunma hattı.
+- **Kararlar (2026-10-21):**
+  - **İmaj:** deploy anındaki `main` commit'i (`c852800`, #67'nin merge'ü), CI'ı ve `publish`'i
+    yeşil olduktan sonra; 7 imajın tag'i GHCR'da anonim olarak doğrulandı (paketler public,
+    imagePullSecret yok).
+  - **Secret'ı kullanıcı oluşturdu** (`openssl rand -hex 32`, değerler hiçbir yerde
+    görünmedi); kontrol sadece anahtar adları ve uzunluklar (3 × 64 hex karakter).
+  - **Tag geçici olarak yazıldı:** `set-by-deploy` → SHA, `apply -k overlays/prod`, sonra
+    `git checkout`; commit edilmedi (D'de CI'ın yapacağının elle hali).
+  - **Önce `--dry-run=server`:** gerçek admission ve PSS kontrolünden geçti (Bulgu #42'nin
+    kubeconform'un göremediği kısmı), sonra gerçek apply.
+  - **TLS'e kadar HTTP:** C'ye kadar sadece `/health` ve uydurma path'ler denendi; gerçek bir
+    parola gönderilmedi.
 
 ---
 
