@@ -1436,7 +1436,7 @@ Her adım şu yapıda:
 
 ### C2. cert-manager kurulumu
 
-- [ ] **Ne:** Resmi, sürümü sabitlenmiş manifest ile kurulum:
+- [x] **Ne:** Resmi, sürümü sabitlenmiş manifest ile kurulum:
   `kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/vX.Y.Z/cert-manager.yaml`
 - **Neden:** cert-manager, sertifikaları Kubernetes kaynağı (`Certificate`) olarak yönetir:
   ACME challenge'ını çözer, sertifikayı bir Secret'a yazar ve süresi dolmadan (90 günlük
@@ -1445,6 +1445,24 @@ Her adım şu yapıda:
 - **Öğrenilecek:** CRD (Custom Resource Definition), controller/operator deseni
   (istenen durum ↔ gerçek durum reconcile döngüsü).
 - **Bitti sayılır:** `kubectl -n cert-manager get pods` çıktısında 3 pod Running.
+- **Kararlar (2026-10-21):**
+  - **Düz manifest yerine k3s `HelmChart`** (`deployments/k8s/cluster/cert-manager.yaml`),
+    k3s'in auto-deploy klasöründen: uzaktan `kubectl apply` ve Mac'te Helm yok, sürüm ve
+    değerler repoda, sunucu yeniden kurulursa kendiliğinden geliyor. Cluster seviyesindeki
+    ayarlar admin yolundan; CI (D) sadece `gamemesh` namespace'ine erişecek.
+  - **v1.21.2** (Kubernetes 1.33–1.36 destekli), 5 imaj (controller, webhook, cainjector,
+    startupapicheck, acmesolver) çok platformlu digest ile sabit.
+  - **`crds.keep: true`** (chart silinse de CRD'ler ve sertifikalar kalır), namespace PSS
+    `restricted`, leader election kendi namespace'inde, Prometheus kapalı.
+  - **Bu imajlar CI'da taranmıyor** (Bulgu #84).
+- **Sonuç (2026-10-21):**
+  - Önce yerel k3d'de (k3s v1.35.5) aynı yöntemle denendi: install job tamamlandı, 3 pod
+    Ready, `restricted` altında kabul edildi, self-signed `Certificate` Ready oldu.
+  - **Prod:** dosyanın özeti sunucuda aynı; `helm-install-cert-manager` tamamlandı, 3 pod
+    Running/Ready, 0 restart, çalışan imajlar sabitlenen digest'ler; controller acmesolver'ı
+    da digest'le başlatıyor. Geçici `cm-test` namespace'inde self-signed sertifika Ready
+    (webhook ve controller çalışıyor), namespace silindi.
+  - **Kaynaklar:** cert-manager ~50 MiB / 15m; node 1761 MiB (%45), 216m (%10).
 
 ### C3. ClusterIssuer: önce staging, sonra prod
 
@@ -1761,3 +1779,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 81 | Cluster sadece IPv4 (podCIDR `10.42.0.0/24`, Traefik `ipFamilies: [IPv4]`); sunucunun IPv6 adresinde 80 bağlantıyı reddediyor. AAAA kaydı IPv6 tercih eden istemcileri çalışmayan bir adrese gönderirdi | B4 | Ölçüldü (sunucudan kendi IPv4'üne 200, IPv6'sına curl exit 7) | C1 (AAAA kaydı yok); dual-stack Faz 1 sonrası |
 | 82 | Go `crypto/x509` açığı GO-2026-6809 / CVE-2026-111943 (ele geçirilmiş ara sertifikalara güven), `go1.26.9` etkileniyor; 2026-10-21 00:27 UTC'de yayımlandı, sonraki bütün CI çalışmaları govulncheck'te kırmızı | M7 | Ölçüldü (CI govulncheck, PR #68: `wsgateway.Hub.CloseAll → … → x509.Certificate.Verify`; aynı sürümle yerel govulncheck v1.9.0 açığı listelemedi, fark açıklanamadı) | PR #69 (çözüldü: `go1.26.10`; prod `62deb14`'e kesintisiz yeniden deploy edildi) |
 | 83 | Ev IP'si değiştikten sonra tailnet yolunda büyük UDP paketleri kayboldu (1200 bayt ping %67 kayıp, ~2 sn; API isteği ~7 sn); `kubectl apply` OpenAPI indirirken koptu ve hiçbir şey uygulamadı, özetlenmiş çıktı bunu gizledi | B4 | Ölçüldü (public ICMP/TCP sağlıklı, sadece tailnet; modem yeniden başlatılınca 43 ms, %0 kayıp) | C1 (geçici çözüm: modem restart; deploy'da tam çıktı ve çıkış kodu); D'de deploy CI'dan, ev bağlantısından bağımsız |
+| 84 | cert-manager'ın 5 imajı (`deployments/k8s/cluster/cert-manager.yaml`, HelmChart değerlerinde digest'li) CI'ın üçüncü taraf imaj taramasında yok; tarama sadece `base/`, `components/` ve compose'u okuyor | M7 | Kod (`third-party-images` job'unun okuduğu yollar) | Faz 1 sonrası (taramaya HelmChart değerlerindeki imajları da ekle) |
