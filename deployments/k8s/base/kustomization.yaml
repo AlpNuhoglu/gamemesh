@@ -44,3 +44,14 @@ configMapGenerator:
   - name: gamemesh-config
     envs:
       - config.env
+# A rollout that makes no progress for 5 minutes is marked
+# ProgressDeadlineExceeded, and the deploy job's `kubectl rollout status`
+# fails at once instead of waiting out the 600 s default (plan D2). The
+# slowest startup probe allows far less than that.
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/progressDeadlineSeconds
+        value: 300
