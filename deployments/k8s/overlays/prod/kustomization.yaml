@@ -16,6 +16,7 @@ kind: Kustomization
 namespace: gamemesh
 resources:
   - ../../base
+  - redirect-https.yaml
 # The images CI published, at the commit being deployed: the deploy job sets
 # the tag with kustomize edit set image <name>=...:<sha> before applying
 # (step D). The value here is a deliberate placeholder: an apply by hand pulls
@@ -81,3 +82,26 @@ patches:
       - op: add
         path: /spec/rules/0/host
         value: api.gamemesh.app
+  # TLS (C4): cert-manager sees the issuer annotation and the tls section and
+  # keeps a Certificate for the host in the api-tls Secret, renewed before it
+  # expires. ECDSA P-256: a smaller certificate and handshake than the RSA
+  # 2048 default. Plain HTTP on these routes is redirected (redirect-https.yaml;
+  # Traefik names CRD middlewares <namespace>-<name>@kubernetescrd).
+  - target:
+      kind: Ingress
+      name: gamemesh
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: gamemesh
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-prod
+          cert-manager.io/private-key-algorithm: ECDSA
+          cert-manager.io/private-key-size: "256"
+          traefik.ingress.kubernetes.io/router.middlewares: gamemesh-redirect-https@kubernetescrd
+      spec:
+        tls:
+          - hosts:
+              - api.gamemesh.app
+            secretName: api-tls
