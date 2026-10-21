@@ -70,12 +70,14 @@ patches:
         value:
           name: TRUSTED_PROXIES
           value: 10.42.0.0/16
-  # Placeholder until the domain exists (B2): .invalid never resolves
-  # (RFC 2606), so it cannot route anyone's traffic by accident.
+  # The public API name (C1). Its DNS record is an A record only, without
+  # the Cloudflare proxy: the cluster is IPv4-only (finding #81), and a proxy
+  # would end TLS at Cloudflare and hide the client's address from the
+  # gateway. .app is HSTS-preloaded, so browsers use HTTPS only.
   - target:
       kind: Ingress
       name: gamemesh
     patch: |-
       - op: add
         path: /spec/rules/0/host
-        value: api.gamemesh.invalid
+        value: api.gamemesh.app
