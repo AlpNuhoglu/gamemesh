@@ -1357,7 +1357,7 @@ Her adım şu yapıda:
 
 ### B4. İlk deploy (TLS'siz, IP üzerinden)
 
-- [ ] **Ne:** Prod Secret'ını elle oluştur
+- [x] **Ne:** Prod Secret'ını elle oluştur
   (`openssl rand -hex 32` ile JWT, ayrıca rastgele bir DB şifresi), sonra
   `kubectl apply -k deployments/k8s/overlays/prod`.
 - **Neden:** DNS ve TLS'i işe karıştırmadan önce uygulamanın sunucuda ayağa kalktığını
@@ -1379,6 +1379,18 @@ Her adım şu yapıda:
     kubeconform'un göremediği kısmı), sonra gerçek apply.
   - **TLS'e kadar HTTP:** C'ye kadar sadece `/health` ve uydurma path'ler denendi; gerçek bir
     parola gönderilmedi.
+- **Sonuç (2026-10-21):**
+  - **`curl -H "Host: api.gamemesh.invalid" http://<ip>/health`** → `200`
+    `{"status":"ok","version":"c8528005…"}` (82 ms); `Host` olmadan 404.
+  - **Rollout:** 24 kaynak, `apply`'dan son rollout'a 29 sn; 10/10 pod Ready, 0 restart.
+    Uygulama pod'ları Postgres/Redis/NATS'tan ~10 sn önce başladı (PVC bağlanması), yeniden
+    deneme ve startup probe'ları sayesinde hiçbiri restart etmedi.
+  - **Çalışan imajlar** GHCR'daki tag'in digest'iyle aynı (ör. gateway `dfab8545…`).
+  - **İstemci IP'si ve rate limit:** A10 tablosunun 9. satırı.
+  - **Kaynaklar:** gerçek 138m CPU (%6), 1495 MiB (%38); request toplamı (sistem pod'ları
+    dahil) 1150m (%57) / 1100 MiB (%28). Disk %9.
+  - **Veri** `/var/lib/rancher/k3s/storage/pvc-*` altında (local-path); yedeklemede `cred/`
+    ile birlikte ele alınacak (#80).
 
 ---
 
