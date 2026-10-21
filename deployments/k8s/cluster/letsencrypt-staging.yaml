@@ -27,3 +27,7 @@ spec:
       - http01:
           ingress:
             ingressClassName: traefik
+            # The solver's Service defaults to NodePort, which the gamemesh
+            # namespace refuses (gamemesh-admission-policy.yaml, finding #87);
+            # Traefik reaches a ClusterIP Service just as well.
+            serviceType: ClusterIP

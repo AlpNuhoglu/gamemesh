@@ -1,0 +1,67 @@
+# Limits what a Service or an Ingress in the gamemesh namespace may look like
+# (finding #87). CI may write both (it applies the prod overlay), and so may
+# cert-manager's HTTP-01 solver; this check runs in the API server for
+# everyone who writes them:
+#
+# - Services: ClusterIP only, no externalIPs. A LoadBalancer Service makes
+#   k3s's ServiceLB open a port on the node; externalIPs lets a Service
+#   capture cluster traffic meant for other addresses (CVE-2020-8554).
+# - Ingresses: class traefik, host api.gamemesh.app only (rules and TLS), no
+#   default backend: no other name can be routed through this cluster.
+#
+# Cluster-level, written by the admin (k3s auto-deploy directory); CI has no
+# permission on admission policies. A ValidatingAdmissionPolicy is plain CEL
+# in the API server, no webhook to run.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gamemesh-network-surface
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  validations:
+    - expression: >-
+        request.kind.kind != 'Service' ||
+        !has(object.spec.type) || object.spec.type == 'ClusterIP'
+      message: "in gamemesh, Services must be type ClusterIP"
+    - expression: >-
+        request.kind.kind != 'Service' ||
+        !has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0
+      message: "in gamemesh, Services may not set externalIPs"
+    - expression: >-
+        request.kind.kind != 'Ingress' ||
+        (has(object.spec.ingressClassName) && object.spec.ingressClassName == 'traefik')
+      message: "in gamemesh, Ingresses must use ingressClassName traefik"
+    - expression: >-
+        request.kind.kind != 'Ingress' ||
+        (has(object.spec.rules) && size(object.spec.rules) > 0 &&
+         object.spec.rules.all(r, has(r.host) && r.host == 'api.gamemesh.app'))
+      message: "in gamemesh, every Ingress rule must be for host api.gamemesh.app"
+    - expression: >-
+        request.kind.kind != 'Ingress' || !has(object.spec.tls) ||
+        object.spec.tls.all(t, has(t.hosts) && t.hosts.all(h, h == 'api.gamemesh.app'))
+      message: "in gamemesh, Ingress TLS may name api.gamemesh.app only"
+    - expression: >-
+        request.kind.kind != 'Ingress' || !has(object.spec.defaultBackend)
+      message: "in gamemesh, Ingresses may not set a default backend"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gamemesh-network-surface
+spec:
+  policyName: gamemesh-network-surface
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: gamemesh

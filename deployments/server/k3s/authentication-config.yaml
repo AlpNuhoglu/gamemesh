@@ -1,0 +1,45 @@
+# Lets the Kubernetes API accept GitHub Actions' OIDC tokens (plan D1), so CI
+# holds no long-lived cluster credential: each job asks GitHub for a token
+# that lives minutes, and the API server checks GitHub's signature and the
+# claims below. Install as /etc/rancher/k3s/authentication-config.yaml (mode
+# 600); config.yaml points kube-apiserver at it. The API server re-reads the
+# file when it changes; adding the flag needs one k3s restart.
+#
+# What the identity can do is decided by RBAC in the gamemesh namespace
+# (deployments/k8s/cluster/ci-deployer.yaml), not here.
+apiVersion: apiserver.config.k8s.io/v1
+kind: AuthenticationConfiguration
+# k3s normally passes --anonymous-auth=false, but not when this file is given
+# ("Not setting kube-apiserver 'anonymous-auth' flag due to user-provided
+# 'authentication-config' file"), and the API server's own default is
+# enabled: requests without credentials then reached RBAC (/version answered
+# 200 instead of 401). Turned off here, where k3s defers to us.
+anonymous:
+  enabled: false
+jwt:
+  - issuer:
+      url: https://token.actions.githubusercontent.com
+      # The job asks for a token with this audience; tokens GitHub issues
+      # for other audiences (cloud providers, Tailscale) are not accepted.
+      audiences:
+        - gamemesh-k8s
+    # Every rule must hold, or the token is rejected. sub alone is not
+    # enough: it names the repository by owner/name, which a deleted or
+    # transferred repository's successor could reuse; the numeric IDs
+    # cannot be reused.
+    claimValidationRules:
+      - expression: "claims.repository_id == '1266517143'"
+        message: token is not from AlpNuhoglu/gamemesh
+      - expression: "claims.repository_owner_id == '181646597'"
+        message: token is not from the AlpNuhoglu account
+      - expression: "claims.ref == 'refs/heads/main'"
+        message: only main deploys
+      - expression: "claims.environment == 'production'"
+        message: only jobs in the production environment
+    # The user RBAC sees, e.g.
+    # github:repo:AlpNuhoglu/gamemesh:environment:production. The prefix
+    # keeps these names apart from every other kind of user.
+    claimMappings:
+      username:
+        claim: sub
+        prefix: "github:"

@@ -1,3 +1,9 @@
+# The gamemesh namespace and its Pod Security labels (finding #86). Kept out
+# of the base, which CI applies: anyone who can write this object can set
+# enforce: privileged and run a root pod with the node's filesystem, so it is
+# cluster-level, written by the admin only. Production: copied into k3s's
+# auto-deploy directory (the file must stay there; removing it would delete
+# the namespace and everything in it). Local: included by overlays/local.
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -188,3 +188,15 @@ vulnerabilities:
       (3.3.7-r2); the image has not been rebuilt yet. Dependabot proposes the
       new digest once it is; revisit if it has not by then.
     expired_at: 2026-11-18
+# Accepted misconfiguration findings, same rules: scoped to one file, with a
+# reason and an expiry.
+misconfigurations:
+  - id: KSV-0056
+    paths: ["deployments/k8s/cluster/ci-deployer.yaml"]
+    statement: >-
+      CI applies the prod overlay, which holds Services and an Ingress, so its
+      Role must write them. What that write could be used for is refused in
+      the API server instead (finding #87, gamemesh-admission-policy.yaml):
+      in gamemesh a Service must be ClusterIP without externalIPs, and an
+      Ingress must use class traefik and host api.gamemesh.app only.
+    expired_at: 2027-04-21
