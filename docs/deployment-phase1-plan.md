@@ -1398,7 +1398,7 @@ Her adım şu yapıda:
 
 ### C1. Domain ve DNS
 
-- [ ] **Ne:** Domain al (Cloudflare Registrar, Porkbun, Namecheap gibi). DNS'te
+- [x] **Ne:** Domain al (Cloudflare Registrar, Porkbun, Namecheap gibi). DNS'te
   `api.<domain>  A  <public-ip>` kaydı, TTL 300.
 - **Neden:** Let's Encrypt IP adresine değil, domain'e sertifika verir. Düşük TTL, ilk
   günlerde IP değişirse yayılmanın hızlı olmasını sağlar. Cloudflare kullanıyorsan **ilk
@@ -1408,6 +1408,31 @@ Her adım şu yapıda:
   nameserver farkı, `dig +trace`.
 - **Bitti sayılır:** `dig +short api.<domain>` → `<public-ip>`. Adım B4'teki curl artık
   `Host` header'ı olmadan `http://api.<domain>/health` ile çalışıyor.
+- **Kararlar (2026-10-21):**
+  - **`gamemesh.app`, Cloudflare Registrar** (maliyet fiyatına, DNS + DNSSEC + WHOIS
+    gizliliği dahil). `.app` HSTS preload listesinde: tarayıcılar sadece HTTPS açıyor.
+  - **`api  A`, TTL 300, proxy kapalı:** proxy TLS'i Cloudflare'de bitirip gateway'e herkesi
+    Cloudflare adresi olarak gösterirdi (rate limit istemci başına). **AAAA yok** (#81).
+  - **CAA `0 issue "letsencrypt.org"`.** Cloudflare, Universal SSL açıkken kendi 4 CA'sını
+    (DigiCert, Sectigo, SSL.com, Google) `issue` ve `issuewild` olarak ekliyordu; proxy
+    kullanılmadığı için Universal SSL kapatıldı, kayıtlar kalktı.
+  - **Ingress host'u repoda** (`overlays/prod`, PR #70); domain zaten açık bilgi.
+- **Sonuç (2026-10-21):**
+  - **`curl http://api.gamemesh.app/health`** → `200` `{"status":"ok","version":"47c4a58…"}`
+    (Host header'ı olmadan); eski `api.gamemesh.invalid` 404.
+  - **DNS:** 1.1.1.1, 8.8.8.8, 9.9.9.9 ve sunucunun çözücüsü aynı A kaydını veriyor;
+    yetkili sunucuda TTL 300. `dig +trace`: kök (`g.root-servers.net`) → `.app`
+    (`charlestonroadregistry.com`, TTL 2 gün) → `bill/joyce.ns.cloudflare.com` (TTL 3 saat)
+    → `A`, her adım ~45 ms.
+  - **DNSSEC:** DS `.app`'te yayımlandı (algoritma 13), 1.1.1.1 cevabında `ad` bayrağı var.
+  - **Yeniden deploy'lar:** `62deb14` (Go 1.26.10, #82) rollout sırasında 400/400 istek 200;
+    `47c4a58` (host) 10/10 pod, 0 restart; StatefulSet'ler `configured` ama `generation` 1,
+    pod'lar yeniden başlamadı (sadece last-applied annotation).
+  - **Deploy sırasında ağ sorunu (Bulgu #83):** ilk `apply` OpenAPI indirmesi koptuğu için
+    hiçbir şey uygulamadı; çıktıyı özetleyen komutum hatayı gizledi ve ardından gelen
+    rollout kontrolleri "başarılı" dedi. Sebep tailnet'teki boyuta bağlı kayıptı (ev IP'si
+    değişmişti); modem yeniden başlatılınca düzeldi. Deploy artık apply'ın tam çıktısına ve
+    çıkış koduna bakıyor.
 
 ### C2. cert-manager kurulumu
 
@@ -1734,4 +1759,5 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 79 | VNC konsolu US klavye düzeniyle tuş kodu gönderiyor; Türkçe Q klavyeyle sembollü/`i`'li parola yazılamıyor, acil durum girişi çalışmıyor | B2 | Ölçüldü (`Login incorrect`; `localectl`: `X11 Layout: us`; test karakterleri farklı çıktı) | B2 (çözüldü: parola sadece harf/rakam, `i` yok, 24 karakter; konsoldan giriş doğrulandı) |
 | 80 | k3s Secret'ları `aescbc` ile şifreliyor; Kubernetes dokümanı bu sağlayıcıyı "Weak" ve padding oracle yüzünden önerilmez olarak işaretliyor. Anahtar (`server/cred/encryption-config.json`) verinin yanında, aynı diskte: disk ya da tam snapshot sızarsa şifreleme bir şey korumuyor | M8 | Ölçüldü (`k3s secrets-encrypt status`: `AES-CBC`; `k3s server --help`: `secretbox` "(experimental)") | Faz 1 sonrası: `secretbox` k3s'te stable olunca ya da KMS; yedeklerde `cred/` datastore'dan ayrı saklanmalı |
 | 81 | Cluster sadece IPv4 (podCIDR `10.42.0.0/24`, Traefik `ipFamilies: [IPv4]`); sunucunun IPv6 adresinde 80 bağlantıyı reddediyor. AAAA kaydı IPv6 tercih eden istemcileri çalışmayan bir adrese gönderirdi | B4 | Ölçüldü (sunucudan kendi IPv4'üne 200, IPv6'sına curl exit 7) | C1 (AAAA kaydı yok); dual-stack Faz 1 sonrası |
-| 82 | Go `crypto/x509` açığı GO-2026-6809 / CVE-2026-111943 (ele geçirilmiş ara sertifikalara güven), `go1.26.9` etkileniyor; 2026-10-21 00:27 UTC'de yayımlandı, sonraki bütün CI çalışmaları govulncheck'te kırmızı | M7 | Ölçüldü (CI govulncheck, PR #68: `wsgateway.Hub.CloseAll → … → x509.Certificate.Verify`; aynı sürümle yerel govulncheck v1.9.0 açığı listelemedi, fark açıklanamadı) | `fix/go-1.26.10` (toolchain ve Dockerfile `go1.26.10`), ardından prod yeniden deploy |
+| 82 | Go `crypto/x509` açığı GO-2026-6809 / CVE-2026-111943 (ele geçirilmiş ara sertifikalara güven), `go1.26.9` etkileniyor; 2026-10-21 00:27 UTC'de yayımlandı, sonraki bütün CI çalışmaları govulncheck'te kırmızı | M7 | Ölçüldü (CI govulncheck, PR #68: `wsgateway.Hub.CloseAll → … → x509.Certificate.Verify`; aynı sürümle yerel govulncheck v1.9.0 açığı listelemedi, fark açıklanamadı) | PR #69 (çözüldü: `go1.26.10`; prod `62deb14`'e kesintisiz yeniden deploy edildi) |
+| 83 | Ev IP'si değiştikten sonra tailnet yolunda büyük UDP paketleri kayboldu (1200 bayt ping %67 kayıp, ~2 sn; API isteği ~7 sn); `kubectl apply` OpenAPI indirirken koptu ve hiçbir şey uygulamadı, özetlenmiş çıktı bunu gizledi | B4 | Ölçüldü (public ICMP/TCP sağlıklı, sadece tailnet; modem yeniden başlatılınca 43 ms, %0 kayıp) | C1 (geçici çözüm: modem restart; deploy'da tam çıktı ve çıkış kodu); D'de deploy CI'dan, ev bağlantısından bağımsız |

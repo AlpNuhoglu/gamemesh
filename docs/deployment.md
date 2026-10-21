@@ -230,8 +230,13 @@ sed -i '' "s/newTag: set-by-deploy/newTag: $SHA/" "$F"
 kprod apply -k deployments/k8s/overlays/prod --dry-run=server   # admission, PSS included
 kprod apply -k deployments/k8s/overlays/prod
 git checkout -- "$F"
-curl -H 'Host: api.gamemesh.invalid' http://<public-ip>/health   # {"status":"ok","version":"<SHA>"}
+curl http://api.gamemesh.app/health      # {"status":"ok","version":"<SHA>"}
 ```
+
+Check the apply's own output for errors rather than a summary of it: a
+validation failure (for example when the OpenAPI download times out over a bad
+tailnet path) applies nothing, and the rollout checks that follow still report
+success for the unchanged Deployments.
 
 The `gamemesh-secrets` Secret must exist first (see "Production secrets"); the
 namespace is created by hand for it, and the first apply adds its labels.
