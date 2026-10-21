@@ -1570,7 +1570,7 @@ Her adım şu yapıda:
 
 ### D1. CI için kısıtlı yetkili cluster erişimi
 
-- [ ] **Ne:** Cluster'da sadece `gamemesh` namespace'ine yetkisi olan bir `ServiceAccount`
+- [x] **Ne:** Cluster'da sadece `gamemesh` namespace'ine yetkisi olan bir `ServiceAccount`
   + `Role` + `RoleBinding` oluşturmak. Bu hesaba ait bir token'la kubeconfig üretmek ve
   GitHub'da `production` **Environment**'ına `KUBECONFIG` secret'ı olarak koymak.
 - **Neden:** `/etc/rancher/k3s/k3s.yaml` cluster-admin yetkisi taşır. Onu GitHub'a koyarsan,
@@ -1590,6 +1590,36 @@ Her adım şu yapıda:
   GitHub Environments ve protection rule'ları.
 - **Bitti sayılır:** Bu kubeconfig ile `kubectl -n gamemesh get pods` çalışıyor ama
   `kubectl get nodes` **Forbidden** dönüyor.
+- **Kararlar (2026-10-21):** Plandaki ServiceAccount token'ı yerine **hiç kalıcı kimlik
+  bilgisi olmayan** bir yapı:
+  - **Ağ:** Tailscale GitHub Action v4.2.0, workload identity federation (GitHub OIDC); her
+    çalışma geçici bir `tag:ci` node'u. ACL: `tag:ci` → sadece `tag:prod:6443`; politika
+    testleri 22/80/10250'yi reddediyor. Sunucu `tag:prod`.
+  - **Kimlik:** API sunucusu GitHub'ın OIDC token'larını kabul ediyor
+    (`authentication-config.yaml`): audience `gamemesh-k8s`; repo ve sahip **ID**'leri
+    (`sub` bir isim, silinen ya da devredilen bir reponun yerine geçen tarafından yeniden
+    kullanılabilir), `ref: refs/heads/main`, `environment: production`. Repo 2026-06-11'de
+    açıldığı için `sub` eski biçimde (`use_immutable_subject: false`).
+  - **Anonim erişim:** k3s bu dosya verilince `--anonymous-auth=false`'u bırakıyor (log:
+    "Not setting kube-apiserver 'anonymous-auth' flag"); anonim `/version` 200 döndü. Dosyada
+    `anonymous.enabled: false` ile kapatıldı (401).
+  - **RBAC:** `ci-deployer` Role'ü `gamemesh`'te; Secret, exec, delete, namespace, RBAC ve
+    cluster yetkisi yok. Deployment yazabilen biri Secret'ı mount eden bir pod da yazabilir;
+    bu, namespace içi deploy yetkisinin doğası (koruma, kimliği kimin kullanabildiği).
+  - **Namespace base'den çıktı (Bulgu #86)** ve **Service/Ingress biçimi admission
+    policy'yle sınırlandı (Bulgu #87).**
+  - **Environment `production`:** sadece `main`; elle onay yok.
+- **Sonuç (2026-10-21):** `cluster-access` çalışması (3. deneme): runner tailnet'e doğrudan
+  bağlandı; token `lifetime_s: 300`; `auth whoami` →
+  `github:repo:AlpNuhoglu/gamemesh:environment:production`; `get pods -n gamemesh` 10 pod;
+  10/10 yetki kontrolü doğru; **`get nodes` → Forbidden**. Önceki iki deneme Tailscale'in
+  token değişiminde düştü (400, sonra 403): `TS_OAUTH_CLIENT_ID` ile `TS_AUDIENCE`
+  uyuşmuyordu; workflow'a eklenen ön kontrol bunu gösterdi (`WARN audience is
+  api.tailscale.com/<client id>`), değer düzeltilince geçti. Prod'da k3s yeniden başlatılırken
+  public HTTPS 3636/3636 200. Admission policy altında gerçek bir HTTP-01 challenge'ı
+  (geçici, yeni hesaplı bir staging issuer ile) 27 sn'de geçti; aynı hesabın yakın tarihli
+  doğrulaması varken Let's Encrypt challenge istemiyor.
+  - **D2'ye not:** token 5 dk geçerli; uzun bir rollout beklemesi süresini aşabilir.
 
 ### D2. Deploy job'ı
 
@@ -1832,6 +1862,9 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 80 | k3s Secret'ları `aescbc` ile şifreliyor; Kubernetes dokümanı bu sağlayıcıyı "Weak" ve padding oracle yüzünden önerilmez olarak işaretliyor. Anahtar (`server/cred/encryption-config.json`) verinin yanında, aynı diskte: disk ya da tam snapshot sızarsa şifreleme bir şey korumuyor | M8 | Ölçüldü (`k3s secrets-encrypt status`: `AES-CBC`; `k3s server --help`: `secretbox` "(experimental)") | Faz 1 sonrası: `secretbox` k3s'te stable olunca ya da KMS; yedeklerde `cred/` datastore'dan ayrı saklanmalı |
 | 81 | Cluster sadece IPv4 (podCIDR `10.42.0.0/24`, Traefik `ipFamilies: [IPv4]`); sunucunun IPv6 adresinde 80 bağlantıyı reddediyor. AAAA kaydı IPv6 tercih eden istemcileri çalışmayan bir adrese gönderirdi | B4 | Ölçüldü (sunucudan kendi IPv4'üne 200, IPv6'sına curl exit 7) | C1 (AAAA kaydı yok); dual-stack Faz 1 sonrası |
 | 82 | Go `crypto/x509` açığı GO-2026-6809 / CVE-2026-111943 (ele geçirilmiş ara sertifikalara güven), `go1.26.9` etkileniyor; 2026-10-21 00:27 UTC'de yayımlandı, sonraki bütün CI çalışmaları govulncheck'te kırmızı | M7 | Ölçüldü (CI govulncheck, PR #68: `wsgateway.Hub.CloseAll → … → x509.Certificate.Verify`; aynı sürümle yerel govulncheck v1.9.0 açığı listelemedi, fark açıklanamadı) | PR #69 (çözüldü: `go1.26.10`; prod `62deb14`'e kesintisiz yeniden deploy edildi) |
-| 83 | Ev IP'si değiştikten sonra tailnet yolunda büyük UDP paketleri kayboldu (1200 bayt ping %67 kayıp, ~2 sn; API isteği ~7 sn); `kubectl apply` OpenAPI indirirken koptu ve hiçbir şey uygulamadı, özetlenmiş çıktı bunu gizledi | B4 | Ölçüldü (public ICMP/TCP sağlıklı, sadece tailnet; modem yeniden başlatılınca 43 ms, %0 kayıp) | C1 (geçici çözüm: modem restart; deploy'da tam çıktı ve çıkış kodu); D'de deploy CI'dan, ev bağlantısından bağımsız |
+| 83 | Ev IP'si değiştikten sonra tailnet yolunda büyük UDP paketleri kayboldu (1200 bayt ping %67 kayıp, ~2 sn; API isteği ~7 sn); `kubectl apply` OpenAPI indirirken koptu ve hiçbir şey uygulamadı, özetlenmiş çıktı bunu gizledi | B4 | Ölçüldü (public ICMP/TCP sağlıklı, sadece tailnet; modem yeniden başlatılınca 43 ms, %0 kayıp) | C1 (geçici çözüm: modem restart; deploy'da tam çıktı ve çıkış kodu); 2026-10-21'de IP değişmeden tekrarladı; D'de deploy CI'dan, ev bağlantısından bağımsız |
 | 84 | cert-manager'ın 5 imajı (`deployments/k8s/cluster/cert-manager.yaml`, HelmChart değerlerinde digest'li) CI'ın üçüncü taraf imaj taramasında yok; tarama sadece `base/`, `components/` ve compose'u okuyor | M7 | Kod (`third-party-images` job'unun okuduğu yollar) | Faz 1 sonrası (taramaya HelmChart değerlerindeki imajları da ekle) |
 | 85 | Sertifika süresi dolmadan uyaran bir şey yok: Let's Encrypt uyarı e-postalarını 2025-06-04'te bıraktı; cert-manager yenilemesi takılırsa ilk belirti süresi dolmuş sertifika olur | C3 | Ölçüldü (Let's Encrypt duyuruları, 2025-01-22 ve 2025-06-26) | Faz 1 sonrası (harici izleme, ör. Red Sift Certificates Lite, ya da süre kontrolü yapan bir blackbox probe) |
+| 86 | `gamemesh` Namespace'i (PSS etiketleriyle) base'deydi; overlay'i uygulayan CI namespace'i de yazmak zorunda kalırdı, namespace'i yazabilen `enforce: privileged` yapıp node'a root pod çalıştırabilir (namespace yetkili deployer = fiilen cluster-admin) | D1 | Kod (render: Namespace prod overlay'inde) | D1 (çözüldü: `deployments/k8s/namespace/`, prod'da auto-deploy, local overlay'de) |
+| 87 | CI'ın Role'ü Service ve Ingress yazıyor (Trivy KSV-0056, HIGH): `externalIPs` ile trafik ele geçirme (CVE-2020-8554), `LoadBalancer` ile node'da port, başka host'lar için Ingress | M7 | Ölçüldü (Trivy 0.70.0; k3s'te 6 ihlal reddedildi) | D1 (çözüldü: ValidatingAdmissionPolicy; issuer'larda solver `serviceType: ClusterIP`, varsayılan NodePort'tu; KSV-0056 bu dosyaya kapsamlı ve 2027-04-21'de biten kayıtla kabul) |
+| 88 | `nats:2.15.1-alpine`'daki `nats-server` go1.27.2 ile derlenmiş, CVE-2026-111943 (#82) etkiliyor; düzeltilmiş NATS sürümü henüz yok | M7 | Ölçüldü (Trivy; çalışan sunucu `/varz`: TLS, cluster, leafnode, gateway yok, 0 route) | Kabul (`.trivyignore.yaml`, 2026-11-04'te bitiyor; gosu'daki aynı CVE 2027-01-18); yamalı imaj gelince kayıt kalkar, NATS'a TLS gelirse geçersiz |
