@@ -74,7 +74,8 @@ make k8s-delete                                        # remove the local overla
 
 ### Cluster settings (once per new cluster)
 
-Settings for the k3s cluster itself, outside the overlays:
+Settings for the k3s cluster itself, outside the overlays (the production
+server sets both in its k3s config, see [Production server](#3-production-server-vps)):
 
 ```bash
 # k3s installed with encryption at rest for Secrets (off by default):
@@ -180,6 +181,46 @@ tailscale up --ssh=false && tailscale set --auto-update
 
 Then disable key expiry for the node in the Tailscale admin console, and
 unassign `gamemesh-ssh` once `ssh gamemesh` works.
+
+### k3s
+
+The version is pinned to the minor the manifests are validated against
+(kubeconform `1.35.0`, PSS `v1.35`); moving to a newer minor is its own step.
+The settings live in `deployments/server/k3s/config.yaml`, which k3s reads on
+every start: Secrets encrypted at rest, an API certificate for the tailnet
+address only, and flannel's `host-gw` backend, so nothing listens on UDP 8472.
+
+```bash
+# On the server, as alp. Read the installer before running it as root.
+curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh && sha256sum /tmp/k3s-install.sh
+sudo install -d -m 755 /etc/rancher/k3s
+sed "s/TAILNET_IP/$(tailscale ip -4)/" config.yaml | sudo tee /etc/rancher/k3s/config.yaml >/dev/null
+sudo chmod 600 /etc/rancher/k3s/config.yaml
+# Files in this directory are applied by k3s itself, on every start
+sudo install -D -m 600 traefik-config.yaml /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+sudo INSTALL_K3S_VERSION='v1.35.9+k3s1' sh /tmp/k3s-install.sh
+sha256sum /usr/local/bin/k3s           # compare with the release's sha256sum-amd64.txt
+sudo k3s secrets-encrypt status        # Encryption Status: Enabled
+```
+
+The admin kubeconfig (cluster-admin) is kept in its own file on the admin's
+machine, never merged into `~/.kube/config` and never given to CI, so a plain
+`kubectl` always talks to the local cluster:
+
+```bash
+# server: sudo install -m 600 -o alp -g alp /etc/rancher/k3s/k3s.yaml ~/k3s.yaml
+scp gamemesh:k3s.yaml ~/.kube/gamemesh-prod.yaml && ssh gamemesh 'shred -u ~/k3s.yaml'
+chmod 600 ~/.kube/gamemesh-prod.yaml
+sed -i '' 's#https://127.0.0.1:6443#https://<tailnet-ip>:6443#' ~/.kube/gamemesh-prod.yaml
+kubectl --kubeconfig ~/.kube/gamemesh-prod.yaml config rename-context default gamemesh-prod
+alias kprod='kubectl --kubeconfig ~/.kube/gamemesh-prod.yaml --context gamemesh-prod'
+kprod get nodes
+```
+
+After a reboot everything comes back by itself in about 40 s (measured:
+reboot to Traefik answering, 44 s). The node's `Ready` condition is not
+evidence of that: the API serves the last stored status before the kubelet
+reports again.
 
 ## 4. Grafana dashboard import (non-provisioned Grafana)
 

@@ -1,5 +1,7 @@
 # k3s settings for the cluster itself, not the application: applied once to
-# a new cluster (B), kept out of the overlays. kubectl apply -f this file.
+# a new cluster (B), kept out of the overlays. Either kubectl apply -f this
+# file, or (production, B3) copy it into /var/lib/rancher/k3s/server/manifests/,
+# which k3s applies by itself on every start.
 #
 # HelmChartConfig is k3s's way to override the values of a chart it ships
 # (here Traefik, in kube-system). k3s re-renders the chart when it changes.
