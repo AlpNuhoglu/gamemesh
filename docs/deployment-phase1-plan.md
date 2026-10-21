@@ -1481,6 +1481,27 @@ Her adım şu yapıda:
   DNS-01 gerekir).
 - **Bitti sayılır:** Staging ile `kubectl get certificate` → `READY=True`. Ardından prod
   issuer'a geçilmiş ve o da `READY=True`.
+- **Kararlar (2026-10-21):**
+  - **Issuer'lar cluster seviyesinde,** `deployments/k8s/cluster/letsencrypt-{staging,prod}.yaml`,
+    k3s'in auto-deploy klasöründen (cert-manager gibi). Prod dosyası ancak staging bir
+    sertifika verdikten sonra yazıldı.
+  - **E-posta `ops@gamemesh.app`** (Cloudflare Email Routing ile kişisel kutuya yönlendiriliyor);
+    repo herkese açık olduğu için dosyada `ACME_EMAIL` yer tutucusu, sunucuda `sed` ile
+    değiştiriliyor. Let's Encrypt süre uyarısı e-postalarını 2025-06-04'te bıraktı; adres
+    sadece ISRG'nin duyuru listesine gidiyor (Bulgu #85).
+  - **Önce yerelde, çözülemeyen bir isimle** (`local-test.gamemesh.app`, e-postasız hesap):
+    solver pod'u PSS `restricted` namespace'inde kabul edildi ve çalıştı; cert-manager'ın
+    self-check'i bilerek başarısız oldu, yani Let's Encrypt'ten doğrulama istenmedi.
+  - **Prod'da ayrı test sertifikası yok:** ilk prod sertifikası C4'te Ingress'ten geliyor
+    (prod'un haftalık tekrar sertifika limiti dar, akış staging'de kanıtlandı).
+  - **E-posta güvenliği:** Email Routing MX/SPF/DKIM ekledi; gönderim yapılmadığı için
+    `_dmarc  TXT  v=DMARC1; p=reject;` eklendi (sahte `@gamemesh.app` postaları reddedilir).
+- **Staging sonucu (2026-10-21):** `api.gamemesh.app` için staging `Certificate` 33 sn'de
+  `Ready` (challenge `pending` → `valid`, Let's Encrypt internetten Traefik üzerinden
+  doğruladı). Zincir 3 sertifika, `(STAGING) Dastardly Durum YR1`, **64 gün** (planda 90
+  yazıyordu), `notBefore` 1 saat geriye, yenileme süresinin 2/3'ünde (3 Aralık), RSA 2048
+  (prod'da ECDSA). Solver kaynakları kendiliğinden silindi, test sertifikası silindi.
+  `letsencrypt-prod` hesabı açıldı (`Ready=True`).
 
 ### C4. Ingress'e TLS ve HTTPS yönlendirmesi
 
@@ -1780,3 +1801,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 82 | Go `crypto/x509` açığı GO-2026-6809 / CVE-2026-111943 (ele geçirilmiş ara sertifikalara güven), `go1.26.9` etkileniyor; 2026-10-21 00:27 UTC'de yayımlandı, sonraki bütün CI çalışmaları govulncheck'te kırmızı | M7 | Ölçüldü (CI govulncheck, PR #68: `wsgateway.Hub.CloseAll → … → x509.Certificate.Verify`; aynı sürümle yerel govulncheck v1.9.0 açığı listelemedi, fark açıklanamadı) | PR #69 (çözüldü: `go1.26.10`; prod `62deb14`'e kesintisiz yeniden deploy edildi) |
 | 83 | Ev IP'si değiştikten sonra tailnet yolunda büyük UDP paketleri kayboldu (1200 bayt ping %67 kayıp, ~2 sn; API isteği ~7 sn); `kubectl apply` OpenAPI indirirken koptu ve hiçbir şey uygulamadı, özetlenmiş çıktı bunu gizledi | B4 | Ölçüldü (public ICMP/TCP sağlıklı, sadece tailnet; modem yeniden başlatılınca 43 ms, %0 kayıp) | C1 (geçici çözüm: modem restart; deploy'da tam çıktı ve çıkış kodu); D'de deploy CI'dan, ev bağlantısından bağımsız |
 | 84 | cert-manager'ın 5 imajı (`deployments/k8s/cluster/cert-manager.yaml`, HelmChart değerlerinde digest'li) CI'ın üçüncü taraf imaj taramasında yok; tarama sadece `base/`, `components/` ve compose'u okuyor | M7 | Kod (`third-party-images` job'unun okuduğu yollar) | Faz 1 sonrası (taramaya HelmChart değerlerindeki imajları da ekle) |
+| 85 | Sertifika süresi dolmadan uyaran bir şey yok: Let's Encrypt uyarı e-postalarını 2025-06-04'te bıraktı; cert-manager yenilemesi takılırsa ilk belirti süresi dolmuş sertifika olur | C3 | Ölçüldü (Let's Encrypt duyuruları, 2025-01-22 ve 2025-06-26) | Faz 1 sonrası (harici izleme, ör. Red Sift Certificates Lite, ya da süre kontrolü yapan bir blackbox probe) |
