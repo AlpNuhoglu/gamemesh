@@ -1,7 +1,8 @@
 # Proves CI's access to the production cluster (plan D1), by hand only: the
-# job joins the tailnet as an ephemeral tag:ci node, gets a short-lived OIDC
-# token from GitHub for the cluster, and checks what that identity may and may
-# not do. The deploy job (D2) uses the same three steps.
+# job joins the tailnet and gets short-lived OIDC tokens for the cluster
+# through the same composite action the deploy job uses
+# (.github/actions/prod-cluster), then checks what that identity may and may
+# not do.
 #
 # No long-lived secret is involved: Tailscale and the Kubernetes API both
 # trust GitHub's OIDC tokens. The production environment admits main only,
@@ -27,109 +28,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Client ID and audience are not secrets (they identify the trust
-      # relationship, not a credential), but environment secrets keep them
-      # with the environment's other settings.
-      # Tailscale answers a bad trust setup with a bare "token exchange failed
-      # with status 400: invalid request". This says what is wrong instead:
-      # the shape of the two values (never the values: secrets are masked and
-      # only checks are printed), and the claims GitHub puts in the token it
-      # issues for Tailscale, to compare with the trust credential (subject,
-      # custom claim repository_id).
-      - name: Check the Tailscale trust inputs
-        env:
-          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
-        run: |
-          python3 - <<'PY'
-          import base64, json, os, re, sys, urllib.parse, urllib.request
-          cid, aud = os.environ["TS_OAUTH_CLIENT_ID"], os.environ["TS_AUDIENCE"]
-          checks = {
-              "client id set": bool(cid),
-              "client id has no whitespace": cid == cid.strip() and not re.search(r"\s", cid),
-              "audience set": bool(aud),
-              "audience has no whitespace": aud == aud.strip() and not re.search(r"\s", aud),
-          }
-          # The documented form; a warning only, in case the form changes.
-          hints = {
-              "audience has no scheme": not aud.startswith(("http://", "https://")),
-              "audience is api.tailscale.com/<client id>": aud == f"api.tailscale.com/{cid}",
-          }
-          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(aud, safe="")
-          req = urllib.request.Request(url, headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
-          token = json.load(urllib.request.urlopen(req))["value"]
-          print(f"::add-mask::{token}")
-          p = token.split(".")[1]
-          c = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
-          checks["token aud equals the audience secret"] = c.get("aud") == aud
-          for name, ok in checks.items():
-              print(f"{'ok  ' if ok else 'FAIL'} {name}")
-          for name, ok in hints.items():
-              print(f"{'ok  ' if ok else 'WARN'} {name}")
-          print("issuer:", c.get("iss"))
-          print("sub:", c.get("sub"))
-          print("repository_id:", repr(c.get("repository_id")), type(c.get("repository_id")).__name__)
-          print("environment:", c.get("environment"), "| ref:", c.get("ref"))
-          sys.exit(0 if all(checks.values()) else 1)
-          PY
-
-      - name: Join the tailnet (ephemeral, tag:ci)
-        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+      - name: Reach the production cluster
+        uses: ./.github/actions/prod-cluster
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          audience: ${{ secrets.TS_AUDIENCE }}
-          tags: tag:ci
-          ping: ${{ vars.K8S_HOST }}
+          ts-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-audience: ${{ secrets.TS_AUDIENCE }}
+          host: ${{ vars.K8S_HOST }}
+          ca-data: ${{ vars.K8S_CA_DATA }}
 
-      # The same version as the cluster, hash-checked like kubeconform.
-      - name: Install kubectl
-        env:
-          KUBECTL_VERSION: v1.35.9
-          KUBECTL_SHA256: 3cfeaf80be482b435b0aa214aff6e0b2c312ee23c0ff20810c75517b6004c6eb
-        run: |
-          curl -fsSLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-          echo "${KUBECTL_SHA256}  kubectl" | sha256sum -c -
-          install -m 755 kubectl "${RUNNER_TEMP}/kubectl"
-          "${RUNNER_TEMP}/kubectl" version --client
-
-      # A token for the audience the API server accepts. It is masked before
-      # anything else happens; only its non-secret claims are printed.
-      - name: Get a cluster token from GitHub
-        run: |
-          token=$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gamemesh-k8s" | jq -r .value)
-          echo "::add-mask::${token}"
-          echo "K8S_TOKEN=${token}" >> "${GITHUB_ENV}"
-          # The payload is base64url without padding.
-          python3 -c 'import base64, json, sys
-          p = sys.argv[1].split(".")[1]; c = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
-          print(json.dumps({k: c.get(k) for k in ("sub", "aud", "ref", "environment", "repository_id", "repository_owner_id")} | {"lifetime_s": c["exp"] - c["iat"]}, indent=1))' "${token}"
-
-      # The CA certificate and the address are not secrets either; they live
-      # in the environment's variables so the repo holds no address.
-      - name: Write the kubeconfig
-        env:
-          K8S_CA_DATA: ${{ vars.K8S_CA_DATA }}
-          K8S_HOST: ${{ vars.K8S_HOST }}
-        run: |
-          kc="${RUNNER_TEMP}/kubeconfig"
-          echo "${K8S_CA_DATA}" | base64 -d > "${RUNNER_TEMP}/ca.crt"
-          k="${RUNNER_TEMP}/kubectl --kubeconfig ${kc}"
-          $k config set-cluster prod --server "https://${K8S_HOST}:6443" --certificate-authority "${RUNNER_TEMP}/ca.crt"
-          $k config set-credentials ci --token "${K8S_TOKEN}"
-          $k config set-context prod --cluster prod --user ci --namespace gamemesh
-          $k config use-context prod
-          echo "KUBECONFIG=${kc}" >> "${GITHUB_ENV}"
+      - name: The cluster token's claims
+        run: gh-oidc-token --claims
 
       - name: Who am I, and what can I do
         run: |
-          k="${RUNNER_TEMP}/kubectl"
-          $k auth whoami
-          $k -n gamemesh get pods
+          kubectl version
+          kubectl auth whoami
+          kubectl -n gamemesh get pods
           fail=0
           while read -r expect verb res ns; do
             args=(auth can-i "$verb" "$res"); [ -n "$ns" ] && args+=(-n "$ns")
-            got=$($k "${args[@]}" 2>/dev/null || true)
+            got=$(kubectl "${args[@]}" 2>/dev/null || true)
             if [ "$got" = "$expect" ]; then mark=ok; else mark=MISMATCH; fail=1; fi
             printf '%-9s %-4s %-6s %-46s %s\n' "$mark" "$expect" "$verb" "$res" "${ns:-<cluster>}"
           done <<'EOF'
@@ -145,7 +63,7 @@ jobs:
           no get deployments kube-system
           EOF
           # The plan's check: listing nodes is Forbidden.
-          if $k get nodes >/dev/null 2>"${RUNNER_TEMP}/nodes.err"; then
+          if kubectl get nodes >/dev/null 2>"${RUNNER_TEMP}/nodes.err"; then
             echo "listing nodes was allowed"; fail=1
           else
             grep -o 'Forbidden.*' "${RUNNER_TEMP}/nodes.err" | head -1

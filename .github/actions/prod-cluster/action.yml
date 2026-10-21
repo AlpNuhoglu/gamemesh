@@ -1,0 +1,112 @@
+# Reach the production cluster from a job (plan D1, D2): join the tailnet as
+# an ephemeral tag:ci node and point kubectl at the API server with GitHub
+# OIDC tokens. Used by the deploy job and by the cluster-access check, so the
+# two cannot drift apart.
+#
+# The calling job needs `environment: production` (the API server and the
+# Tailscale trust credential accept only that environment, from main) and
+# `permissions: id-token: write`. No long-lived secret is involved: the two
+# inputs below identify trust relationships, they are not credentials.
+#
+# Afterwards `kubectl` is on PATH and KUBECONFIG points at the cluster.
+name: prod-cluster
+description: Join the tailnet and configure kubectl for the production cluster
+
+inputs:
+  ts-client-id:
+    description: Tailscale trust credential Client ID (secrets.TS_OAUTH_CLIENT_ID)
+    required: true
+  ts-audience:
+    description: Tailscale trust credential Audience (secrets.TS_AUDIENCE)
+    required: true
+  host:
+    description: The API server's tailnet address (vars.K8S_HOST)
+    required: true
+  ca-data:
+    description: The cluster CA certificate, base64 (vars.K8S_CA_DATA)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Tailscale answers a bad trust setup with a bare 400 or 403. This says
+    # what is wrong instead, without printing the values: both set, no
+    # whitespace, the token GitHub issues for that audience carries it, and
+    # (warning only) the documented form api.tailscale.com/<client id>. A
+    # Client ID and Audience from different credentials showed up exactly so.
+    - name: Check the Tailscale trust inputs
+      shell: bash
+      env:
+        TS_OAUTH_CLIENT_ID: ${{ inputs.ts-client-id }}
+        TS_AUDIENCE: ${{ inputs.ts-audience }}
+      run: |
+        python3 - <<'PY'
+        import base64, json, os, re, sys, urllib.parse, urllib.request
+        cid, aud = os.environ["TS_OAUTH_CLIENT_ID"], os.environ["TS_AUDIENCE"]
+        checks = {
+            "client id set": bool(cid),
+            "client id has no whitespace": cid == cid.strip() and not re.search(r"\s", cid),
+            "audience set": bool(aud),
+            "audience has no whitespace": aud == aud.strip() and not re.search(r"\s", aud),
+        }
+        hints = {
+            "audience has no scheme": not aud.startswith(("http://", "https://")),
+            "audience is api.tailscale.com/<client id>": aud == f"api.tailscale.com/{cid}",
+        }
+        url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=" + urllib.parse.quote(aud, safe="")
+        req = urllib.request.Request(url, headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+        token = json.load(urllib.request.urlopen(req))["value"]
+        print(f"::add-mask::{token}")
+        p = token.split(".")[1]
+        c = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+        checks["token aud equals the audience secret"] = c.get("aud") == aud
+        for name, ok in checks.items():
+            print(f"{'ok  ' if ok else 'FAIL'} {name}")
+        for name, ok in hints.items():
+            print(f"{'ok  ' if ok else 'WARN'} {name}")
+        print("sub:", c.get("sub"), "| repository_id:", c.get("repository_id"))
+        sys.exit(0 if all(checks.values()) else 1)
+        PY
+
+    - name: Join the tailnet (ephemeral, tag:ci)
+      uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+      with:
+        oauth-client-id: ${{ inputs.ts-client-id }}
+        audience: ${{ inputs.ts-audience }}
+        tags: tag:ci
+        ping: ${{ inputs.host }}
+
+    # The cluster's version, hash-checked like kubeconform.
+    - name: Install kubectl
+      shell: bash
+      env:
+        KUBECTL_VERSION: v1.35.9
+        KUBECTL_SHA256: 3cfeaf80be482b435b0aa214aff6e0b2c312ee23c0ff20810c75517b6004c6eb
+      run: |
+        mkdir -p "${RUNNER_TEMP}/bin"
+        curl -fsSLo "${RUNNER_TEMP}/bin/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+        echo "${KUBECTL_SHA256}  ${RUNNER_TEMP}/bin/kubectl" | sha256sum -c -
+        chmod 755 "${RUNNER_TEMP}/bin/kubectl"
+        echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+    # No token in the file: kubectl runs gh-oidc-token.py for one, and again
+    # when it expires (GitHub's tokens live five minutes).
+    # The command is named, not given as a path: kubectl rewrites paths in a
+    # kubeconfig relative to the file, and a bare name is looked up on PATH
+    # (RUNNER_TEMP/bin, added above).
+    - name: Configure kubectl
+      shell: bash
+      env:
+        K8S_HOST: ${{ inputs.host }}
+        K8S_CA_DATA: ${{ inputs.ca-data }}
+      run: |
+        kc="${RUNNER_TEMP}/kubeconfig"
+        k="${RUNNER_TEMP}/bin/kubectl --kubeconfig ${kc}"
+        echo "${K8S_CA_DATA}" | base64 -d > "${RUNNER_TEMP}/cluster-ca.crt"
+        install -m 755 "${GITHUB_ACTION_PATH}/gh-oidc-token.py" "${RUNNER_TEMP}/bin/gh-oidc-token"
+        $k config set-cluster prod --server "https://${K8S_HOST}:6443" --certificate-authority "${RUNNER_TEMP}/cluster-ca.crt"
+        $k config set-credentials ci --exec-api-version client.authentication.k8s.io/v1 \
+          --exec-command gh-oidc-token --exec-interactive-mode Never
+        $k config set-context prod --cluster prod --user ci --namespace gamemesh
+        $k config use-context prod
+        echo "KUBECONFIG=${kc}" >> "${GITHUB_ENV}"
