@@ -10,6 +10,7 @@ kind: Kustomization
 # rewritten to its hashed name.
 namespace: gamemesh
 resources:
+  - ../../namespace
   - ../../base
 components:
   - ../../components/monitoring

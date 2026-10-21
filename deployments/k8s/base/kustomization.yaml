@@ -24,8 +24,11 @@ labels:
 # credentials), which the local overlay generates from dev values and
 # production creates in the cluster, so no value in the repository can reach
 # production.
+# The namespace itself is not here (../namespace): whoever can write it can
+# relax its Pod Security labels, so it stays out of what CI applies (finding
+# #86). Production gets it from k3s's auto-deploy directory, local from its
+# overlay.
 resources:
-  - namespace.yaml
   - postgres.yaml
   - redis.yaml
   - nats.yaml
