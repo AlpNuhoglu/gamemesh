@@ -25,3 +25,8 @@ write-kubeconfig-mode: "0600"
 # VXLAN port there is nothing for them to reach. Works on a single node; a
 # second node over the public network would need wireguard-native.
 flannel-backend: host-gw
+
+# Accept GitHub Actions' OIDC tokens for CI (plan D1); the file says which
+# tokens and RBAC says what they may do. No long-lived credential for CI.
+kube-apiserver-arg:
+  - authentication-config=/etc/rancher/k3s/authentication-config.yaml

@@ -1,0 +1,59 @@
+# What CI may do in the cluster (plan D1): apply the prod overlay and watch
+# the rollout, in the gamemesh namespace only. The identity is the GitHub
+# Actions job itself (OIDC, deployments/server/k3s/authentication-config.yaml);
+# there is no ServiceAccount token to leak.
+#
+# Cluster-level, written by the admin: copied into k3s's auto-deploy
+# directory, and CI has no permission on RBAC objects, so it cannot widen its
+# own rights. Deliberately absent: Secrets (gamemesh-secrets is created by
+# hand), pods/exec, delete, the namespace itself (finding #86) and anything
+# cluster-scoped.
+#
+# A known limit: whoever can create a Deployment here can create a pod that
+# mounts gamemesh-secrets, so CI can read it indirectly. That comes with any
+# deploy right in a namespace; the guard is who can run as this identity
+# (main, the production environment, this repository).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer
+  namespace: gamemesh
+rules:
+  # What the prod overlay contains.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Read-only, for kubectl rollout status and for diagnosing a failed deploy.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer
+  namespace: gamemesh
+subjects:
+  # The username the API server derives from the token's sub claim.
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: "github:repo:AlpNuhoglu/gamemesh:environment:production"
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ci-deployer
