@@ -305,10 +305,16 @@ jobs:
       # CI. The hash is the release's own CHECKSUMS entry,
       # recorded once, so a later swap of the file fails here. Bump both
       # together.
+      # Custom resources (the prod overlay's Traefik Middleware) need their
+      # own schemas: kubeconform only knows the built-in kinds, and an unknown
+      # kind is an error under -strict. They come from the community
+      # CRDs-catalog at a pinned commit, so the schemas cannot change under
+      # us; -strict still rejects unknown fields and wrong types in them.
       - name: Validate Kubernetes manifests (kubeconform, offline schema check)
         env:
           KUBECONFORM_VERSION: v0.8.0
           KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+          CRDS_CATALOG: https://raw.githubusercontent.com/datreeio/CRDs-catalog/501527ab9c40c827144c8f45945b25a023e344ce
         run: |
           curl -fsSLo kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
           echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
@@ -319,7 +325,9 @@ jobs:
           # Against the Kubernetes version k3s runs, overlay by overlay.
           for overlay in local prod; do
             echo "== overlays/${overlay}"
-            kubectl kustomize "deployments/k8s/overlays/${overlay}" | ./kubeconform -strict -summary -kubernetes-version 1.35.0 -
+            kubectl kustomize "deployments/k8s/overlays/${overlay}" | ./kubeconform -strict -summary -kubernetes-version 1.35.0 \
+              -schema-location default \
+              -schema-location "${CRDS_CATALOG}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -
           done
 
   govulncheck:
