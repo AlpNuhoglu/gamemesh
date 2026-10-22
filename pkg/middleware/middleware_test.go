@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -105,6 +107,42 @@ func TestMetricsCountsRequests(t *testing.T) {
 	body := w.Body.String()
 	assert.Contains(t, body, `gamemesh_http_requests_total`)
 	assert.Contains(t, body, `gamemesh_http_errors_total`)
+}
+
+// TestMetricsLabelsStayBounded: the method and path come from the client, so
+// made-up methods and random paths must land in a fixed set of series instead
+// of opening one per value (finding #90: Traefik forwards any method token).
+func TestMetricsLabelsStayBounded(t *testing.T) {
+	m := metrics.New("test-middleware-bounded")
+	r := newEngine(Metrics(m))
+
+	serve := func(method, path string) {
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, path, nil))
+	}
+	serve(http.MethodGet, "/test")
+	for i := range 50 {
+		serve(fmt.Sprintf("ZZCHECK%d", i), "/test")
+		serve(http.MethodGet, fmt.Sprintf("/random/%d", i))
+		serve(fmt.Sprintf("zz%d", i), fmt.Sprintf("/random/%d", i))
+	}
+
+	// GET /test 200, GET unmatched 404, other unmatched 404.
+	assert.Equal(t, 3, countSeries(m.RequestsTotal))
+	assert.Equal(t, 2, countSeries(m.ErrorsTotal))
+	assert.Equal(t, 3, countSeries(m.RequestDuration))
+
+	w := httptest.NewRecorder()
+	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Contains(t, w.Body.String(),
+		`gamemesh_http_requests_total{method="other",path="unmatched",service="test-middleware-bounded",status="404"} 100`)
+}
+
+// countSeries returns how many label combinations c currently exports.
+func countSeries(c prometheus.Collector) int {
+	ch := make(chan prometheus.Metric, 1024)
+	c.Collect(ch)
+	close(ch)
+	return len(ch)
 }
 
 func TestCORSAllowAll(t *testing.T) {
