@@ -4,7 +4,9 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -138,10 +140,29 @@ func methodLabel(method string) string {
 	return "other"
 }
 
+// hijackWatcher notes whether a handler took over the connection, which in
+// this codebase means a WebSocket handshake succeeded: gorilla's Upgrader
+// (websocket service) and httputil.ReverseProxy (gateway) both hijack and
+// write the 101 themselves, so gin's status stays at its default 200.
+type hijackWatcher struct {
+	gin.ResponseWriter
+	hijacked bool
+}
+
+func (w *hijackWatcher) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := w.ResponseWriter.Hijack()
+	w.hijacked = err == nil
+	return conn, rw, err
+}
+
 // Metrics records request count, error count and latency per route. Every
 // label comes from a bounded set: the matched route template (c.FullPath)
 // rather than the raw URL, a known method or "other", and the status code our
 // own handlers wrote.
+//
+// A hijacked request is counted as 101 and left out of the latency
+// histogram: its handler returns only when the WebSocket session ends, so its
+// duration is the session's lifetime (finding #92).
 func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if IsTelemetryExcluded(c.Request.URL.Path) {
@@ -149,13 +170,20 @@ func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 			return
 		}
 		start := time.Now()
+		w := &hijackWatcher{ResponseWriter: c.Writer}
+		c.Writer = w
 		c.Next()
+		c.Writer = w.ResponseWriter
 
 		path := c.FullPath()
 		if path == "" {
 			path = "unmatched"
 		}
 		method := methodLabel(c.Request.Method)
+		if w.hijacked {
+			m.RequestsTotal.WithLabelValues(method, path, strconv.Itoa(http.StatusSwitchingProtocols)).Inc()
+			return
+		}
 		status := strconv.Itoa(c.Writer.Status())
 		m.RequestsTotal.WithLabelValues(method, path, status).Inc()
 		m.RequestDuration.WithLabelValues(method, path).Observe(time.Since(start).Seconds())

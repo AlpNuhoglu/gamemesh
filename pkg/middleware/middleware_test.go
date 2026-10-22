@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -135,6 +137,50 @@ func TestMetricsLabelsStayBounded(t *testing.T) {
 	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	assert.Contains(t, w.Body.String(),
 		`gamemesh_http_requests_total{method="other",path="unmatched",service="test-middleware-bounded",status="404"} 100`)
+}
+
+// TestMetricsWebSocketSessions: a request whose connection is hijacked (the
+// WebSocket handshake, in the websocket service and through the gateway's
+// proxy) returns from the handler only when the session ends, so its "latency"
+// is the session's lifetime (finding #92). It is counted as 101 and kept out of
+// the latency histogram; Upgrade headers alone change nothing.
+func TestMetricsWebSocketSessions(t *testing.T) {
+	m := metrics.New("test-middleware-ws")
+	r := newEngine(Metrics(m))
+	r.GET("/ws", func(c *gin.Context) {
+		conn, rw, err := c.Writer.Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+		_ = rw.Flush()
+		time.Sleep(50 * time.Millisecond) // the session
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	for _, path := range []string{"/ws", "/test"} {
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		require.NoError(t, err)
+		_, err = fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n", path)
+		require.NoError(t, err)
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		_ = conn.Close()
+	}
+
+	// The /ws handler records after the session ends.
+	require.Eventually(t, func() bool { return countSeries(m.RequestsTotal) == 2 }, time.Second, 10*time.Millisecond)
+	w := httptest.NewRecorder()
+	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := w.Body.String()
+	assert.Contains(t, body, `gamemesh_http_requests_total{method="GET",path="/ws",service="test-middleware-ws",status="101"} 1`)
+	assert.Contains(t, body, `gamemesh_http_requests_total{method="GET",path="/test",service="test-middleware-ws",status="200"} 1`)
+	assert.Equal(t, 1, countSeries(m.RequestDuration))
+	assert.NotContains(t, body, `gamemesh_http_request_duration_seconds_count{method="GET",path="/ws"`)
 }
 
 // countSeries returns how many label combinations c currently exports.
