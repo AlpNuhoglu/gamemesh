@@ -177,7 +177,11 @@ default "Mail block" and "Ping allow" policies stay assigned.
 ### Setup (once per new server)
 
 ```bash
-# 1. Admin user with the same key as root (run as root over SSH)
+# 0. From the admin's machine, in the repo: the two policy files
+scp deployments/server/sshd_config.d/10-gamemesh.conf \
+    deployments/server/apt.conf.d/52gamemesh-unattended-upgrades root@<server>:/root/
+
+# 1. Admin user with the same key as root (run as root over SSH, in /root)
 useradd -m -s /bin/bash -G sudo alp
 install -d -m 700 -o alp -g alp /home/alp/.ssh
 install -m 600 -o alp -g alp /root/.ssh/authorized_keys /home/alp/.ssh/authorized_keys
@@ -216,19 +220,30 @@ every start: Secrets encrypted at rest, an API certificate for the tailnet
 address only, and flannel's `host-gw` backend, so nothing listens on UDP 8472.
 
 ```bash
-# On the server, as alp. Read the installer before running it as root.
+# Admin machine, in the repo: the k3s files into alp's home
+scp deployments/server/k3s/config.yaml deployments/server/k3s/authentication-config.yaml \
+    deployments/k8s/cluster/traefik-config.yaml deployments/k8s/cluster/cert-manager.yaml gamemesh:
+
+# On the server, as alp, in ~. Read the installer before running it as root.
 curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh && sha256sum /tmp/k3s-install.sh
 sudo install -d -m 755 /etc/rancher/k3s
 sed "s/TAILNET_IP/$(tailscale ip -4)/" config.yaml | sudo tee /etc/rancher/k3s/config.yaml >/dev/null
 sudo chmod 600 /etc/rancher/k3s/config.yaml
+# Before the first start: config.yaml points the API server at this file, and
+# without it the API server refuses to start (found in the rebuild drill)
+sudo install -m 600 authentication-config.yaml /etc/rancher/k3s/
 # Files in this directory are applied by k3s itself, on every start
 sudo install -D -m 600 traefik-config.yaml /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
 # cert-manager (chart via k3s's helm-controller); can also be added later
 sudo install -m 600 cert-manager.yaml /var/lib/rancher/k3s/server/manifests/cert-manager.yaml
 sudo INSTALL_K3S_VERSION='v1.35.9+k3s1' sh /tmp/k3s-install.sh
-sha256sum /usr/local/bin/k3s           # compare with the release's sha256sum-amd64.txt
+sha256sum /usr/local/bin/k3s           # compare with the release's sha256sum-amd64.txt (arm64: sha256sum-arm64.txt)
 sudo k3s secrets-encrypt status        # Encryption Status: Enabled
 ```
+
+In its first seconds `secrets-encrypt status` can answer `secret-encrypt error
+ID ...` (the server log says `runtime core not ready`); asked again half a
+minute later it reports the status.
 
 The admin kubeconfig (cluster-admin) is kept in its own file on the admin's
 machine, never merged into `~/.kube/config` and never given to CI, so a plain
@@ -251,7 +266,12 @@ applies on every start: Traefik's setting, cert-manager, the namespace, the
 admission policy, CI's RBAC and the Let's Encrypt issuers. Removing a file
 there deletes what it created; the namespace file in particular must stay.
 The OIDC file is for the API server itself (`kube-apiserver-arg` in
-`config.yaml`); changing it needs no restart, adding the flag needs one.
+`config.yaml`), installed with k3s above; changing it needs no restart.
+
+A rehearsal cluster without the public name (a VM, a drill) should not get
+`letsencrypt-prod`: cert-manager opens orders with Let's Encrypt production for
+`api.gamemesh.app` that can never validate (the name points elsewhere). Leave
+both issuers out there.
 
 ```bash
 # Admin machine, in the repo
@@ -260,7 +280,6 @@ scp deployments/server/k3s/authentication-config.yaml deployments/k8s/namespace/
     gamemesh:/tmp/
 # Server, as alp
 M=/var/lib/rancher/k3s/server/manifests
-sudo install -m 600 /tmp/authentication-config.yaml /etc/rancher/k3s/
 sudo install -D -m 600 /tmp/namespace.yaml $M/namespace-gamemesh.yaml
 for f in traefik-config cert-manager gamemesh-admission-policy ci-deployer; do
   sudo install -m 600 /tmp/$f.yaml $M/$f.yaml
@@ -339,7 +358,10 @@ sed -i '' "s/newTag: set-by-deploy/newTag: $SHA/" "$F"
 kprod apply -k deployments/k8s/overlays/prod --dry-run=server   # admission, PSS included
 kprod apply -k deployments/k8s/overlays/prod
 git checkout -- "$F"
-curl http://api.gamemesh.app/health      # {"status":"ok","version":"<SHA>"}
+for w in $(kprod -n gamemesh get deploy,sts -o name); do kprod -n gamemesh rollout status "$w" --timeout=6m; done
+# The server itself, not whatever DNS points at (before a DNS cutover, that is the old one):
+curl --resolve api.gamemesh.app:443:<public-ip> https://api.gamemesh.app/health            # {"status":"ok","version":"<SHA>"}
+curl --resolve api.gamemesh.app:443:<public-ip> -o /dev/null -w '%{http_code}\n' https://api.gamemesh.app/api/v1/leaderboard   # 200
 ```
 
 Check the apply's own output for errors rather than a summary of it: a
@@ -347,8 +369,8 @@ validation failure (for example when the OpenAPI download times out over a bad
 tailnet path) applies nothing, and the rollout checks that follow still report
 success for the unchanged Deployments.
 
-The `gamemesh-secrets` Secret must exist first (see "Production secrets"); the
-namespace is created by hand for it, and the first apply adds its labels.
+The `gamemesh-secrets` Secret must exist first (see "Production secrets"); its
+namespace comes from the auto-deploy directory ("Cluster-level manifests").
 
 After a reboot everything comes back by itself in about 40 s (measured:
 reboot to Traefik answering, 44 s). The node's `Ready` condition is not

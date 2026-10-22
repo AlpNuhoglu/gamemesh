@@ -1718,7 +1718,7 @@ Her adım şu yapıda:
 
 ### D4. Dokümantasyon ve runbook
 
-- [ ] **Ne:** [docs/deployment.md](deployment.md)'yi güncellemek:
+- [x] **Ne:** [docs/deployment.md](deployment.md)'yi güncellemek:
   - k3d ile yerel çalıştırma
   - VPS kurulumunun tekrar edilebilir adımları
   - Secret rotasyonu
@@ -1740,6 +1740,36 @@ Her adım şu yapıda:
      `describe pod` (probe event'leri, `OOMKilled`), `get endpointslices`,
      `rollout status`. CrashLoopBackOff (container kendisi çıkıyor) ile liveness kaynaklı
      restart arasındaki ayrım. Exit code'lar: 137 = SIGKILL (ya da OOM), 143 = SIGTERM.
+- **Kararlar (2026-10-22):**
+  - `docs/deployment.md` tek kaynak: sıfırdan kurulum (9 adım), cluster seviyesindeki
+    manifest'ler, geri dönüş (otomatik ve `deploy.yml`), JWT/Redis/Postgres rotasyonu (her
+    biri kendi sırasıyla; Postgres'te önce `ALTER USER`), sızıntı runbook'u, sorun giderme, CI/CD.
+    M7'deki yanlışlar (kubeconform yerine "client-side dry-run", "five images") düzeltildi.
+  - Tailscale politikası repoda referans olarak: `deployments/server/tailscale-policy.hujson`.
+  - **Tatbikat yeni bir VPS yerine Mac'te bir Ubuntu 24.04 sanal makinesinde** (Multipass,
+    arm64): ücretsiz, prod'a dokunmuyor; sağlayıcı firewall'u, DNS ve Let's Encrypt sınanmadı
+    (gerçek kurulumda adım adım yapılıp ölçülmüştü). netcup'ın teslim durumu cloud-init ile
+    (root'ta anahtar, parolasız). Bilinçli sapmalar: node'a `tag:prod` verilmedi, GitHub
+    environment'ı ve DNS'e dokunulmadı, deploy elle.
+- **Sonuç (2026-10-22, tatbikat):** Doküman izlenerek boş makineden çalışan uygulamaya:
+  kullanıcı, SSH politikası, güncellemeler, Tailscale, k3s (şifreleme `Enabled`), cluster
+  manifest'leri (namespace `restricted`, admission policy, RBAC, issuer'lar), kubeconfig,
+  Secret, elle deploy (25 kaynak, 22 sn'de 10/10 pod Ready, 0 restart, arm64 imajlar);
+  Traefik üzerinden `/health` doğru SHA, `/api/v1/leaderboard` 200; anonim API 401; policy
+  NodePort'u reddediyor. **Bulunan ve düzeltilen 5 yer:**
+  1. Dosyaların sunucuya nasıl gideceği yazmıyordu (`scp` eklendi).
+  2. **k3s ilk açılışta başlamıyordu (Bulgu #89):** `config.yaml` kimlik doğrulama dosyasını
+     gösteriyor, dosya kurulumdan sonra kopyalanıyordu (`failed to load authentication
+     configuration ... no such file`). Düzeltilmiş blokla k3s ilk denemede `active`.
+  3. `secrets-encrypt status` ilk saniyelerde `runtime core not ready`; checksum için sadece
+     amd64 listesi yazıyordu.
+  4. Elle deploy: namespace'i elle oluşturma notu #76'dan beri yanlıştı; rollout beklenmiyordu;
+     `curl` DNS'e gidiyordu, yeni sunucuyu değil (`--resolve` ile sunucunun kendisi).
+  5. Public adı olmayan bir provada `letsencrypt-prod` Let's Encrypt prod'da boşuna order
+     açıyor (self-check DNS'teki prod'dan 404 aldığı için doğrulama istenmedi); provada
+     issuer'lar kurulmamalı.
+  - Not: Traefik'in kalıcı yönlendirmesi GET'e **301**, HEAD/POST'a **308** veriyor (yöntemi
+    koruyan kod); C4'teki "308" ölçümü HEAD ileydi.
 
 ---
 
@@ -1917,3 +1947,4 @@ manifest okunarak tespit edildi, henüz çalışan bir sistemde test edilmedi.
 | 86 | `gamemesh` Namespace'i (PSS etiketleriyle) base'deydi; overlay'i uygulayan CI namespace'i de yazmak zorunda kalırdı, namespace'i yazabilen `enforce: privileged` yapıp node'a root pod çalıştırabilir (namespace yetkili deployer = fiilen cluster-admin) | D1 | Kod (render: Namespace prod overlay'inde) | D1 (çözüldü: `deployments/k8s/namespace/`, prod'da auto-deploy, local overlay'de) |
 | 87 | CI'ın Role'ü Service ve Ingress yazıyor (Trivy KSV-0056, HIGH): `externalIPs` ile trafik ele geçirme (CVE-2020-8554), `LoadBalancer` ile node'da port, başka host'lar için Ingress | M7 | Ölçüldü (Trivy 0.70.0; k3s'te 6 ihlal reddedildi) | D1 (çözüldü: ValidatingAdmissionPolicy; issuer'larda solver `serviceType: ClusterIP`, varsayılan NodePort'tu; KSV-0056 bu dosyaya kapsamlı ve 2027-04-21'de biten kayıtla kabul) |
 | 88 | `nats:2.15.1-alpine`'daki `nats-server` go1.27.2 ile derlenmiş, CVE-2026-111943 (#82) etkiliyor; düzeltilmiş NATS sürümü henüz yok | M7 | Ölçüldü (Trivy; çalışan sunucu `/varz`: TLS, cluster, leafnode, gateway yok, 0 route) | Kabul (`.trivyignore.yaml`, 2026-11-04'te bitiyor; gosu'daki aynı CVE 2027-01-18); yamalı imaj gelince kayıt kalkar, NATS'a TLS gelirse geçersiz |
+| 89 | Dokümandaki k3s kurulumu, `config.yaml`'ın işaret ettiği OIDC kimlik doğrulama dosyasını k3s'in ilk açılışından sonra kopyalatıyordu; API sunucusu dosyasız açılmayı reddediyor, k3s hiç başlamıyor | D4 | Ölçüldü (tatbikat: `failed to load authentication configuration ... no such file`) | D4 (çözüldü: dosya kurulumdan önce; düzeltilmiş blokla ilk denemede `active`) |
