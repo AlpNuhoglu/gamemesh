@@ -1676,7 +1676,7 @@ Her adım şu yapıda:
 
 ### D3. Smoke test ve rollback
 
-- [ ] **Ne:** Deploy'dan sonra
+- [x] **Ne:** Deploy'dan sonra
   `curl --retry 10 --retry-all-errors -fsS https://api.<domain>/health` adımı. Başarısız
   olursa `kubectl rollout undo` çalışıyor.
 - **Neden:** "Pod hazır" ile "kullanıcı dışarıdan ulaşabiliyor" aynı şey değildir. Arada
@@ -1686,6 +1686,35 @@ Her adım şu yapıda:
   canlıdaki eski sürüm hizmet vermeye devam ediyor.
 - **İncelemeden eklenenler (A1):** Smoke test'i login akışıyla genişletmek istenirse,
   login body'si `email` değil `identifier` alanı bekliyor.
+- **Kararlar (2026-10-22):**
+  - **Geri dönüş = önceki commit'i yeniden deploy etmek**, `rollout undo` değil: önceki
+    commit'in **kendi** `deployments/k8s`'i (`git archive`) ve imajları. Bozuk bir sürüm bir
+    manifest değişikliği olabilir; `undo` ayrıca `last-applied`'ı eski bırakır (A10).
+  - **Önceki commit cluster'dan okunuyor** (gateway imajının tag'i), cluster'a dokunmadan önce.
+  - **İmaj ön kontrolü:** 7 imaj GHCR'da yoksa cluster'a hiç dokunulmuyor.
+  - **Smoke test:** `/health`'in `version`'ı bu commit **ve** `/api/v1/leaderboard` 200 (gateway →
+    leaderboard → Redis), dışarıdan, en çok 2 dk.
+  - **Mantık bir betikte** (`.github/actions/deploy/deploy.sh`); otomatik deploy ve elle
+    `deploy.yml` (seçilen bir `main` commit'i) aynı betiği kullanıyor. Her adım kendi sonucunu
+    kontrol ediyor: `if`/`||` içinden çağrılan fonksiyonlarda `set -e` çalışmaz.
+  - **Test, `main`'e bilerek konmuş bozuk bir sürümle:** gateway'e 17 karakterlik `JWT_SECRET`
+    (`env`, `envFrom`'dakini ezer; `config.Validate` 32'den kısayı reddeder), sonra revert.
+- **Sonuç (2026-10-22):**
+  - **Başarılı yol:** #82'nin merge'ü (`e0defae`) betikle ilk deploy: 48 sn, public HTTPS
+    3549/3549 200.
+  - **Bozuk sürüm (#83, `53e6a50`):** yeni gateway pod'u başlamadı; `rollout status` **tam 5
+    dk** sonra `exceeded its progress deadline` (01:01:16 → 01:06:04 UTC); betik `e0defae`'yi
+    kendi manifest'leriyle yeniden deploy etti (8 Deployment rollout, smoke geçti, 01:06:42),
+    job **kırmızı**: `rolled back: e0defae… runs again; 53e6a50… is not deployed`. **Eski
+    gateway pod'u (00:40:53) hiç yeniden başlamadı**; bozuk ReplicaSet 0'da, `JWT_SECRET`
+    override'ı Deployment'tan kalktı. Diğer 6 servis iki kez rollout yaptı (bozuk commit'in
+    sağlıklı imajlarına, sonra geri), kesintisiz.
+  - **Dışarıdan ~3660 istekte 4 bağlantı hatası**, hepsi cluster'da bir şey değişmezken (deploy
+    başlamadan önce, bittikten 16 sn ve 3 dk sonra); aynı dakikalarda Mac'ten GitHub API'sine
+    bağlantı da koptu. Ev ağına (#83) bağlanıyor, kanıtlanmadı.
+  - **Token:** uzun `rollout status` tek bir watch bağlantısıyla token'ın süresini aştı; API
+    sunucusu token'ı isteğin başında doğruluyor, yenileme gerekmedi.
+  - Revert #84 (`deployments/k8s`, `e0defae` ile aynı).
 
 ### D4. Dokümantasyon ve runbook
 
