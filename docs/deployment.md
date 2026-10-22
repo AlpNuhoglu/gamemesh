@@ -110,15 +110,40 @@ kubectl -n gamemesh create secret generic gamemesh-secrets \
 With `APP_ENV=production` (the base config) every service refuses to start if
 a secret it uses is missing, shorter than 32 characters or a known development
 default (`config.Validate`): a forgotten or weak Secret stalls the rollout and
-the running pods keep serving.
-
-(or External Secrets Operator / Sealed Secrets / a cloud secret manager).
+the running pods keep serving. Rotating them: see "Rotating secrets" below.
 
 ## 3. Production server (VPS)
 
 One netcup VPS (Ubuntu 24.04, x86) runs the single-node k3s cluster. Its
 address stays out of the repo; `ssh gamemesh` (an `~/.ssh/config` entry on the
 admin's machine) reaches it over Tailscale.
+
+### Rebuilding the server from nothing
+
+In this order; each step is described in the sections below.
+
+1. **VPS and provider firewall.** netcup VPS 500 G12.5 (x86). Create the SCP
+   firewall policies first (table below), then install Ubuntu 24.04 Minimal
+   from the SCP with the admin's SSH key, hostname `gamemesh-prod-1`, locale
+   `en_US.UTF-8`; the key goes to root, password login off.
+2. **Host.** Admin user `alp`, SSH policy, automatic updates and reboots, UTC
+   ("Setup").
+3. **Tailscale.** Install and join; tag the node `tag:prod` in the admin
+   console (tagged nodes have no key expiry). The access policy is
+   `deployments/server/tailscale-policy.hujson`. Then unassign `gamemesh-ssh`.
+4. **k3s** with its config, the OIDC authentication file and the cluster-level
+   manifests ("k3s", "Cluster-level manifests").
+5. **Admin kubeconfig** on the admin's machine ("k3s").
+6. **The Secret** `gamemesh-secrets` ("Production secrets"). New random values
+   mean a new, empty database: there are no Postgres backups yet.
+7. **GitHub environment `production`:** update `K8S_HOST` (the new tailnet
+   address) and `K8S_CA_DATA` (the new cluster's CA); the Tailscale secrets
+   stay. Run `Actions -> cluster-access`.
+8. **DNS.** Point `api.gamemesh.app` (A record, DNS only) at the new public
+   address.
+9. **Deploy.** `Actions -> deploy` with the latest commit of `main` (or push).
+   cert-manager then obtains the certificate through port 80, which needs step
+   8 done. Check `curl https://api.gamemesh.app/health`.
 
 ### Provider firewall
 
@@ -219,6 +244,35 @@ alias kprod='kubectl --kubeconfig ~/.kube/gamemesh-prod.yaml --context gamemesh-
 kprod get nodes
 ```
 
+### Cluster-level manifests
+
+Everything CI must not write lives in k3s's auto-deploy directory, which k3s
+applies on every start: Traefik's setting, cert-manager, the namespace, the
+admission policy, CI's RBAC and the Let's Encrypt issuers. Removing a file
+there deletes what it created; the namespace file in particular must stay.
+The OIDC file is for the API server itself (`kube-apiserver-arg` in
+`config.yaml`); changing it needs no restart, adding the flag needs one.
+
+```bash
+# Admin machine, in the repo
+scp deployments/server/k3s/authentication-config.yaml deployments/k8s/namespace/namespace.yaml \
+    deployments/k8s/cluster/{traefik-config,cert-manager,gamemesh-admission-policy,ci-deployer,letsencrypt-staging,letsencrypt-prod}.yaml \
+    gamemesh:/tmp/
+# Server, as alp
+M=/var/lib/rancher/k3s/server/manifests
+sudo install -m 600 /tmp/authentication-config.yaml /etc/rancher/k3s/
+sudo install -D -m 600 /tmp/namespace.yaml $M/namespace-gamemesh.yaml
+for f in traefik-config cert-manager gamemesh-admission-policy ci-deployer; do
+  sudo install -m 600 /tmp/$f.yaml $M/$f.yaml
+done
+# The issuers once cert-manager runs (they need its CRDs); the repo holds a
+# placeholder for the address, which is kept out of the public repo
+for f in letsencrypt-staging letsencrypt-prod; do
+  sed "s/ACME_EMAIL/ops@gamemesh.app/" /tmp/$f.yaml | sudo tee $M/$f.yaml >/dev/null
+done
+sudo chmod 600 $M/letsencrypt-*.yaml
+```
+
 ### CI access to the cluster
 
 CI holds no long-lived credential for the cluster or the tailnet. A job in the
@@ -301,6 +355,136 @@ reboot to Traefik answering, 44 s). The node's `Ready` condition is not
 evidence of that: the API serves the last stored status before the kubelet
 reports again.
 
+### Rolling back
+
+- **Automatic.** When a deploy does not come up (rollout stuck for 5 minutes,
+  or the smoke test fails: `/health` must report the commit and
+  `/api/v1/leaderboard` must answer 200), the job redeploys the commit that ran
+  before, with that commit's own manifests and images, and ends red. Its log
+  says `rolled back: <previous> runs again`. Tested with a deliberately broken
+  release: the old gateway pod kept serving and never restarted.
+- **By hand.** `Actions -> deploy -> Run workflow` (branch `main`) with the full
+  SHA of the commit to run. It must be on `main`; its images were published by
+  that commit's CI run. Commits from `7b36b40` (#76) on can be deployed this
+  way; older overlays still contain the namespace, which CI may not write.
+- Which SHA: each deploy log starts with `running before: <sha>`;
+  `curl https://api.gamemesh.app/health` shows what runs now; `git log
+  --first-parent main` lists the merges.
+- What it does not undo: cluster-level manifests (they are not in CI's hands)
+  and data. A release that changed the database schema needs its own way back.
+
+### Rotating secrets
+
+Only the admin can (CI has no access to Secrets). Services read the Secret at
+start (`envFrom`), so a change takes effect when they restart. After each
+change, check its shape without printing it:
+
+```bash
+kprod -n gamemesh get secret gamemesh-secrets -o json | python3 -c 'import base64, json, sys
+for k, v in sorted(json.load(sys.stdin)["data"].items()): print(k, len(base64.b64decode(v)))'
+```
+
+- **`JWT_SECRET`** signs every login token: changing it logs every user out
+  (all tokens stop verifying).
+  ```bash
+  kprod -n gamemesh patch secret gamemesh-secrets --type merge \
+    -p "{\"stringData\":{\"JWT_SECRET\":\"$(openssl rand -hex 32)\"}}"
+  kprod -n gamemesh rollout restart deploy/gateway deploy/player deploy/websocket
+  ```
+- **`REDIS_PASSWORD`** is Redis's `requirepass`, read at start. Redis and every
+  client must restart together; until all have, Redis-backed routes fail
+  readiness for a few seconds.
+  ```bash
+  kprod -n gamemesh patch secret gamemesh-secrets --type merge \
+    -p "{\"stringData\":{\"REDIS_PASSWORD\":\"$(openssl rand -hex 32)\"}}"
+  kprod -n gamemesh rollout restart sts/redis deploy/gateway deploy/player deploy/websocket \
+    deploy/leaderboard deploy/matchmaking deploy/presence
+  ```
+- **`POSTGRES_PASSWORD`** is stored by Postgres in its data directory; the
+  Secret only seeded it at first start. Change it in the database first, then
+  in the Secret, then restart its users. Open connections keep working until
+  then.
+  ```bash
+  NEW=$(openssl rand -hex 32)
+  kprod -n gamemesh exec deploy/postgres -- psql -U gamemesh -d gamemesh \
+    -c "ALTER USER gamemesh PASSWORD '$NEW'"
+  kprod -n gamemesh patch secret gamemesh-secrets --type merge \
+    -p "{\"stringData\":{\"POSTGRES_PASSWORD\":\"$NEW\"}}"
+  unset NEW
+  kprod -n gamemesh rollout restart deploy/player deploy/outbox-relay
+  ```
+
+### If a secret leaks
+
+1. **Rotate it first** (above). Deleting the leaked copy is not enough: it has
+   been read.
+2. **Contain the effect.** A new `JWT_SECRET` ends every session, the attacker's
+   too. (Rotating without logging everyone out would need a key ID in the token
+   header and two keys accepted for a while; not built.)
+3. **Look for use** in the logs from the time of the leak: logins, unusual
+   client addresses (the gateway logs `client_ip`).
+4. **Only then, optionally, rewrite history** (`git filter-repo`). Forks and
+   clones keep the old commits, which is why rotation comes first. GitHub's
+   push protection and the CI's gitleaks job are there to stop it earlier.
+
+### Troubleshooting
+
+**The deploy job is red.** The log says which step:
+
+| Message | Meaning |
+|---|---|
+| `images for <sha> are not published` | `publish` failed or the SHA is wrong; the cluster was not touched |
+| an error from `--dry-run=server` | admission refused it: `in gamemesh, ...` is the admission policy, `violates PodSecurity` is Pod Security, `forbidden: User "github:..."` is CI's RBAC |
+| `exceeded its progress deadline` | the new pods never became ready; see "A pod does not come up" |
+| `serving <other sha>` until it gives up | pods are ready but the public endpoint is not: Ingress, TLS, DNS |
+| `rolled back: <sha> runs again` | the previous commit runs; fix forward or keep it |
+| `ROLLBACK ... FAILED` | redeploy a known good SHA with `Actions -> deploy`, or by hand |
+
+**CI cannot reach the cluster.** Run `Actions -> cluster-access`. Its first
+step checks the Tailscale inputs (`WARN audience is api.tailscale.com/<client
+id>` means the Client ID and Audience do not belong together). After a
+rebuild, `K8S_HOST` and `K8S_CA_DATA` must be updated.
+
+**A pod does not come up.**
+
+```bash
+kprod -n gamemesh get pods                    # READY 0/1 vs RESTARTS climbing
+kprod -n gamemesh describe pod <pod>          # probe failures, OOMKilled, image pull
+kprod -n gamemesh logs <pod> --previous       # the run that crashed
+kprod -n gamemesh get endpointslices          # which pods a Service sends traffic to
+```
+
+- `READY 0/1` with steady `RESTARTS`: the process runs but readiness fails,
+  usually a dependency (Redis, Postgres, NATS) is unreachable.
+- `RESTARTS` climbing, `CrashLoopBackOff`: the process exits by itself (for
+  example `config.Validate` refusing a missing or weak secret: the reason is in
+  `logs --previous`) or liveness kills it.
+- Exit code 137 is SIGKILL (also an out-of-memory kill: `OOMKilled` in
+  `describe`); 143 is SIGTERM; 1 is the program's own error.
+
+**The certificate is not renewed.** cert-manager renews 30 days before expiry
+(at two thirds of 90 days); nothing alerts before it expires (finding #85).
+
+```bash
+kprod -n gamemesh get certificate,certificaterequest,order,challenge
+kprod -n gamemesh describe challenge
+kprod -n gamemesh get events --field-selector type=Warning
+```
+
+- The challenge stays `pending` with a failed self check: port 80 not open
+  (provider firewall), DNS not pointing at the server, or the HTTP-01 path
+  redirected (only the API's routes are).
+- An event `in gamemesh, ...`: the admission policy refused the solver's
+  Service or Ingress (the issuers must ask for `serviceType: ClusterIP`).
+- CAA allows only Let's Encrypt; another CA cannot issue. Let's Encrypt's
+  production limits are tight: try with `letsencrypt-staging` first.
+
+**kubectl from the admin's machine is slow or times out.** Large UDP packets on
+the tailnet path from home were lost twice (finding #83): `tailscale ping`
+takes hundreds of milliseconds and 1200-byte pings are lost. Restarting the
+home router fixed it; meanwhile `ssh gamemesh` and `sudo k3s kubectl` on the
+server work.
+
 ## 4. Grafana dashboard import (non-provisioned Grafana)
 
 1. Grafana → **Dashboards → New → Import**
@@ -311,13 +495,27 @@ In the compose stack this happens automatically via provisioning.
 
 ## 5. CI/CD
 
-`.github/workflows/ci.yml` runs on every push/PR:
+`.github/workflows/ci.yml` runs on every pull request, every push to `main`,
+nightly and by hand. The `main` ruleset requires one check, `ci-ok`, which
+passes only if every job below passed:
 
-1. **Lint** — golangci-lint
-2. **Test** — unit tests with `-race` + coverage artifact
-3. **Integration** — Testcontainers against real Postgres/Redis
-4. **Build** — all five binaries
-5. **Docker** — buildx matrix build of all five images (GHA-cached)
-6. **Security** — Trivy fs scan (HIGH/CRITICAL fail the build) + govulncheck
-7. **Deploy (example)** — client-side `kubectl apply --dry-run` validation of
-   the manifests; swap in a real `kubectl apply` with cluster credentials.
+| Job | What it checks |
+|---|---|
+| `lint` | golangci-lint; the Dockerfile's Go matches `go.mod`'s toolchain; compose and Kubernetes pin the same third-party images |
+| `test`, `integration` | unit tests with `-race`; Testcontainers against real Postgres and Redis |
+| `services` | lists `cmd/*` for the image matrix |
+| `docker` | builds each service image and scans it with Trivy (end-of-life base images fail too) |
+| `scan-deps` | Trivy on the repository: misconfigurations, vulnerabilities, secrets |
+| `gitleaks` | the whole history for committed secrets |
+| `third-party-images`, `scan-third-party` | Trivy on every pinned third-party image |
+| `manifests` | renders both overlays and validates them with kubeconform (custom resources against a pinned CRDs-catalog commit) |
+| `govulncheck` | Go vulnerabilities reachable from our code |
+
+Accepted findings are in `.trivyignore.yaml`, each scoped to a path, package or
+file and each with an expiry. On pushes to `main` two more jobs run after
+`ci-ok`: `publish` pushes `ghcr.io/alpnuhoglu/gamemesh-<service>:<sha>` for
+amd64 and arm64, and `deploy` deploys the commit (section 3, "Deploying").
+
+Two more workflows, both by hand: `cluster-access` checks CI's access to the
+cluster, and `deploy` deploys a chosen commit of `main` (rolling back).
+Dependabot proposes updates for Go modules, actions and pinned images.

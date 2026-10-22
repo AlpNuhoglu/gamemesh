@@ -1,0 +1,23 @@
+// The tailnet's access policy (Tailscale admin console -> Access controls).
+// Kept here as the reference for a rebuild; the console holds the live copy.
+// Nothing in it is secret.
+//
+// The server is tagged tag:prod; CI runners join as ephemeral tag:ci nodes
+// (plan D1) and may reach only the server's Kubernetes API. The tests run
+// when the policy is saved and refuse a policy that would let CI reach SSH,
+// HTTP or the kubelet.
+{
+  "tagOwners": {
+    "tag:prod": ["autogroup:admin"],
+    "tag:ci":   ["autogroup:admin"]
+  },
+  "grants": [
+    // The admin's own devices reach everything (SSH, kubectl from the Mac).
+    {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
+    // CI runners reach only the Kubernetes API of the production server.
+    {"src": ["tag:ci"], "dst": ["tag:prod"], "ip": ["tcp:6443"]}
+  ],
+  "tests": [
+    {"src": "tag:ci", "accept": ["tag:prod:6443"], "deny": ["tag:prod:22", "tag:prod:80", "tag:prod:10250"]}
+  ]
+}
