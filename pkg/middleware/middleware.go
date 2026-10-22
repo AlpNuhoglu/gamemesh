@@ -4,7 +4,9 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -122,9 +124,45 @@ func Logger(log *zap.Logger, slowThreshold time.Duration) gin.HandlerFunc {
 	}
 }
 
-// Metrics records request count, error count and latency per route. It uses
-// the matched route template (c.FullPath) rather than the raw URL to keep
-// label cardinality bounded.
+// knownMethods are the request methods kept as metric label values. The
+// method is client input: any token passes HTTP parsing and Traefik forwards
+// it, so every other value is folded into "other" rather than opening new
+// series per made-up method (finding #90).
+var knownMethods = map[string]struct{}{
+	http.MethodGet: {}, http.MethodPost: {}, http.MethodPut: {}, http.MethodPatch: {},
+	http.MethodDelete: {}, http.MethodHead: {}, http.MethodOptions: {},
+}
+
+func methodLabel(method string) string {
+	if _, ok := knownMethods[method]; ok {
+		return method
+	}
+	return "other"
+}
+
+// hijackWatcher notes whether a handler took over the connection, which in
+// this codebase means a WebSocket handshake succeeded: gorilla's Upgrader
+// (websocket service) and httputil.ReverseProxy (gateway) both hijack and
+// write the 101 themselves, so gin's status stays at its default 200.
+type hijackWatcher struct {
+	gin.ResponseWriter
+	hijacked bool
+}
+
+func (w *hijackWatcher) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := w.ResponseWriter.Hijack()
+	w.hijacked = err == nil
+	return conn, rw, err
+}
+
+// Metrics records request count, error count and latency per route. Every
+// label comes from a bounded set: the matched route template (c.FullPath)
+// rather than the raw URL, a known method or "other", and the status code our
+// own handlers wrote.
+//
+// A hijacked request is counted as 101 and left out of the latency
+// histogram: its handler returns only when the WebSocket session ends, so its
+// duration is the session's lifetime (finding #92).
 func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if IsTelemetryExcluded(c.Request.URL.Path) {
@@ -132,17 +170,29 @@ func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 			return
 		}
 		start := time.Now()
+		w := &hijackWatcher{ResponseWriter: c.Writer}
+		c.Writer = w
 		c.Next()
+		c.Writer = w.ResponseWriter
 
 		path := c.FullPath()
 		if path == "" {
 			path = "unmatched"
 		}
+		method := methodLabel(c.Request.Method)
+		if w.hijacked {
+			m.RequestsTotal.WithLabelValues(method, path, strconv.Itoa(http.StatusSwitchingProtocols)).Inc()
+			return
+		}
 		status := strconv.Itoa(c.Writer.Status())
-		m.RequestsTotal.WithLabelValues(c.Request.Method, path, status).Inc()
-		m.RequestDuration.WithLabelValues(c.Request.Method, path).Observe(time.Since(start).Seconds())
-		if c.Writer.Status() >= http.StatusBadRequest {
-			m.ErrorsTotal.WithLabelValues(c.Request.Method, path, status).Inc()
+		m.RequestsTotal.WithLabelValues(method, path, status).Inc()
+		m.RequestDuration.WithLabelValues(method, path).Observe(time.Since(start).Seconds())
+		// Errors are the server's failures. 4xx are the client's: 404 is the
+		// normal answer to DELETE /queue after a match, and anyone can produce
+		// 401s and 404s; 429 is the rate limit doing its job. They stay
+		// visible in RequestsTotal by status.
+		if c.Writer.Status() >= http.StatusInternalServerError {
+			m.ErrorsTotal.WithLabelValues(method, path, status).Inc()
 		}
 	}
 }

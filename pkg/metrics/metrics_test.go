@@ -3,6 +3,7 @@ package metrics
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +15,20 @@ func TestNewIsIsolatedPerInstance(t *testing.T) {
 		New("svc-a")
 		New("svc-b")
 	})
+}
+
+func TestHTTPLatencyBuckets(t *testing.T) {
+	m := New("svc-buckets")
+	m.RequestDuration.WithLabelValues("GET", "/x").Observe(0.016)
+
+	w := httptest.NewRecorder()
+	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := w.Body.String()
+
+	// 18 bounds plus +Inf; dense around the measured p95/p99.
+	assert.Equal(t, 19, strings.Count(body, "gamemesh_http_request_duration_seconds_bucket{"))
+	assert.Contains(t, body, `path="/x",service="svc-buckets",le="0.015"} 0`)
+	assert.Contains(t, body, `path="/x",service="svc-buckets",le="0.02"} 1`)
 }
 
 func TestHandlerExposesInstruments(t *testing.T) {

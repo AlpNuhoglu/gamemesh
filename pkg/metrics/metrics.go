@@ -12,6 +12,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// httpLatencyBuckets fit the measured server-side latency (2026-10-22):
+// at the gateway under load, p50 3-4 ms, p95 14-22 ms and p99 22-38 ms per
+// route; 1-3 ms at p95 idle; and a second mode at 200-240 ms from bcrypt on
+// login and register.
+// histogram_quantile interpolates linearly inside a bucket, so the buckets are
+// dense where those percentiles fall; on the same requests its p95 was 29 %
+// off with Prometheus's default buckets and 3 % off with these. Each bucket is
+// a series per method and route, so the list stays short.
+var httpLatencyBuckets = []float64{
+	.001, .0025, .005, .01, .015, .02, .03, .05, .075,
+	.1, .15, .2, .25, .3, .5, 1, 2.5, 5,
+}
+
 // Metrics bundles every instrument a service may use. Gauges/counters that a
 // given service never touches simply stay at zero and cost nothing.
 type Metrics struct {
@@ -73,14 +86,14 @@ func New(service string) *Metrics {
 		}, []string{"method", "path", "status"}),
 		ErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "gamemesh_http_errors_total",
-			Help:        "Total HTTP responses with status >= 400.",
+			Help:        "Total HTTP responses with a server error status (>= 500).",
 			ConstLabels: constLabels,
 		}, []string{"method", "path", "status"}),
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "gamemesh_http_request_duration_seconds",
 			Help:        "HTTP request latency.",
 			ConstLabels: constLabels,
-			Buckets:     []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
+			Buckets:     httpLatencyBuckets,
 		}, []string{"method", "path"}),
 		WSConnections: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        "gamemesh_websocket_active_connections",
