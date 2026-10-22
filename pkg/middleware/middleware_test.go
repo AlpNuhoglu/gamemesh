@@ -98,17 +98,21 @@ func TestMetricsCountsRequests(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/test", nil))
 	}
-	// 404s count as errors too.
+	// A 404 is a request but not an error; a 5xx is both.
+	r.GET("/fail", func(c *gin.Context) { c.Status(http.StatusServiceUnavailable) })
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/missing", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/fail", nil))
 
 	// Scrape our own registry and assert the counters appear.
 	w = httptest.NewRecorder()
 	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := w.Body.String()
-	assert.Contains(t, body, `gamemesh_http_requests_total`)
-	assert.Contains(t, body, `gamemesh_http_errors_total`)
+	assert.Contains(t, body, `gamemesh_http_requests_total{method="GET",path="/test",service="test-middleware",status="200"} 3`)
+	assert.Contains(t, body, `gamemesh_http_requests_total{method="GET",path="unmatched",service="test-middleware",status="404"} 1`)
+	assert.Contains(t, body, `gamemesh_http_errors_total{method="GET",path="/fail",service="test-middleware",status="503"} 1`)
+	assert.Equal(t, 1, countSeries(m.ErrorsTotal))
 }
 
 // TestMetricsLabelsStayBounded: the method and path come from the client, so
@@ -128,9 +132,10 @@ func TestMetricsLabelsStayBounded(t *testing.T) {
 		serve(fmt.Sprintf("zz%d", i), fmt.Sprintf("/random/%d", i))
 	}
 
-	// GET /test 200, GET unmatched 404, other unmatched 404.
+	// GET /test 200, GET unmatched 404, other unmatched 404. No 5xx, so no
+	// errors: a 5xx needs a matched route, which needs a registered method.
 	assert.Equal(t, 3, countSeries(m.RequestsTotal))
-	assert.Equal(t, 2, countSeries(m.ErrorsTotal))
+	assert.Equal(t, 0, countSeries(m.ErrorsTotal))
 	assert.Equal(t, 3, countSeries(m.RequestDuration))
 
 	w := httptest.NewRecorder()

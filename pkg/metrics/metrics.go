@@ -73,7 +73,7 @@ func New(service string) *Metrics {
 		}, []string{"method", "path", "status"}),
 		ErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "gamemesh_http_errors_total",
-			Help:        "Total HTTP responses with status >= 400.",
+			Help:        "Total HTTP responses with a server error status (>= 500).",
 			ConstLabels: constLabels,
 		}, []string{"method", "path", "status"}),
 		RequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{

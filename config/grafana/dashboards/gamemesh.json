@@ -25,7 +25,7 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Error Rate (% of requests, by service)",
+      "title": "Server error rate (5xx, % of requests, by service)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "gamemesh-prometheus" },
       "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 }, "overrides": [] },

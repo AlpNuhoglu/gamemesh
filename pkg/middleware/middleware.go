@@ -187,7 +187,11 @@ func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 		status := strconv.Itoa(c.Writer.Status())
 		m.RequestsTotal.WithLabelValues(method, path, status).Inc()
 		m.RequestDuration.WithLabelValues(method, path).Observe(time.Since(start).Seconds())
-		if c.Writer.Status() >= http.StatusBadRequest {
+		// Errors are the server's failures. 4xx are the client's: 404 is the
+		// normal answer to DELETE /queue after a match, and anyone can produce
+		// 401s and 404s; 429 is the rate limit doing its job. They stay
+		// visible in RequestsTotal by status.
+		if c.Writer.Status() >= http.StatusInternalServerError {
 			m.ErrorsTotal.WithLabelValues(method, path, status).Inc()
 		}
 	}
