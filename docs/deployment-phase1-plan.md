@@ -1623,7 +1623,7 @@ Her adım şu yapıda:
 
 ### D2. Deploy job'ı
 
-- [ ] **Ne:** [ci.yml](../.github/workflows/ci.yml)'deki `echo` tabanlı örnek job'ı gerçek
+- [x] **Ne:** [ci.yml](../.github/workflows/ci.yml)'deki `echo` tabanlı örnek job'ı gerçek
   bir deploy ile değiştirmek:
   ```yaml
   deploy:
@@ -1653,6 +1653,26 @@ Her adım şu yapıda:
      timeout'u ile uyumlu seçilmeli.
   3. Deploy job'ı `cancel-in-progress: false` kullanmalı (A5'teki CI ayarının tersi):
      yarıda kesilmiş bir deploy cluster'ı tutarsız bırakabilir.
+- **Kararlar (2026-10-22):**
+  - **Ortak composite action** `.github/actions/prod-cluster` (ön kontrol, tailnet, sabit
+    sürümlü kubectl, kubeconfig); `deploy` ve `cluster-access` aynı adımları kullanıyor.
+  - **Token kubeconfig'de değil, exec credential plugin'de** (`gh-oidc-token.py`): kubectl
+    her süreçte taze bir GitHub token'ı alıyor, süresi (300 sn, 30 sn pay) dolunca yeniden.
+    kubectl kubeconfig'deki yolları dosyaya göreli yazdığı için komut `PATH`'te adıyla.
+  - **Tag yer tutucuyla:** `set-by-deploy` → SHA, tam 7 değişiklik ve kalan yer tutucu yok
+    kontrolüyle (`kustomize edit` için ayrı binary gerekmedi). Plandaki
+    `kubectl create secret` adımı yok: Secret CI'ın elinde değil.
+  - **Sıra:** önceki sürümü log'a yaz → `apply -k --dry-run=server` → `apply -k` → her
+    Deployment/StatefulSet için `rollout status --timeout=6m` → `/health`'in `version`'ı bu
+    commit olana kadar (en çok 2 dk) → hata olursa pod/event dökümü.
+  - **`progressDeadlineSeconds: 300`** bütün Deployment'larda (base'de tek patch).
+  - **`concurrency: deploy-prod`, `cancel-in-progress: false`**, `environment: production`.
+- **Sonuç (2026-10-22):** İlk otomatik deploy #80'in kendi merge'üydü (`33d9c2c`): merge
+  23:24:36 → `/health` yeni SHA 23:31:22, **6 dk 46 sn** (CI ~4 dk 20 sn, `publish` ~1,5 dk,
+  deploy job'u 38 sn: dry-run 8 sn, apply 6 sn, rollout'lar 15 sn, dış kontrol ilk denemede).
+  Deploy boyunca public HTTPS **3494/3494 200** (1520 eski, 225 yeni sürüm). 15 kubectl
+  çağrısının her biri kendi token'ını aldı; tek bir sürecin içinde token yenilenmesi henüz
+  denenmedi (D3'teki uzun bekleyiş deneyecek). `cluster-access` composite action ile yeşil.
 
 ### D3. Smoke test ve rollback
 
