@@ -147,7 +147,7 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ### G3. Uygulama metrikleri (danışman madde 2) ve Bulgu #90
 
-- [ ] **Ne:**
+- [x] **Ne:**
   - Mevcut metriklerin danışmanın listesini karşıladığını doğrulamak: istek sayacı, gecikme
     histogramı, hata sayacı, aktif WebSocket gauge'ı (var; isimler ve label'lar plana).
   - **Bulgu #90:** `method` label'ını sınırlı bir kümeye indirmek (`GET`, `POST`, `PUT`,
@@ -162,6 +162,40 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 - **Bitti sayılır:** K11; test CI'da geçiyor; prod'a deploy edildi ve uydurma bir method yeni
   seri açmıyor (ölçüm).
 
+> **Sonuç (2026-10-23): bitti (PR #91, prod'da `94a1358`).**
+>
+> **Ölçülen gecikme (sunucu tarafı, gateway):** prod boşta p50 1,4–1,6 ms, p95 2,2–3,3 ms;
+> yerelde README'nin matchmaking yükünde (500 VU) auth dışı route'lar p50 3,2, p95 16,2, p99
+> 30,2 ms; `auth/login` ve `register` 200–240 ms (bcrypt). README'deki "112 ms p95" istemci
+> tarafı ve bir kenar etkisi (Bulgu #91).
+>
+> **Kararlar:**
+>
+> | Konu | Karar | Gerekçe |
+> |---|---|---|
+> | `method` | `GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS`, gerisi `other` | İstemci girdisi; gin bilinmeyen method'u `unmatched` 404'e düşürüyor, sınır orada da lazım |
+> | `status` | Tam kod | Değeri bizim kodumuz üretiyor (sonlu); 404/429/401 ayrımı gerekli |
+> | WebSocket | Hijack edilen istek `101` sayılır, histograma girmez | Gateway'de süre = oturumun ömrü (Bulgu #92) |
+> | Hata | `gamemesh_http_errors_total` sadece 5xx; hata oranı = 5xx / toplam, **gateway'de** | 404 normal akış (`DELETE /queue`), 401/404'ü herkes üretir, 429 politika; 502/503/504 dahil |
+> | Bucket'lar | 1, 2,5, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 250, 300, 500 ms, 1, 2,5, 5 s | Ölçülen p95/p99 bölgesinde sık; aynı 19.000 istekte p95 hatası %29 → %3, p99 %18 → %1 |
+> | Panel katmanı | Kullanıcının gördüğü paneller `service="gateway"` | Her istek gateway'de ve upstream'de iki kez sayılıyor (20.000 k6 isteği = 40.000 gözlem) |
+>
+> **Seri bütçesi (hesap):** method/route çifti başına 21 histogram serisi (önce 14); bütün
+> servislerde üst sınır 91 çift = 1911 seri. Önce sınırsızdı: her yeni method gateway'de 16 seri.
+>
+> **Kanıt:** Testler eski kodda kırmızı, yenide yeşil: 100 uydurma method 102/101/102 seri →
+> 3/0/3 (istek/hata/histogram); WS testi; 5xx eşiği; 19 bucket. Gerçek compose'da 11 k6
+> WS oturumu iki serviste `101`, `/ws` histogram serisi yok; token'sız el sıkışma 401 ve süresi
+> kayıtlı. **Prod** (port-forward ile gateway `/metrics`): seri sayısı 22 → `ZZCHECK2…6` ile 44
+> (`other` için bir kerelik 21 histogram + 1 sayaç) → `QQPROBE1…5` ve rastgele yollarla **44**;
+> `requests_total{method="other",path="unmatched",status="404"} 10`, label'larda ham method ya
+> da yol yok; route'larda 19 bucket sınırı (18 + `+Inf`); 4xx'ler `errors_total`'a girmedi.
+>
+> **Kapsam dışı kalan:** event ve outbox histogramlarının bucket'ları değişmedi; native
+> histogram (Prometheus 2.55'te feature flag) sadece alternatif olarak not edildi. İki tepeli
+> dağılımda p95, auth istekleri toplamın ~%5'i olduğunda uçurumun kenarına düşer; hiçbir bucket
+> seti bunu çözmez, panel okunurken bilinmeli.
+
 ### G4. Prometheus kurulumu (danışman madde 1)
 
 - [ ] **Ne:** Prometheus'u G2'deki mimariyle kurmak; 7 servisin `/metrics`'ini scrape etmek
@@ -173,12 +207,13 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 - [ ] **Ne:** Grafana (admin parolası Secret'tan, admin girişi sadece tailnet), datasource ve
   dashboard **kod olarak** (provisioning, JSON repoda). Panellerin PromQL'i (taslak):
-  - **İstek hızı:** `sum(rate(gamemesh_http_requests_total{namespace="gamemesh"}[1m]))`
+  Hepsi `service="gateway"` ile (G3: her istek upstream'de bir kez daha sayılıyor):
+  - **İstek hızı:** `sum(rate(gamemesh_http_requests_total{service="gateway"}[1m]))`
     (servise göre kırılım isteğe bağlı).
-  - **p95/p99:** `histogram_quantile(0.95, sum by (le) (rate(gamemesh_http_request_duration_seconds_bucket{namespace="gamemesh"}[5m])))`
-    ve aynısı `0.99` ile.
-  - **Hata oranı (%):** `100 * sum(rate(gamemesh_http_errors_total{status=~"5.."}[5m])) / sum(rate(gamemesh_http_requests_total[5m]))`
-    (tanım G3'teki karara göre).
+  - **p95/p99:** `histogram_quantile(0.95, sum by (le) (rate(gamemesh_http_request_duration_seconds_bucket{service="gateway"}[5m])))`
+    ve aynısı `0.99` ile. WS oturumları histogramda yok (G3, #92).
+  - **Hata oranı (%):** `100 * sum(rate(gamemesh_http_errors_total{service="gateway"}[5m])) / sum(rate(gamemesh_http_requests_total{service="gateway"}[5m]))`
+    (G3: `errors_total` sadece 5xx).
   - **Aktif bağlantı:** `sum(gamemesh_websocket_active_connections)`.
 - **Bitti sayılır:** K12.
 
@@ -220,6 +255,8 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
     senaryolar (`/api/v1/leaderboard`, `/health`) ve az sayıda, işaretli test hesabı; sonra
     temizlik.
   - **WebSocket:** aktif bağlantı panelinin hareket etmesi için k6'nın WebSocket senaryosu.
+  - **Bulgu #91:** k6'nın p95'i setup'taki bcrypt isteklerini de içeriyor; senaryonun kendi p95'i
+    (`http_req_duration{scenario:...}`) ayrı raporlanır ve README'deki tablo buna göre düzeltilir.
 - **Bitti sayılır:** K14: yük sırasında 4 panelin ekran görüntüsü; panel değerleri k6'nın
   raporuyla (req/s, p95, hata, bağlantı sayısı) karşılaştırılıp tutarlılığı yazıldı.
 
@@ -363,4 +400,6 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 
 | # | Bulgu | Kaynak | Kanıt | Adım |
 |---|---|---|---|---|
-| 90 | HTTP metriklerinin `method` label'ı sınırsız: her uydurma method yeni bir zaman serisi açıyor (gateway belleği, ileride Prometheus); Traefik bunu internetten gateway'e iletiyor | G (danışmanın kardinalite notu) | Ölçüldü (yerel: 25 uydurma method → 25 seri; prod: `ZZCHECK1` gateway log'unda, 404) | G3 (method'u sınırlı kümeye indir, test) |
+| 90 | HTTP metriklerinin `method` label'ı sınırsız: her uydurma method yeni bir zaman serisi açıyor (gateway belleği, ileride Prometheus); Traefik bunu internetten gateway'e iletiyor | G (danışmanın kardinalite notu) | Ölçüldü (yerel: 25 uydurma method → 25 seri; prod: `ZZCHECK1` gateway log'unda, 404) | G3, **düzeltildi** (PR #91; prod'da 10 uydurma method → `other`, seri sayısı sabit) |
+| 91 | README'deki "112 ms p95" bir kenar etkisi: k6'nın p95'i setup'taki 1000 bcrypt isteğini (~205 ms, toplamın tam %5'i) de içeriyor ve p95 iki tepenin arasına düşüyor | G3 ölçümü | Ölçüldü (aynı iki koşuda toplam p95 113 ve 187 ms; yük aşamasında 27,7 ms, setup 211 ms) | G7 (senaryo p95'i ayrı; README tablosu) |
+| 92 | WebSocket oturumlarının ömrü HTTP gecikme histogramına giriyor (gateway'de handler oturum bitene kadar dönmüyor); el sıkışma 101 yerine 200 sayılıyor | G3 ölçümü | Ölçüldü (yerel: 27 oturum `+Inf`'te, toplam 1151 s) | G3, **düzeltildi** (PR #91; hijack → `101`, histogramda yok) |
