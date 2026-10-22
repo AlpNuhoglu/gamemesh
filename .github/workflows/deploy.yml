@@ -1,0 +1,58 @@
+# Deploy a chosen commit by hand (plan D3, D4): to go back to an earlier
+# release, or to redeploy one. Same steps as the automatic deploy in ci.yml
+# (.github/actions/deploy), the same environment and the same one-at-a-time
+# lock, so it can never run alongside an automatic deploy.
+#
+# Actions -> deploy -> Run workflow (branch main) -> the commit's full SHA.
+# Only commits on main can be deployed; their images were published by the
+# CI run of that commit.
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full SHA of the commit on main to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Full history, to check the commit is on main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: The commit is on main
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          if ! [[ $SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::not a full commit SHA: $SHA"; exit 1; fi
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then echo "::error::$SHA is not on main"; exit 1; fi
+          git log -1 --format='deploying %H (%cs) %s' "$SHA"
+
+      - name: Reach the production cluster
+        uses: ./.github/actions/prod-cluster
+        with:
+          ts-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-audience: ${{ secrets.TS_AUDIENCE }}
+          host: ${{ vars.K8S_HOST }}
+          ca-data: ${{ vars.K8S_CA_DATA }}
+
+      - name: Deploy the commit
+        uses: ./.github/actions/deploy
+        with:
+          sha: ${{ inputs.sha }}

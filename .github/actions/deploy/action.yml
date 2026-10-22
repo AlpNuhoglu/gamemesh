@@ -1,0 +1,20 @@
+# Deploy one commit to production and, if it does not come up, return to the
+# commit that ran before (plan D2, D3). The logic is in deploy.sh; this only
+# runs it. Call after .github/actions/prod-cluster, with the repository
+# checked out.
+name: deploy
+description: Deploy a commit of the prod overlay, rolling back on failure
+
+inputs:
+  sha:
+    description: Full SHA of a commit on main whose images are published
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy
+      shell: bash
+      env:
+        DEPLOY_SHA: ${{ inputs.sha }}
+      run: bash "${GITHUB_ACTION_PATH}/deploy.sh" "${DEPLOY_SHA}"

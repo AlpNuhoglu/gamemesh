@@ -461,56 +461,11 @@ jobs:
           host: ${{ vars.K8S_HOST }}
           ca-data: ${{ vars.K8S_CA_DATA }}
 
-      # The overlay's set-by-deploy placeholder exists for this: replaced by
-      # this commit's SHA, with checks that exactly the seven service images
-      # changed and nothing still points at the placeholder.
-      - name: Point the overlay at this commit's images
-        run: |
-          f=deployments/k8s/overlays/prod/kustomization.yaml
-          n=$(grep -c 'newTag: set-by-deploy' "$f")
-          if [ "$n" -ne 7 ]; then echo "expected 7 placeholders in $f, found $n"; exit 1; fi
-          sed -i "s/newTag: set-by-deploy/newTag: ${GITHUB_SHA}/" "$f"
-          kubectl kustomize deployments/k8s/overlays/prod > "${RUNNER_TEMP}/prod.yaml"
-          if grep -q 'set-by-deploy' "${RUNNER_TEMP}/prod.yaml"; then echo "a placeholder is left"; exit 1; fi
-          m=$(grep -cE "image: ghcr.io/alpnuhoglu/gamemesh-[a-z-]+:${GITHUB_SHA}$" "${RUNNER_TEMP}/prod.yaml")
-          if [ "$m" -ne 7 ]; then echo "expected 7 images at ${GITHUB_SHA}, found $m"; exit 1; fi
-          echo "7 images at ${GITHUB_SHA}"
-
-      # What runs before this deploy, in the log (and the rollback target, D3).
-      - name: Record what runs now
-        run: |
-          kubectl -n gamemesh get deploy gateway -o jsonpath='previous gateway image: {.spec.template.spec.containers[0].image}{"\n"}'
-          curl -fsS --max-time 10 https://api.gamemesh.app/health || echo "health check failed before the deploy"
-
-      # The API server's own admission (Pod Security, the admission policy,
-      # RBAC) rejects anything wrong before a single object changes.
-      - name: Dry run on the server
-        run: kubectl apply -k deployments/k8s/overlays/prod --dry-run=server
-
-      - name: Apply
-        run: kubectl apply -k deployments/k8s/overlays/prod
-
-      # apply only means "accepted". Each workload has to roll out and pass
-      # readiness; progressDeadlineSeconds (300) fails a stuck one early.
-      - name: Wait for the rollout
-        run: |
-          for w in $(kubectl get -k deployments/k8s/overlays/prod -o name | grep -E '^(deployment|statefulset)\.apps/'); do
-            kubectl -n gamemesh rollout status "$w" --timeout=6m
-          done
-
-      # Ready pods are not yet users reaching this commit: Traefik, TLS and
-      # DNS sit in between. The plan's check, from outside.
-      - name: The public endpoint serves this commit
-        run: |
-          for _ in $(seq 1 24); do
-            v=$(curl -fsS --max-time 10 https://api.gamemesh.app/health | jq -r .version || true)
-            if [ "$v" = "${GITHUB_SHA}" ]; then echo "https://api.gamemesh.app/health serves ${v}"; exit 0; fi
-            echo "serving ${v:-nothing}, waiting"; sleep 5
-          done
-          exit 1
-
-      - name: Show the cluster state
-        if: failure()
-        run: |
-          kubectl -n gamemesh get deploy,sts,pods -o wide || true
-          kubectl -n gamemesh get events --sort-by=.lastTimestamp | tail -40 || true
+      # Checks the images exist, applies after a server-side dry run, waits
+      # for every workload and for https://api.gamemesh.app to serve this
+      # commit; if any of that fails, redeploys the commit that ran before
+      # (with its own manifests) and fails the job. See deploy.sh.
+      - name: Deploy this commit
+        uses: ./.github/actions/deploy
+        with:
+          sha: ${{ github.sha }}
