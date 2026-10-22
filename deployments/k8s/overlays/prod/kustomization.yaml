@@ -71,6 +71,20 @@ patches:
         value:
           name: TRUSTED_PROXIES
           value: 10.42.0.0/16
+  # D3 TEST, reverted right after: a deliberately broken release. A value in
+  # env overrides the one from envFrom (the Secret), so the gateway gets a
+  # JWT_SECRET shorter than 32 characters and config.Validate refuses to
+  # start it. The deploy job must turn red, roll back to the previous
+  # commit, and production must keep serving throughout.
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: JWT_SECRET
+          value: d3-test-too-short
   # The public API name (C1). Its DNS record is an A record only, without
   # the Cloudflare proxy: the cluster is IPv4-only (finding #81), and a proxy
   # would end TLS at Cloudflare and hide the client's address from the
