@@ -4,6 +4,16 @@
 node k3s, cert-manager ile gelen geçerli bir TLS sertifikası ve `main`'e push edilince
 GitHub Actions'ın yaptığı gerçek bir deploy var.
 
+> **Sonuç (2026-10-22): hedefe ulaşıldı.** `curl https://api.gamemesh.app/health` → `200`,
+> cevapta deploy edilen commit. Tek node k3s (v1.35.9) netcup'ta, Traefik arkasında, Let's
+> Encrypt sertifikası cert-manager ile (ECDSA P-256, 90 gün, kendiliğinden yenileniyor).
+> `main`'e her push test edilip taranıyor, amd64 + arm64 imajları yayınlanıyor ve deploy
+> ediliyor: merge'den canlıya **6 dk 46 sn**, rollout sırasında **3494/3494** istek 200. Bozuk
+> bir sürüm kendiliğinden önceki commit'e döndü, eski pod hiç yeniden başlamadı. CI cluster'a ve
+> tailnet'e sadece kısa ömürlü OIDC token'larıyla erişiyor; hiçbir yerde kalıcı bir kimlik
+> bilgisi yok. Sunucu, `docs/deployment.md` izlenerek sıfırdan kurulabiliyor (tatbikatla
+> doğrulandı). 2026-10-08 → 2026-10-22: 60 PR, 89 bulgu (dizin aşağıda).
+
 **Yaklaşım:** Önce elimizdeki çalışan parçaları sağlamlaştırıyoruz (Bölüm A). Bir sunucuya
 dokunmadan önce, sunucuda koşacak her şeyi yerelde, k3s'in aynısı üzerinde deniyoruz.
 Sunucu tarafında hata ayıklamak yavaş ve pahalıdır; yerelde ucuzdur.
@@ -1774,6 +1784,43 @@ Her adım şu yapıda:
 ---
 
 ## Faz 1 sonrasına bilinçli olarak bırakılanlar
+
+### Tarihi olanlar (kendiliğinden kırmızıya döner)
+
+| Tarih | Ne | Bulgu |
+|---|---|---|
+| 2026-11-04 | `nats-server` CVE-2026-111943 kaydının süresi doluyor; yamalı NATS imajı gelince kayıt kalkar, gelmezse yeniden değerlendirilir | #88 |
+| 2026-11-18 | Redis imajındaki OpenSSL CVE-2026-84782 kaydının süresi doluyor | — |
+| 2026-12-20 | `api-tls`'in ilk otomatik yenilemesi: admission policy altında gerçek bir yenileme; olduğunu doğrula | #85, #87 |
+| 2027-01-18 | gosu'nun Go CVE kayıtlarının süresi doluyor | — |
+| 2027-04-21 | KSV-0056 (CI'ın Service/Ingress yazması) kaydının süresi doluyor | #87 |
+
+### Gerçek kullanıcılardan önce
+
+- **Postgres yedekleri ve geri yükleme denemesi** (aşağıda ayrıntı); yedeklerde k3s'in
+  `server/cred/` klasörü datastore'dan ayrı saklanmalı (#80).
+- **Sertifika süresi ve dışarıdan erişim izlemesi:** süre dolmadan uyaran bir şey yok (#85);
+  ev ağından bağımsız bir dış kontrol, D3'teki açıklanamayan bağlantı hatalarını da ayırırdı
+  (#83).
+- **Prod'da monitoring:** Prometheus/Grafana prod overlay'inde yok (#68); 4 GB'lık node'u 8 GB'a
+  büyütmeyi gerektirebilir.
+
+### Güvenlik ve tedarik zinciri
+
+- **arm64 imajlarını tarat ya da yayınlamayı bırak** (#78); prod x86, Mac'teki prova arm64.
+- **cert-manager'ın 5 imajını üçüncü taraf taramasına ekle** (#84).
+- **Secret şifrelemesini `secretbox`'a geçir**, k3s'te stable olunca (#80).
+- **JWT'yi kesintisiz döndürebilmek:** başlıkta `kid`, bir süre iki anahtarla doğrulama
+  (bugün rotasyon herkesi çıkış yaptırıyor; runbook'ta).
+
+### Platform
+
+- **k3s 1.36'ya geçiş** (kubeconform `-kubernetes-version` ve PSS `enforce-version` ile birlikte).
+- **Dual-stack (IPv6)** ve ardından AAAA kaydı (#81).
+- **Matchmaking'in `Recreate` stratejisi** her deploy'da birkaç saniyelik boşluk yaratıyor;
+  bir leader lock ile `RollingUpdate`'e geçilebilir.
+
+### A adımlarından kalanlar
 
 Bunlar unutulmadı; Faz 1'i sade tutmak için ertelendi:
 
