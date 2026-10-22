@@ -17,12 +17,11 @@ Faz 1'den kalan **tarihli işler** tarihlerinde yapılıyor (Bölüm H).
 (2026-10-22). E, F, H ve G'deki kapasite/runbook adımları Faz 1 kapanışında eklenen "gerçek
 kullanıcılardan önce şart olanlar"dan; kullanıcı bunların korunmasını istedi.
 
-> **Karar bekleyen çakışma:** Danışman **Alertmanager ve uyarı kurallarını** kapsam dışı sayıyor
-> (README'ye roadmap olarak); önceki planda bunlar vardı (K7, G8). Plan ikisini de koruyor:
-> uyarı kuralları en sona (G8) alındı ve **"karar bekliyor"** işaretli. Faz 2'ye başlamadan önce
-> karar: (a) danışmana uyup Faz 3'e bırakmak, (b) Faz 2'de tutmak. Dış uyarı (F: sitenin ya da
-> sertifikanın durumu, yedek dead man's switch'i) Alertmanager'dan bağımsız, bir dış servisle;
-> bu çakışmaya dahil değil.
+> **Karar (2026-10-22): Alertmanager ve uyarı kuralları Faz 3'e.** Danışman bunları kapsam dışı
+> sayıyordu, önceki plan içeriyordu (K7, G8). Kullanıcı danışmana uymayı seçti: K7 ve G8 Faz
+> 3'e taşındı (numaralar boş kalıyor), README'de roadmap maddesi. Gerekçe: en kritik iki uyarı
+> Alertmanager'dan bağımsız olarak Faz 2'de zaten var: sitenin ve sertifikanın dış izlemesi (F1,
+> K5) ve yedeklerin dead man's switch'i (F2, K3).
 
 ## Tamamlanma kriterleri
 
@@ -50,9 +49,9 @@ Her kriter bir ölçümle kanıtlanır; ölçüm plana "Sonuç" notu olarak yaz�
 | K4 | k3s'in kendi durumu (datastore + `server/cred/`) ayrı ayrı yedekleniyor ve geri yüklenebiliyor (Bulgu #80) | Tatbikat VM'inde geri yükleme; Secret'lar okunabiliyor |
 | K5 | `/health` dışarıdan düşerse ya da sertifikanın bitmesine **21 günden** az kalırsa uyarı geliyor | Kasıtlı bir kesinti ve uyarının ulaşma süresi; hedef ≤ 5 dk |
 | K6 | Prometheus ve Grafana'nın **yönetimi** sadece tailnet'ten; dışarı açık tek şey K13'teki salt okunur dashboard | Grafana admin girişi sadece tailnet'ten; public IP'de Prometheus ve Grafana admin yolları kapalı |
-| K7 | *(Karar bekliyor, bkz. çakışma)* Temel durumlar için uyarı kuralları: pod hazır değil / restart döngüsü, disk > %80, bellek baskısı, sertifika süresi, yedek yaşı | `promtool test rules` ve en az bir gerçek tetikleme |
+| ~~K7~~ | *Faz 3'e taşındı (karar 2026-10-22).* Alertmanager ile uyarı kuralları: pod hazır değil / restart döngüsü, disk > %80, bellek baskısı | — |
 | K8 | Kapasite kararı ölçümle verildi (4 GB yeter mi, 8 GB mı) | Monitoring kurulduktan sonraki kullanım ve request toplamları; karar + gerekçe |
-| K9 | Runbook güncel: geri yükleme, monitoring erişimi, durum sayfası, (varsa) uyarıya müdahale | `docs/deployment.md`'deki yeni bölümler bir tatbikatla izlenebiliyor |
+| K9 | Runbook güncel: geri yükleme, monitoring erişimi, durum sayfası, dış izleme ve yedek uyarısına (F1, F2) müdahale | `docs/deployment.md`'deki yeni bölümler bir tatbikatla izlenebiliyor |
 
 ## Tasarım ilkeleri (danışmanın üç noktası; aynı zamanda mülakat cevapları)
 
@@ -111,7 +110,7 @@ Her kriter bir ölçümle kanıtlanır; ölçüm plana "Sonuç" notu olarak yaz�
   manifest'ler k3s'in auto-deploy klasöründen.
 
 **Önerilen sıra:** G3 (Bulgu #90 ve bucket'lar; kod) → G1 → G2 → G4 → G5 → G6 → G7 → G9;
-paralelde E ve F; H tarihlerinde; G8 karara göre.
+paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ---
 
@@ -121,7 +120,7 @@ paralelde E ve F; H tarihlerinde; G8 karara göre.
 
 - [ ] **Ne:** Monitoring yükünü ölçüp node'un yetip yetmediğine karar vermek.
 - **Nasıl:** compose'da ölçülen tüketim (Prometheus ~95 MiB, Grafana ~217 MiB; Faz 1 M2) +
-  seçilen yığının diğer bileşenleri (kube-state-metrics, node-exporter, varsa Alertmanager);
+  seçilen yığının diğer bileşenleri (kube-state-metrics, node-exporter; Alertmanager yok, Faz 3);
   saklama süresiyle Prometheus belleği. Önce yerel k3d'de prod'a yakın ayarla ölçüm.
 - **Seçenekler:** 4 GB'ta kalmak (kısa saklama, 30 sn scrape); netcup'ta 8 GB'lık plana geçmek
   (VPS 1000 G12.5; yerinde yükseltme, kesinti ve fiyat **doğrulanacak**).
@@ -224,22 +223,21 @@ paralelde E ve F; H tarihlerinde; G8 karara göre.
 - **Bitti sayılır:** K14: yük sırasında 4 panelin ekran görüntüsü; panel değerleri k6'nın
   raporuyla (req/s, p95, hata, bağlantı sayısı) karşılaştırılıp tutarlılığı yazıldı.
 
-### G8. Uyarı kuralları ve yönlendirme *(karar bekliyor)*
+### G8. Uyarı kuralları ve yönlendirme — *Faz 3'e taşındı*
 
-- [ ] **Ne:** Alertmanager kuralları: pod hazır değil/crashloop, disk > %80, bellek baskısı
-  (OOMKilled dahil), sertifika süresi < 21 gün, son başarılı yedeğin yaşı > 26 saat, scrape
-  başarısız. Yönlendirme F1'deki kanala.
-- **Çakışma:** Danışman Alertmanager ve alarm kurallarını kapsam dışı sayıyor (README roadmap).
-  Faz 2'ye başlamadan önce karar; (a) seçilirse bu adım Faz 3'e taşınır ve K7 düşer.
-- **Bitti sayılır:** K7.
+**Karar (2026-10-22):** Danışmanın kapsamına uyularak Faz 3'e. Faz 3 için not edilenler:
+Alertmanager kuralları (pod hazır değil/crashloop, disk > %80, bellek baskısı ve OOMKilled,
+scrape başarısız; sertifika süresi ve yedek yaşı Faz 2'de F1/F2'de zaten var), yönlendirme F1'deki
+kanala, `promtool test rules` ve gerçek bir tetikleme. Faz 2'de G2'deki yığın seçilirken
+Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enabled: false`).
 
 ### G9. Runbook ve README roadmap
 
 - [ ] **Ne:**
   - `docs/deployment.md`: "Restoring from backup", "Monitoring access", "Status page",
-    (G8 yapıldıysa) "When an alert fires".
-  - README: "Roadmap" bölümü (danışman: koda değil): Alertmanager ve alarm kuralları (G8'in
-    kararına göre), log toplama (Loki), uzun süreli metrik saklama, tema ve görsel cila, ek
+    "When an outside alert fires" (F1, F2).
+  - README: "Roadmap" bölümü (danışman: koda değil): Alertmanager ve alarm kuralları (Faz 3),
+    log toplama (Loki), uzun süreli metrik saklama, tema ve görsel cila, ek
     paneller; Faz 1 sonrası listesinden öne çıkanlar.
 - **Bitti sayılır:** K9, K15; E5 tatbikatı bu bölümlerle yapıldı.
 
@@ -351,11 +349,11 @@ paralelde E ve F; H tarihlerinde; G8 karara göre.
 ## Kapsam dışı
 
 **Danışmanın kapsam dışı listesi** (README'de "Roadmap" olarak, koda değil; G9): Alertmanager ve
-alarm kuralları (*G8'deki karara göre*), log toplama (Loki), uzun süreli saklama, tema ve görsel
-cila, ek paneller.
+alarm kuralları (Faz 3; G8 ve K7 buraya taşındı), log toplama (Loki), uzun süreli saklama, tema
+ve görsel cila, ek paneller.
 
-**Faz 3 ya da sonrası:** yüksek erişilebilirlik (birden fazla node, yönetilen veritabanı);
-arm64 imaj taraması (#78), cert-manager imajlarının taranması (#84), `secretbox` (#80), JWT `kid`
+**Faz 3 ya da sonrası:** Alertmanager ve uyarı kuralları (G8, K7); yüksek erişilebilirlik (birden
+fazla node, yönetilen veritabanı); arm64 imaj taraması (#78), cert-manager imajlarının taranması (#84), `secretbox` (#80), JWT `kid`
 rotasyonu, k3s 1.36, dual-stack (#81), matchmaking için leader lock (Faz 1 planının "Faz 1
 sonrası" listesi). Faz 2'nin bir adımı bunlara dokunuyorsa birlikte ele alınır.
 
