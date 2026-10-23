@@ -1,0 +1,32 @@
+# Deletes a pull request's Actions caches when it is closed (finding #95).
+# They are scoped to refs/pull/<n>/merge, which no later run can read, but
+# they count towards the repository's 10 GB until GitHub evicts them: 3 GiB of
+# the 10.17 GiB measured on 2026-10-23 belonged to closed pull requests.
+name: cache-cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  delete:
+    # A fork's pull request gets a read-only token; its caches are left to
+    # GitHub's eviction.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Delete the pull request's caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          ids=$(gh cache list --ref "$REF" --limit 1000 --json id --jq '.[].id')
+          n=0
+          for id in $ids; do gh cache delete "$id"; n=$((n + 1)); done
+          echo "deleted $n caches of $REF"

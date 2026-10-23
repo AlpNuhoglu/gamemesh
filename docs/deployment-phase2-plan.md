@@ -244,10 +244,36 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ### G4. Prometheus kurulumu (danışman madde 1)
 
-- [ ] **Ne:** Prometheus'u G2'deki mimariyle kurmak; 7 servisin `/metrics`'ini scrape etmek
+- [x] **Ne:** Prometheus'u G2'deki mimariyle kurmak; 7 servisin `/metrics`'ini scrape etmek
   (ServiceMonitor ya da `kubernetes_sd_configs`); Prometheus Service'i `ClusterIP`, Ingress yok.
 - **Bitti sayılır:** K10: `up{namespace="gamemesh"}` 7/7 = 1; Prometheus'a dışarıdan
   ulaşılamıyor (port taraması, `api.gamemesh.app/api/v1/query` → 404).
+
+> **Sonuç (2026-10-23): bitti (PR #94, #95; prod'da `a407dba`).** Prometheus 3.15.1 (#94 tarama
+> sonucu) `monitoring` namespace'inde (PSS restricted), 15 sn scrape, 7 gün / 2 GiB, 3 Gi PVC; CI
+> uygulamadan sonra kuruyor (merge → prod 7,5 dk; Prometheus rollout 12 sn). Cluster seviyesindeki
+> dosyalar (namespace, Prometheus'un SA + `gamemesh`'te Role, admission policy, CI'ın `monitoring`
+> Role'ü) admin tarafından kuruldu; k3s'in checksum'ları repodakilerle aynı.
+>
+> **Kanıt:**
+> - **K10:** port-forward ile `up{namespace="gamemesh"}` 7 servisin 7'si = 1, `up == 0` boş,
+>   Prometheus kendini scrape ediyor; head 1328 seri, RSS 93 MiB.
+> - **Dışarıdan erişilemiyor:** public adreste sadece 80 ve 443 açık (22, 6443, 9090, 3000,
+>   10250, 30000–32767 kapalı); `api.gamemesh.app` üzerinden `/api/v1/query`, `/api/v1/targets`,
+>   `/metrics`, `/-/ready`, `/graph` → 404; başka Host başlıklarıyla (`prometheus.gamemesh.app`,
+>   `status.gamemesh.app`) → 404.
+> - **Politika (K6'nın yarısı, `--dry-run=server`, prod):** `monitoring`'de Ingress cluster-admin'e
+>   bile reddediliyor ("Ingresses are not allowed"), CI'a RBAC'la; NodePort ve LoadBalancer
+>   reddediliyor; ClusterIP'ye izin var; hiçbir şey kaydedilmedi.
+> - **Yetkiler:** CI'ın beklenen 16 hakkı (`auth can-i --as`) tutuyor; Prometheus sadece
+>   `gamemesh`'te pod listeleyebiliyor, Secret okuyamıyor.
+> - **Yerel prova (k3d):** monitoring CI'ın kimliğiyle uygulandı; `deploy_monitoring` üç durumda
+>   (monitoring'li commit, monitoring'siz commit, NodePort eklenmiş ağaç → rc 1, hiçbir şey
+>   uygulanmadı) doğru.
+>
+> **K8 için ilk ölçüm (Prometheus ~4 dk'lık):** `available` 2273 Mi (önce 2313), bellek
+> request'leri 1292 Mi (%33), OOMKilled yok, disk %21. Kesin ölçüm G5'ten (Grafana) sonra ve
+> birkaç saatlik çalışmanın ardından.
 
 ### G5. Grafana ve 4 panel (danışman madde 3)
 
@@ -451,3 +477,4 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 92 | WebSocket oturumlarının ömrü HTTP gecikme histogramına giriyor (gateway'de handler oturum bitene kadar dönmüyor); el sıkışma 101 yerine 200 sayılıyor | G3 ölçümü | Ölçüldü (yerel: 27 oturum `+Inf`'te, toplam 1151 s) | G3, **düzeltildi** (PR #91; hijack → `101`, histogramda yok) |
 | 93 | k3s'te kubelet'in `/metrics`'i aynı süreçteki kontrol düzleminin metriklerini de veriyor; kube-prometheus-stack'in varsayılanları kontrol düzlemini iki kez scrape ediyor | G1 ölçümü (yerel k3d) | Ölçüldü (`job="kubelet"` `/metrics`: 37.346 `apiserver_*` + 12.966 etcd/workqueue/scheduler, 947 `kubelet_*`) | G2 (sade yığın seçildi; kube-prometheus-stack'e dönülürse `kubelet` job'unda `/metrics` filtrelenir) |
 | 94 | Planlanan monitoring sürümlerinde CI'ı kıracak bulgular; temiz bir Grafana sürümü yok (hepsi Go'nun CVE-2026-111943'üyle derlenmiş) | G4 (yükseltme öncesi tarama) | Ölçüldü (Trivy 0.76.1, CI kuralları: Prometheus 3.13.5 → 2, 3.15.1 → 0; Grafana 13.2.4 → 75, 13.1.8 → 18, 12.4.13 → 8) | G4 (Prometheus 3.15.1); G5 (Grafana sürümü) |
+| 95 | CI'da bir build'in GitHub Actions cache'ine aktarımı 17 dk 40 sn takıldı (job sınırına 81 sn kala); `type=gha`'nın 10 dk varsayılan timeout'u devreye girmedi. Repo cache'i 10,17 GiB ile sınırın üstündeydi, 3,68 GiB'ı kapanmış PR'lardan | PR #95'in CI'ı | Ölçüldü (job log'u: `sending cache export 1060.2s`; aynı koşudaki diğer 6 servis 1,7–6,9 sn) | G4 (cache import/export 3 dk timeout + `ignore-error`; kapanan PR'ın cache'ini silen workflow; tek seferlik temizlik → 7,05 GB) |
