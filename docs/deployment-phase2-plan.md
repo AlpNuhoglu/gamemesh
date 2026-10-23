@@ -126,9 +126,26 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
   (VPS 1000 G12.5; yerinde yükseltme, kesinti ve fiyat **doğrulanacak**).
 - **Bitti sayılır:** K8.
 
+> **Ön sonuç (2026-10-23, yerel k3d'de ölçüldü): 4 GB yeter, sade yığın şartıyla.** İki yığın aynı
+> uygulama trafiği altında, ikisi de 7–10 dakikalıkken (uzun süreli ölçüm yok; head ~2 saatte
+> dolar):
+>
+> | | Sade (Prometheus 2.55 + Grafana 11.6) | kube-prometheus-stack 92.11 (Prometheus 3.15, Grafana 13.2) |
+> |---|---|---|
+> | Seri | 1616–1837 (hepsi uygulama) | 79.758–114.096 (uygulama %1,6–2) |
+> | Bellek (working set) | Prometheus 53–99, Grafana 110–111 → **164–209 Mi** | Prometheus 444–454, Grafana 491–606, operator 41–44, KSM 38–41, node-exporter 14–20 → **1038–1155 Mi** |
+> | Prod'da kalacak `available` (bugün 2313 Mi) | ~2,1 GiB | ~1,2 GiB ve head büyüdükçe azalır |
+>
+> kube-prometheus-stack'te serilerin çoğu kubelet (54.262 `/metrics`, 5458 cAdvisor) ve apiserver
+> (26–39 bin); k3s'te ikisi aynı kontrol düzlemi metrikleri (Bulgu #93). k3d'de 34 pod var, prod'da
+> 18: kubelet serileri prod'da daha az. **Ölçütler (onaylandı):** 15 sn scrape, 7 gün + 2 GB saklama;
+> monitoring sonrası prod'da `available` < 1 GiB, bir OOMKilled ya da bellek request'leri
+> allocatable'ın %75'ini geçerse VPS 1000 G12.5'e (€14,50/ay, şu an €8,26; G12.5 içinde yerinde
+> yükseltme; kesinti ve disk büyümesi **doğrulanacak**). K8'in kanıtı G4'ten sonra prod'da.
+
 ### G2. Monitoring mimarisi
 
-- [ ] **Ne:** Nerede ne çalışacak; kararlar:
+- [x] **Ne:** Nerede ne çalışacak; kararlar:
   - **Yığın (danışman madde 1):** kube-prometheus-stack (Prometheus Operator, Grafana,
     kube-state-metrics, node-exporter; büyük, CRD'li) mı, sade Prometheus + Grafana mı
     (mevcut `components/monitoring`'in prod'a uyarlanması)? Önerinin gerekçesi: bellek (G1),
@@ -144,6 +161,25 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
   - **Bulgu #68:** Prometheus 3 / Grafana 12+ yükseltmesi bu adımda mı, ayrı mı.
   - **Saklama:** kısa (ör. 7 gün; uzun süreli saklama kapsam dışı).
 - **Bitti sayılır:** Kararlar plana yazıldı ve onaylandı.
+
+> **Kararlar (2026-10-23, onaylandı):**
+>
+> | # | Konu | Karar | Gerekçe |
+> |---|---|---|---|
+> | 1 | Yığın | **Sade** Prometheus + Grafana | G1: 5–7 kat daha az bellek; kube-prometheus-stack'in serilerinin %98'i uygulama dışı (#93); operator ve CRD'ler 4 uygulama paneline bir şey katmıyor. Node/cluster panelleri kapsam dışı ("ek paneller") |
+> | 2 | Sürümler (#68) | **Prometheus 3.13.x (LTS, destek 2027-07-31)**, **Grafana 13.2.x** (destek ~2027-05-18); compose ve Kubernetes aynı PR'da | 2.55 hiç LTS olmadı (2.53'ün desteği 2025-07-31'de bitti); 11.6'nın desteği 2026-06-25'te bitti. Risk: Prometheus 3'te `le` değerleri normalize (`"1"` → `"1.0"`); Grafana 13'ün belleği k3d'de ölçülecek |
+> | 3 | Namespace | `monitoring`, PSS `restricted` | node-exporter yok; G6'nın ayrı admission kuralına yer |
+> | 4 | RBAC | `gamemesh`'te `Role` (pods get/list/watch) + `monitoring/prometheus` SA'sına `RoleBinding`; ClusterRole yok | En az yetki (Faz 1 sonrası maddesi) |
+> | 5 | Kim kurar | Namespace, RBAC, admission: cluster seviyesi (admin). Workload'lar (Deployment, ConfigMap, Service, PVC): CI; CI'a `monitoring`'de RBAC ve Secret yetkisi olmayan yeni bir Role | Dashboard'lar kod olarak sık değişir; her değişiklik için `sudo` pratik değil |
+> | 6 | Depolama | PVC (local-path): Prometheus 3 Gi, Grafana 1 Gi | Public dashboard'un ayarı ve token'ı Grafana'nın veritabanında; PVC'siz her yeniden başlatmada adres değişir (dosyayla provision edilip edilemediği G6'da doğrulanacak) |
+> | 7 | Grafana admin | `kprod port-forward` (tailnet); admin için Ingress yok; parola `grafana-admin` Secret'ında (admin oluşturur) | Admin yüzeyi dışarıda hiç yok |
+> | 8 | Scrape | Uygulama pod'ları + Prometheus'un kendisi | cAdvisor (~5,4 bin seri) roadmap |
+> | 9 | Alarm kuralları | Prod'da yok (Faz 3); yerel overlay'de kalabilir | Danışmanın kapsamı |
+>
+> **G6 (c) doğrulandı (yerel, Grafana 11.6.16 ve 13.2.4 OSS):** public dashboard varsayılan olarak
+> açık; `/public-dashboards/<token>`, `/api/public/dashboards/<token>` ve panel sorgusu anonim 200,
+> `/api/dashboards/uid/...`, `/api/search`, `/api/admin/settings` ve `POST /api/dashboards/db` 401.
+> Tek Grafana yeter ve anonim giriş hiç açılmaz. G6'nın önerisi buna göre (c).
 
 ### G3. Uygulama metrikleri (danışman madde 2) ve Bulgu #90
 
@@ -403,3 +439,4 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 90 | HTTP metriklerinin `method` label'ı sınırsız: her uydurma method yeni bir zaman serisi açıyor (gateway belleği, ileride Prometheus); Traefik bunu internetten gateway'e iletiyor | G (danışmanın kardinalite notu) | Ölçüldü (yerel: 25 uydurma method → 25 seri; prod: `ZZCHECK1` gateway log'unda, 404) | G3, **düzeltildi** (PR #91; prod'da 10 uydurma method → `other`, seri sayısı sabit) |
 | 91 | README'deki "112 ms p95" bir kenar etkisi: k6'nın p95'i setup'taki 1000 bcrypt isteğini (~205 ms, toplamın tam %5'i) de içeriyor ve p95 iki tepenin arasına düşüyor | G3 ölçümü | Ölçüldü (aynı iki koşuda toplam p95 113 ve 187 ms; yük aşamasında 27,7 ms, setup 211 ms) | G7 (senaryo p95'i ayrı; README tablosu) |
 | 92 | WebSocket oturumlarının ömrü HTTP gecikme histogramına giriyor (gateway'de handler oturum bitene kadar dönmüyor); el sıkışma 101 yerine 200 sayılıyor | G3 ölçümü | Ölçüldü (yerel: 27 oturum `+Inf`'te, toplam 1151 s) | G3, **düzeltildi** (PR #91; hijack → `101`, histogramda yok) |
+| 93 | k3s'te kubelet'in `/metrics`'i aynı süreçteki kontrol düzleminin metriklerini de veriyor; kube-prometheus-stack'in varsayılanları kontrol düzlemini iki kez scrape ediyor | G1 ölçümü (yerel k3d) | Ölçüldü (`job="kubelet"` `/metrics`: 37.346 `apiserver_*` + 12.966 etcd/workqueue/scheduler, 947 `kubelet_*`) | G2 (sade yığın seçildi; kube-prometheus-stack'e dönülürse `kubelet` job'unda `/metrics` filtrelenir) |
