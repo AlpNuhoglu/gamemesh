@@ -162,8 +162,12 @@ jobs:
           # One cache scope per service. All seven used the default scope
           # ("buildkit"), and each build overwrites that scope's cache index,
           # so only the last job's cache survived.
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          # The cache is an optimisation: an export that fails or stalls must
+          # not fail the build. One stalled for 17 min 40 s after its layers
+          # were written, past the 10 min default timeout, while the six
+          # other services' took 2-7 s (finding #95).
+          cache-from: type=gha,scope=${{ matrix.service }},timeout=3m
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }},timeout=3m,ignore-error=true
       # The filesystem scan sees go.mod only; this one sees what ships: the
       # Alpine packages (musl, busybox, openssl) and the compiled binary.
       # TRIVY_EXIT_ON_EOL also fails a base image that no longer gets security
@@ -427,8 +431,10 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           push: true
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          # As in the docker job: a stalled cache export must not hold up the
+          # deploy (finding #95).
+          cache-from: type=gha,scope=${{ matrix.service }},timeout=3m
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }},timeout=3m,ignore-error=true
 
   # Deploys this commit to production (plan D2): the images publish just
   # pushed, through the prod overlay, the way docs/deployment.md describes the
