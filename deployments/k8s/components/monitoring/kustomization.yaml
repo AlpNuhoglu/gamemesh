@@ -1,7 +1,6 @@
 # Prometheus and Grafana as an optional piece an overlay can include. Only the
-# local overlay does: moving monitoring to production is a post-phase-1
-# item, and its images are a major version behind and scanned report-only
-# (finding #68).
+# local overlay does; production monitoring is phase 2's steps G4 (Prometheus)
+# and G5 (Grafana, still a major version behind, finding #94).
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:

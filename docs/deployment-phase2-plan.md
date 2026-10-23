@@ -176,6 +176,16 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 > | 8 | Scrape | Uygulama pod'ları + Prometheus'un kendisi | cAdvisor (~5,4 bin seri) roadmap |
 > | 9 | Alarm kuralları | Prod'da yok (Faz 3); yerel overlay'de kalabilir | Danışmanın kapsamı |
 >
+> **2. kararın revizyonu (2026-10-23, onaylandı; Bulgu #94):** CI'ın engelleyici kurallarıyla
+> (HIGH/CRITICAL, düzeltmesi olan, `.trivyignore.yaml`) taranınca Prometheus `v3.13.5-distroless`'ta
+> CVE-2026-84445 (grpc) çıktı, `v3.15.1-distroless` temiz: **Prometheus 3.15.1** (LTS değil;
+> Dependabot minor'ları haftalık öneriyor). Temiz bir Grafana yok (13.2.4: 75, 13.1.8: 18, 12.4.13: 8
+> bulgu; hepsinde Go'nun CVE-2026-111943'ü): **Grafana kararı G5'e**; o zamana kadar 11.6.16 sadece
+> yerelde ve rapor modunda. G5'te Go ≥ 1.26.10 ile derlenmiş bir sürüm yoksa 12.4.x + dar, süreli
+> istisnalar (x509: Grafana dışarıya TLS açmaz; tempo: Tempo datasource'u yok; kin-openapi:
+> erişilebilirlik doğrulanacak, G6'nın yol filtresi yüzeyi daraltır) ve 12.4'te public dashboard
+> doğrulaması.
+>
 > **G6 (c) doğrulandı (yerel, Grafana 11.6.16 ve 13.2.4 OSS):** public dashboard varsayılan olarak
 > açık; `/public-dashboards/<token>`, `/api/public/dashboards/<token>` ve panel sorgusu anonim 200,
 > `/api/dashboards/uid/...`, `/api/search`, `/api/admin/settings` ve `POST /api/dashboards/db` 401.
@@ -440,3 +450,4 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 91 | README'deki "112 ms p95" bir kenar etkisi: k6'nın p95'i setup'taki 1000 bcrypt isteğini (~205 ms, toplamın tam %5'i) de içeriyor ve p95 iki tepenin arasına düşüyor | G3 ölçümü | Ölçüldü (aynı iki koşuda toplam p95 113 ve 187 ms; yük aşamasında 27,7 ms, setup 211 ms) | G7 (senaryo p95'i ayrı; README tablosu) |
 | 92 | WebSocket oturumlarının ömrü HTTP gecikme histogramına giriyor (gateway'de handler oturum bitene kadar dönmüyor); el sıkışma 101 yerine 200 sayılıyor | G3 ölçümü | Ölçüldü (yerel: 27 oturum `+Inf`'te, toplam 1151 s) | G3, **düzeltildi** (PR #91; hijack → `101`, histogramda yok) |
 | 93 | k3s'te kubelet'in `/metrics`'i aynı süreçteki kontrol düzleminin metriklerini de veriyor; kube-prometheus-stack'in varsayılanları kontrol düzlemini iki kez scrape ediyor | G1 ölçümü (yerel k3d) | Ölçüldü (`job="kubelet"` `/metrics`: 37.346 `apiserver_*` + 12.966 etcd/workqueue/scheduler, 947 `kubelet_*`) | G2 (sade yığın seçildi; kube-prometheus-stack'e dönülürse `kubelet` job'unda `/metrics` filtrelenir) |
+| 94 | Planlanan monitoring sürümlerinde CI'ı kıracak bulgular; temiz bir Grafana sürümü yok (hepsi Go'nun CVE-2026-111943'üyle derlenmiş) | G4 (yükseltme öncesi tarama) | Ölçüldü (Trivy 0.76.1, CI kuralları: Prometheus 3.13.5 → 2, 3.15.1 → 0; Grafana 13.2.4 → 75, 13.1.8 → 18, 12.4.13 → 8) | G4 (Prometheus 3.15.1); G5 (Grafana sürümü) |
