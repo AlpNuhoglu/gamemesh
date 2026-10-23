@@ -1,0 +1,50 @@
+# What a Service or an Ingress in the monitoring namespace may look like
+# (phase 2, G4), next to gamemesh's own policy (gamemesh-admission-policy.yaml):
+#
+# - Services: ClusterIP only, no externalIPs, for the same reasons as there.
+# - Ingresses: none. Prometheus is never exposed: its query API and raw
+#   metrics describe the system's insides. The public status page (G6) will
+#   allow exactly one host here, and nothing else.
+#
+# So "Prometheus is not reachable from outside" holds by policy, whoever
+# applies what. Cluster-level, written by the admin (k3s auto-deploy
+# directory); CI has no permission on admission policies.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: monitoring-network-surface
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  validations:
+    - expression: >-
+        request.kind.kind != 'Service' ||
+        !has(object.spec.type) || object.spec.type == 'ClusterIP'
+      message: "in monitoring, Services must be type ClusterIP"
+    - expression: >-
+        request.kind.kind != 'Service' ||
+        !has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0
+      message: "in monitoring, Services may not set externalIPs"
+    - expression: request.kind.kind != 'Ingress'
+      message: "in monitoring, Ingresses are not allowed"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: monitoring-network-surface
+spec:
+  policyName: monitoring-network-surface
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring

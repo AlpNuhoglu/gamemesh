@@ -1,6 +1,7 @@
 # What CI may do in the cluster (plan D1): apply the prod overlay and watch
-# the rollout, in the gamemesh namespace only. The identity is the GitHub
-# Actions job itself (OIDC, deployments/server/k3s/authentication-config.yaml);
+# the rollout in the gamemesh namespace, and the same for monitoring
+# (phase 2, G4; below). The identity is the GitHub Actions job itself (OIDC,
+# deployments/server/k3s/authentication-config.yaml);
 # there is no ServiceAccount token to leak.
 #
 # Cluster-level, written by the admin: copied into k3s's auto-deploy
@@ -50,6 +51,44 @@ metadata:
   namespace: gamemesh
 subjects:
   # The username the API server derives from the token's sub claim.
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: "github:repo:AlpNuhoglu/gamemesh:environment:production"
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ci-deployer
+---
+# The same in monitoring (phase 2, G4): what deployments/k8s/monitoring holds,
+# which CI applies after the app. Narrower than gamemesh's: no Ingress (the
+# namespace's admission policy refuses one anyway until the status page, G6),
+# no Middleware, and no ServiceAccount, Secret or binding: Prometheus's
+# identity and rights are the admin's (prometheus-rbac.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer
+  namespace: monitoring
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer
+  namespace: monitoring
+subjects:
   - kind: User
     apiGroup: rbac.authorization.k8s.io
     name: "github:repo:AlpNuhoglu/gamemesh:environment:production"

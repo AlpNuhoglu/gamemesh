@@ -51,10 +51,17 @@ k8s-context:
 k8s-secrets: ## Generate the local overlay's secrets (.env.local, gitignored)
 	@scripts/k8s/local-secrets.sh
 
-k8s-apply: k8s-context k8s-secrets ## Deploy the local overlay to the k3d cluster
+# Monitoring the way production has it: the namespace and Prometheus's
+# rights (cluster-level there, written by the admin), then what CI applies.
+# The app first: it creates gamemesh, where Prometheus's Role lives.
+k8s-apply: k8s-context k8s-secrets ## Deploy the local overlay and monitoring to the k3d cluster
 	kubectl apply -k deployments/k8s/overlays/local
+	kubectl apply -f deployments/k8s/namespace/monitoring.yaml -f deployments/k8s/cluster/prometheus-rbac.yaml
+	kubectl apply -k deployments/k8s/monitoring
 
-k8s-delete: k8s-context ## Tear down the local overlay
+k8s-delete: k8s-context ## Tear down the local overlay and monitoring
+	kubectl delete -k deployments/k8s/monitoring --ignore-not-found
+	kubectl delete -f deployments/k8s/cluster/prometheus-rbac.yaml -f deployments/k8s/namespace/monitoring.yaml --ignore-not-found
 	kubectl delete -k deployments/k8s/overlays/local --ignore-not-found
 
 k6-leaderboard: ## 10k leaderboard updates

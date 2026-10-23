@@ -59,6 +59,13 @@ jobs:
           no delete deployments gamemesh
           no patch namespaces/gamemesh
           no create rolebindings.rbac.authorization.k8s.io gamemesh
+          yes patch deployments monitoring
+          yes create persistentvolumeclaims monitoring
+          no get secrets monitoring
+          no create ingresses.networking.k8s.io monitoring
+          no create serviceaccounts monitoring
+          no create pods/exec monitoring
+          no create rolebindings.rbac.authorization.k8s.io monitoring
           no list nodes
           no get deployments kube-system
           EOF

@@ -73,6 +73,7 @@ updates:
     directories:
       - /deployments/k8s/base
       - /deployments/k8s/components/monitoring
+      - /deployments/k8s/monitoring
     patterns: ["*"]
     multi-ecosystem-group: third-party-images
     ignore:

@@ -326,10 +326,11 @@ jobs:
           # The local overlay reads its secrets from a gitignored file; generate
           # throwaway values so it renders here too.
           scripts/k8s/local-secrets.sh
-          # Against the Kubernetes version k3s runs, overlay by overlay.
-          for overlay in local prod; do
-            echo "== overlays/${overlay}"
-            kubectl kustomize "deployments/k8s/overlays/${overlay}" | ./kubeconform -strict -summary -kubernetes-version 1.35.0 \
+          # Against the Kubernetes version k3s runs: each overlay, and
+          # monitoring, which CI applies after the prod overlay.
+          for k in overlays/local overlays/prod monitoring; do
+            echo "== ${k}"
+            kubectl kustomize "deployments/k8s/${k}" | ./kubeconform -strict -summary -kubernetes-version 1.35.0 \
               -schema-location default \
               -schema-location "${CRDS_CATALOG}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -
           done
