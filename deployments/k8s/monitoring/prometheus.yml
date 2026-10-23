@@ -1,0 +1,37 @@
+# Prometheus's configuration (phase 2, G4). Rendered into a ConfigMap by
+# kustomization.yaml, whose name carries a hash of this file: a change here is
+# a new pod template, so Prometheus restarts with it instead of keeping the
+# old one.
+global:
+  # 15 s: rate(...[1m]) sees four samples per window, enough for panels
+  # that move in near real time (G1).
+  scrape_interval: 15s
+  evaluation_interval: 15s
+# No rule files: alerting is phase 3 (G8).
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  # Pods that ask for it (prometheus.io/scrape and prometheus.io/port), in
+  # gamemesh only: Prometheus may list pods there and nowhere else.
+  - job_name: gamemesh-pods
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [gamemesh]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: drop
+        regex: Pending|Succeeded|Failed
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: app

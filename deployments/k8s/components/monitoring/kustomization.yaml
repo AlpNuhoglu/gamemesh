@@ -1,6 +1,6 @@
-# Prometheus and Grafana as an optional piece an overlay can include. Only the
-# local overlay does; production monitoring is phase 2's steps G4 (Prometheus)
-# and G5 (Grafana, still a major version behind, finding #94).
+# Grafana as an optional piece an overlay can include. Only the local overlay
+# does, until phase 2's G5 (finding #94). Prometheus is in
+# deployments/k8s/monitoring since G4.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:

@@ -82,6 +82,22 @@ deploy() {
   echo "::endgroup::"
 }
 
+# Monitoring (phase 2, G4), from the same commit's tree, once the app runs.
+# Separate from the app on purpose: if it fails the job is red, but the app
+# is not rolled back, since users do not depend on it. A commit from before
+# monitoring existed has nothing to apply.
+deploy_monitoring() {
+  local sha=$1 dir="$WORK/tree-$1/deployments/k8s/monitoring" w
+  if [ ! -d "$dir" ]; then echo "no monitoring in ${sha}"; return 0; fi
+  echo "::group::monitoring ${sha}"
+  kubectl apply -k "$dir" --dry-run=server || { echo "::endgroup::"; return 1; }
+  kubectl apply -k "$dir" || { echo "::endgroup::"; return 1; }
+  for w in $(kubectl get -k "$dir" -o name | grep -E '^deployment\.apps/'); do
+    kubectl -n monitoring rollout status "$w" --timeout=6m || { echo "::endgroup::"; return 1; }
+  done
+  echo "::endgroup::"
+}
+
 show_state() {
   echo "::group::cluster state"
   kubectl -n gamemesh get deploy,sts,pods -o wide || true
@@ -105,7 +121,12 @@ main() {
   fi
 
   if deploy "$SHA"; then
-    echo "deployed ${SHA}"; exit 0
+    echo "deployed ${SHA}"
+    if deploy_monitoring "$SHA"; then exit 0; fi
+    echo "::error::monitoring of ${SHA} failed; the app is deployed and stays"
+    kubectl -n monitoring get deploy,pods -o wide || true
+    kubectl -n monitoring get events --sort-by=.lastTimestamp | tail -20 || true
+    exit 1
   fi
 
   echo "::error::deploy of ${SHA} failed"

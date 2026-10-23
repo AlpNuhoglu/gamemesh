@@ -1,0 +1,20 @@
+# The monitoring namespace (phase 2, G2), with the same Pod Security labels as
+# gamemesh (namespace.yaml): Prometheus and Grafana need no host access, so
+# "restricted" holds here too. Cluster-level for the same reason: whoever can
+# write this object can lift those rules. Production: copied into k3s's
+# auto-deploy directory as namespace-monitoring.yaml (the file must stay
+# there). Local: applied by make k8s-apply. Not in this directory's
+# kustomization, which the local overlay includes: that overlay sets every
+# namespace to gamemesh.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: gamemesh
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.35
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.35
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.35

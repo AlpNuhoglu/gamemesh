@@ -1,0 +1,37 @@
+# Prometheus's identity and what it may read (phase 2, G2): pods in gamemesh,
+# for service discovery, and nothing else. A Role, not a ClusterRole: its
+# scrape configuration names that namespace, so it never lists pods anywhere
+# else (deployments/k8s/monitoring/prometheus.yml).
+#
+# Cluster-level, written by the admin (k3s auto-deploy directory); CI may not
+# create ServiceAccounts or bindings, so it cannot give Prometheus, or itself,
+# more. Needs the monitoring namespace (deployments/k8s/namespace/monitoring.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-discovery
+  namespace: gamemesh
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-discovery
+  namespace: gamemesh
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: prometheus-discovery

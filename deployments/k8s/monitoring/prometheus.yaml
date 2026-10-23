@@ -1,0 +1,111 @@
+# Prometheus: scrapes the application's pods in gamemesh and itself. Never
+# exposed: its Service is ClusterIP, and the monitoring namespace's admission
+# policy refuses any other type and any Ingress. Raw metrics and the query API
+# describe the system's insides and can be made to run expensive queries.
+# Admins reach it with kubectl port-forward. Its configuration is
+# prometheus.yml next to this file.
+
+# The TSDB. 3 Gi holds the 2 GB retention limit plus the write-ahead log.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  replicas: 1
+  # One TSDB, one writer: a new pod cannot open it while the old one holds
+  # its lock.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/part-of: gamemesh
+    spec:
+      # Created by the admin with its Role in gamemesh (prometheus-rbac.yaml).
+      serviceAccountName: prometheus
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.1-distroless@sha256:451a845bae1d51622b41af1780eb2ad911bbb79a9855bc8e9bb67fabbc03f934
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # Short retention (long-term storage is out of scope), and a size
+            # limit so a cardinality accident cannot fill the node's disk.
+            - --storage.tsdb.retention.time=7d
+            - --storage.tsdb.retention.size=2GB
+          ports:
+            - containerPort: 9090
+          startupProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            periodSeconds: 2
+            # Replaying the write-ahead log after a restart takes a while.
+            failureThreshold: 90
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9090 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          # Measured locally (G1): 53-99 Mi with about 1,800 series.
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
