@@ -17,9 +17,10 @@ applied automatically on first Postgres boot.
 
 The manifests are a Kustomize tree: `deployments/k8s/base` holds what every
 environment shares, `overlays/local` adds what the local k3d cluster needs
-(locally built images, dev secrets, monitoring, `gamemesh.localhost`) and
-`overlays/prod` what the VPS needs. Always apply an overlay with `-k`, never
-the files under `base/` directly.
+(locally built images, dev secrets, Grafana, `gamemesh.localhost`) and
+`overlays/prod` what the VPS needs. `deployments/k8s/monitoring` (Prometheus,
+namespace `monitoring`) is applied the same way everywhere. Always apply with
+`-k`, never the files under `base/` directly.
 
 ### Prerequisites
 - Docker, [k3d](https://k3d.io) ≥ 5.9, kubectl ≥ 1.32
@@ -36,11 +37,14 @@ k3d cluster create gamemesh --image rancher/k3s:v1.35.5-k3s1 \
 #    the cluster (no registry; the manifests use imagePullPolicy IfNotPresent)
 make k8s-build
 
-# 3. Deploy the local overlay (refuses unless kubectl points at k3d-gamemesh)
-make k8s-apply            # kubectl apply -k deployments/k8s/overlays/local
+# 3. Deploy the local overlay, then monitoring: its namespace and Prometheus's
+#    rights (cluster-level in production) and Prometheus itself. Refuses
+#    unless kubectl points at k3d-gamemesh.
+make k8s-apply
 
-# 4. Watch it come up: 19 pods, all 1/1
+# 4. Watch it come up: 18 pods in gamemesh, Prometheus in monitoring, all 1/1
 kubectl -n gamemesh get pods -w
+kubectl -n monitoring get pods
 ```
 
 ### Accessing the stack
@@ -56,7 +60,7 @@ curl -H 'Host: gamemesh.localhost' http://127.0.0.1:18080/api/v1/leaderboard/top
 Only `/health`, `/api` and `/ws` are routed. For the rest, port-forward:
 
 ```bash
-kubectl -n gamemesh port-forward svc/prometheus 9090:9090 &
+kubectl -n monitoring port-forward svc/prometheus 9090:9090 &
 kubectl -n gamemesh port-forward svc/grafana 3000:3000 &
 ```
 
@@ -262,9 +266,10 @@ kprod get nodes
 ### Cluster-level manifests
 
 Everything CI must not write lives in k3s's auto-deploy directory, which k3s
-applies on every start: Traefik's setting, cert-manager, the namespace, the
-admission policy, CI's RBAC and the Let's Encrypt issuers. Removing a file
-there deletes what it created; the namespace file in particular must stay.
+applies on every start: Traefik's setting, cert-manager, the namespaces
+(`gamemesh`, `monitoring`), their admission policies, Prometheus's identity
+and rights, CI's RBAC and the Let's Encrypt issuers. Removing a file there
+deletes what it created; the namespace files in particular must stay.
 The OIDC file is for the API server itself (`kube-apiserver-arg` in
 `config.yaml`), installed with k3s above; changing it needs no restart.
 
@@ -275,13 +280,14 @@ both issuers out there.
 
 ```bash
 # Admin machine, in the repo
-scp deployments/server/k3s/authentication-config.yaml deployments/k8s/namespace/namespace.yaml \
-    deployments/k8s/cluster/{traefik-config,cert-manager,gamemesh-admission-policy,ci-deployer,letsencrypt-staging,letsencrypt-prod}.yaml \
+scp deployments/server/k3s/authentication-config.yaml deployments/k8s/namespace/{namespace,monitoring}.yaml \
+    deployments/k8s/cluster/{traefik-config,cert-manager,gamemesh-admission-policy,monitoring-admission-policy,prometheus-rbac,ci-deployer,letsencrypt-staging,letsencrypt-prod}.yaml \
     gamemesh:/tmp/
 # Server, as alp
 M=/var/lib/rancher/k3s/server/manifests
 sudo install -D -m 600 /tmp/namespace.yaml $M/namespace-gamemesh.yaml
-for f in traefik-config cert-manager gamemesh-admission-policy ci-deployer; do
+sudo install -m 600 /tmp/monitoring.yaml $M/namespace-monitoring.yaml
+for f in traefik-config cert-manager gamemesh-admission-policy monitoring-admission-policy prometheus-rbac ci-deployer; do
   sudo install -m 600 /tmp/$f.yaml $M/$f.yaml
 done
 # The issuers once cert-manager runs (they need its CRDs); the repo holds a
@@ -306,8 +312,10 @@ CI holds no long-lived credential for the cluster or the tailnet. A job in the
    `production`, and maps it to the user
    `github:repo:AlpNuhoglu/gamemesh:environment:production`;
 4. RBAC (`deployments/k8s/cluster/ci-deployer.yaml`) lets that user write what
-   the prod overlay holds in `gamemesh`, and read pods, logs and rollouts.
-   No Secrets, exec, delete, namespace or RBAC rights.
+   the prod overlay holds in `gamemesh` and what `deployments/k8s/monitoring`
+   holds in `monitoring`, and read pods, logs and rollouts in both. No
+   Secrets, exec, delete, namespace, ServiceAccount or RBAC rights, and no
+   Ingress in `monitoring`.
 
 Around it:
 
@@ -323,8 +331,9 @@ Around it:
   and `K8S_CA_DATA` (the cluster CA certificate, public).
 - An admission policy (`gamemesh-admission-policy.yaml`) keeps Services
   ClusterIP without externalIPs and Ingresses on class traefik and host
-  `api.gamemesh.app`, whoever writes them.
-- The namespace (`deployments/k8s/namespace/`), the policy and the RBAC are
+  `api.gamemesh.app`, whoever writes them. In `monitoring`
+  (`monitoring-admission-policy.yaml`): Services ClusterIP, no Ingress at all.
+- The namespaces (`deployments/k8s/namespace/`), the policies and the RBAC are
   cluster-level: copied into k3s's auto-deploy directory by the admin.
 
 `Actions → cluster-access → Run workflow` checks all of it. If Tailscale's
@@ -338,12 +347,31 @@ job in `.github/workflows/ci.yml` (environment `production`, one at a time,
 never cancelled halfway) points the prod overlay at the commit's images,
 applies it after a server-side dry run, waits for every Deployment and
 StatefulSet, and waits for `https://api.gamemesh.app/health` to report the
-commit. Measured on the first one: merge to live in 6 min 46 s (CI about
+commit. Then it applies the same commit's monitoring and waits for it; if
+that fails the job is red, but the app is not rolled back. Measured on the
+first one: merge to live in 6 min 46 s (CI about
 4 min, publish 1.5 min, deploy 38 s), 3494 of 3494 public requests answered
 200 during it.
 
 The job logs the image that ran before it. The procedure below is the same
 thing by hand, for when CI cannot run.
+
+### Monitoring
+
+Prometheus runs in the `monitoring` namespace (`deployments/k8s/monitoring`):
+it scrapes the services' pods in `gamemesh` every 15 s and keeps 7 days, at
+most 2 GB, on a 3 Gi volume. It is never exposed: its Service is ClusterIP and
+the namespace's admission policy refuses any other Service type and any
+Ingress. CI deploys it after the app; it needs the namespace, its
+ServiceAccount and its Role in `gamemesh` first ("Cluster-level manifests").
+
+To query it, from the admin's machine:
+
+```bash
+kprod -n monitoring port-forward svc/prometheus 9090:9090    # then http://127.0.0.1:9090
+# Every service scraped, one line per service:
+curl -s 127.0.0.1:9090/api/v1/query --data-urlencode 'query=count by (app) (up{namespace="gamemesh"} == 1)'
+```
 
 ### Deploying by hand
 
