@@ -17,9 +17,9 @@ applied automatically on first Postgres boot.
 
 The manifests are a Kustomize tree: `deployments/k8s/base` holds what every
 environment shares, `overlays/local` adds what the local k3d cluster needs
-(locally built images, dev secrets, Grafana, `gamemesh.localhost`) and
-`overlays/prod` what the VPS needs. `deployments/k8s/monitoring` (Prometheus,
-namespace `monitoring`) is applied the same way everywhere. Always apply with
+(locally built images, dev secrets, `gamemesh.localhost`) and
+`overlays/prod` what the VPS needs. `deployments/k8s/monitoring` (Prometheus
+and Grafana, namespace `monitoring`) is applied the same way everywhere. Always apply with
 `-k`, never the files under `base/` directly.
 
 ### Prerequisites
@@ -37,12 +37,14 @@ k3d cluster create gamemesh --image rancher/k3s:v1.35.5-k3s1 \
 #    the cluster (no registry; the manifests use imagePullPolicy IfNotPresent)
 make k8s-build
 
-# 3. Deploy the local overlay, then monitoring: its namespace and Prometheus's
-#    rights (cluster-level in production) and Prometheus itself. Refuses
+# 3. Deploy the local overlay, then monitoring: its namespace, Prometheus's
+#    rights and Grafana's admin Secret (cluster-level or by hand in
+#    production), and Prometheus and Grafana themselves. Refuses
 #    unless kubectl points at k3d-gamemesh.
 make k8s-apply
 
-# 4. Watch it come up: 18 pods in gamemesh, Prometheus in monitoring, all 1/1
+# 4. Watch it come up: 17 pods in gamemesh, Prometheus and Grafana in
+#    monitoring, all 1/1
 kubectl -n gamemesh get pods -w
 kubectl -n monitoring get pods
 ```
@@ -61,7 +63,8 @@ Only `/health`, `/api` and `/ws` are routed. For the rest, port-forward:
 
 ```bash
 kubectl -n monitoring port-forward svc/prometheus 9090:9090 &
-kubectl -n gamemesh port-forward svc/grafana 3000:3000 &
+kubectl -n monitoring port-forward svc/grafana 3000:3000 &   # user admin, password below
+kubectl -n monitoring get secret grafana-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy
 ```
 
 ### Useful commands
@@ -115,6 +118,17 @@ With `APP_ENV=production` (the base config) every service refuses to start if
 a secret it uses is missing, shorter than 32 characters or a known development
 default (`config.Validate`): a forgotten or weak Secret stalls the rollout and
 the running pods keep serving. Rotating them: see "Rotating secrets" below.
+
+Grafana's admin password is its own Secret, in `monitoring` (created by hand
+in production too; CI only names it):
+
+```bash
+kubectl -n monitoring create secret generic grafana-admin \
+  --from-literal=password="$(openssl rand -hex 32)"
+```
+
+Grafana reads it at its first start, into its database on the volume; a new
+value later needs `grafana cli admin reset-admin-password` as well.
 
 ## 3. Production server (VPS)
 
@@ -358,19 +372,28 @@ thing by hand, for when CI cannot run.
 
 ### Monitoring
 
-Prometheus runs in the `monitoring` namespace (`deployments/k8s/monitoring`):
-it scrapes the services' pods in `gamemesh` every 15 s and keeps 7 days, at
+Prometheus and Grafana run in the `monitoring` namespace
+(`deployments/k8s/monitoring`). Prometheus scrapes the services' pods in `gamemesh` every 15 s and keeps 7 days, at
 most 2 GB, on a 3 Gi volume. It is never exposed: its Service is ClusterIP and
 the namespace's admission policy refuses any other Service type and any
-Ingress. CI deploys it after the app; it needs the namespace, its
-ServiceAccount and its Role in `gamemesh` first ("Cluster-level manifests").
+Ingress. Grafana has one data source (Prometheus) and the status dashboard
+(`grafana/dashboards/status.json`), both provisioned from the repository and
+not editable in its UI; its settings (`grafana/grafana.ini`) turn off every
+connection out of the cluster and anonymous access. It is not exposed either
+(until the status page, G6). CI deploys both after the
+app; they need the namespace, Prometheus's ServiceAccount and Role in
+`gamemesh` ("Cluster-level manifests") and the `grafana-admin` Secret
+("Production secrets") first.
 
-To query it, from the admin's machine:
+To reach them, from the admin's machine:
 
 ```bash
 kprod -n monitoring port-forward svc/prometheus 9090:9090    # then http://127.0.0.1:9090
 # Every service scraped, one line per service:
 curl -s 127.0.0.1:9090/api/v1/query --data-urlencode 'query=count by (app) (up{namespace="gamemesh"} == 1)'
+
+kprod -n monitoring port-forward svc/grafana 3000:3000       # then http://127.0.0.1:3000, user admin
+kprod -n monitoring get secret grafana-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy
 ```
 
 ### Deploying by hand
