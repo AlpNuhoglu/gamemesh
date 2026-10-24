@@ -1,17 +1,32 @@
-# Monitoring in its own namespace (phase 2, G2/G4), for every cluster:
+# Monitoring in its own namespace (phase 2, G2/G4/G5), for every cluster:
 #
 #   kubectl apply -k deployments/k8s/monitoring      (production: CI, after the app)
 #
 # What it needs first is cluster-level, written by the admin: the namespace
-# (deployments/k8s/namespace/monitoring.yaml) and Prometheus's identity and
-# rights (deployments/k8s/cluster/prometheus-rbac.yaml). CI may write what is
+# (deployments/k8s/namespace/monitoring.yaml), Prometheus's identity and
+# rights (deployments/k8s/cluster/prometheus-rbac.yaml) and Grafana's admin
+# password (the grafana-admin Secret). CI may write what is
 # here and nothing else in this namespace (deployments/k8s/cluster/ci-deployer.yaml).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring
 resources:
   - prometheus.yaml
+  - grafana.yaml
+# Each name carries a hash of its files, so a change restarts what reads it.
 configMapGenerator:
   - name: prometheus-config
     files:
       - prometheus.yml
+  - name: grafana-config
+    files:
+      - grafana/grafana.ini
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yaml
+  - name: grafana-dashboard-providers
+    files:
+      - grafana/dashboards.yaml
+  - name: grafana-dashboards
+    files:
+      - grafana/dashboards/status.json

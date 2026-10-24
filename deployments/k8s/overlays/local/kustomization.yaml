@@ -1,6 +1,7 @@
 # The local k3d cluster: images built and imported on this machine, secrets
-# generated on this machine, monitoring included, the base's replica counts (two websocket
-# replicas exercise the event fan-out).
+# generated on this machine, the base's replica counts (two websocket
+# replicas exercise the event fan-out). Monitoring is deployments/k8s/monitoring,
+# applied after this by make k8s-apply, as in production.
 #
 #   kubectl apply -k deployments/k8s/overlays/local
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -12,8 +13,6 @@ namespace: gamemesh
 resources:
   - ../../namespace
   - ../../base
-components:
-  - ../../components/monitoring
 # Images built from the working tree and loaded with k3d image import; the
 # base's imagePullPolicy IfNotPresent then uses them without a registry.
 images:

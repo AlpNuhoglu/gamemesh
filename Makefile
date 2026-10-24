@@ -57,10 +57,12 @@ k8s-secrets: ## Generate the local overlay's secrets (.env.local, gitignored)
 k8s-apply: k8s-context k8s-secrets ## Deploy the local overlay and monitoring to the k3d cluster
 	kubectl apply -k deployments/k8s/overlays/local
 	kubectl apply -f deployments/k8s/namespace/monitoring.yaml -f deployments/k8s/cluster/prometheus-rbac.yaml
+	@scripts/k8s/local-grafana-secret.sh
 	kubectl apply -k deployments/k8s/monitoring
 
 k8s-delete: k8s-context ## Tear down the local overlay and monitoring
 	kubectl delete -k deployments/k8s/monitoring --ignore-not-found
+	kubectl -n monitoring delete secret grafana-admin --ignore-not-found
 	kubectl delete -f deployments/k8s/cluster/prometheus-rbac.yaml -f deployments/k8s/namespace/monitoring.yaml --ignore-not-found
 	kubectl delete -k deployments/k8s/overlays/local --ignore-not-found
 

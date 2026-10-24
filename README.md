@@ -323,9 +323,9 @@ curl -H 'Host: gamemesh.localhost' http://127.0.0.1:18080/health
 ```
 
 The manifests are a Kustomize tree: `base/` for what every environment shares,
-`overlays/local` (local images, generated dev secrets, Grafana) and
+`overlays/local` (local images, generated dev secrets) and
 `overlays/prod` (published images, one replica each, TLS); `monitoring/`
-(Prometheus, its own namespace, in production too). Guide:
+(Prometheus and Grafana, their own namespace, in production too). Guide:
 [docs/deployment.md](docs/deployment.md)
 
 ## Messaging & the transactional outbox
@@ -443,7 +443,7 @@ pkg/            shared libraries: auth, config, database, events, health,
                 httpx, logger, metrics, middleware, server, tracing
 deployments/
   docker/       the one multi-service Dockerfile
-  k8s/          Kustomize: base, components/monitoring, overlays/{local,prod},
+  k8s/          Kustomize: base, overlays/{local,prod},
                 monitoring, namespaces, cluster-level manifests (cert-manager,
                 issuers, RBAC, admission policies, Traefik)
   server/       the VPS: sshd and update policies, k3s config, OIDC auth,

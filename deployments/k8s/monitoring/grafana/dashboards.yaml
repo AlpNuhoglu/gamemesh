@@ -1,0 +1,12 @@
+# Where Grafana loads dashboards from (phase 2, G5): the JSON files in
+# dashboards/, mounted from a ConfigMap. The repository is their source; a
+# change in the UI cannot be saved over them.
+apiVersion: 1
+providers:
+  - name: GameMesh status
+    folder: GameMesh
+    type: file
+    allowUiUpdates: false
+    disableDeletion: true
+    options:
+      path: /etc/grafana/dashboards
