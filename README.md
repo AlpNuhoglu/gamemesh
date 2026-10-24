@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/AlpNuhoglu/gamemesh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AlpNuhoglu/gamemesh/actions/workflows/ci.yml)
 [![Live](https://img.shields.io/badge/live-api.gamemesh.app-2ea44f)](https://api.gamemesh.app/health)
+[![Status](https://img.shields.io/badge/status-status.gamemesh.app-2ea44f)](https://status.gamemesh.app)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![Kubernetes](https://img.shields.io/badge/k3s-v1.35-326CE5?logo=kubernetes&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -53,6 +54,7 @@ not come up.
 | | |
 |---|---|
 | **Live in production** | Single-node k3s on a VPS, behind Traefik with a Let's Encrypt certificate managed by cert-manager: [`api.gamemesh.app`](https://api.gamemesh.app/health) |
+| **Public status page** | [`status.gamemesh.app`](https://status.gamemesh.app): request rate, p95/p99 latency, 5xx rate and open WebSocket connections, live from Prometheus; read-only, no login. Only the page's own paths reach Grafana, and an admission policy keeps it that way |
 | **Continuous deployment** | Merge to live in **6 min 46 s** (measured); **3,494 / 3,494** public requests answered 200 during the rollout |
 | **Self-healing releases** | A deliberately broken release was merged to test it: the rollout hit its deadline, the previous commit was redeployed with its own manifests, the old pod never restarted |
 | **No standing credentials in CI** | GitHub Actions reaches the cluster over Tailscale with short-lived OIDC tokens only — no kubeconfig, no service-account token, no VPN key stored anywhere |
