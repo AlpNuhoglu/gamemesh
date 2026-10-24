@@ -277,7 +277,7 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ### G5. Grafana ve 4 panel (danışman madde 3)
 
-- [ ] **Ne:** Grafana (admin parolası Secret'tan, admin girişi sadece tailnet), datasource ve
+- [x] **Ne:** Grafana (admin parolası Secret'tan, admin girişi sadece tailnet), datasource ve
   dashboard **kod olarak** (provisioning, JSON repoda). Panellerin PromQL'i (taslak):
   Hepsi `service="gateway"` ile (G3: her istek upstream'de bir kez daha sayılıyor):
   - **İstek hızı:** `sum(rate(gamemesh_http_requests_total{service="gateway"}[1m]))`
@@ -288,6 +288,51 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
     (G3: `errors_total` sadece 5xx).
   - **Aktif bağlantı:** `sum(gamemesh_websocket_active_connections)`.
 - **Bitti sayılır:** K12.
+
+> **Sonuç (2026-10-24): bitti (PR #97, prod'da `e32bcc8`).** Grafana 12.4.13 `monitoring`'de
+> (PSS restricted, 1 Gi PVC, ClusterIP), CI uygulamadan sonra kuruyor (rollout ~30 sn). Datasource ve
+> dashboard repodan provision ediliyor (`deployments/k8s/monitoring/grafana/`); compose aynı
+> dashboard dosyasını ve `grafana.ini`'yi kullanıyor. Admin parolası `grafana-admin` Secret'ında
+> (admin oluşturdu; 64 hex).
+>
+> **Paneller (K12), hepsi `[1m]`:**
+>
+> | Panel | PromQL |
+> |---|---|
+> | İstek hızı | `sum(rate(gamemesh_http_requests_total{service="gateway"}[1m]))` |
+> | p95 / p99 | `histogram_quantile(0.95 \| 0.99, sum by (le) (rate(gamemesh_http_request_duration_seconds_bucket{service="gateway"}[1m])))` |
+> | Hata oranı (%) | `100 * (sum(rate(gamemesh_http_errors_total{service="gateway"}[1m])) or vector(0)) / sum(rate(gamemesh_http_requests_total{service="gateway"}[1m]))` |
+> | Aktif bağlantı | `sum(gamemesh_websocket_active_connections{service="websocket"})` |
+>
+> **Kararlar (onaylandı):** 12.4.13 + 9 dar, 2026-11-10'da biten istisna (#94; temiz Grafana sürümü
+> yok); dışarıya hiç bağlantı yok (güncelleme/eklenti/haber kontrolleri, kullanım raporu, eklenti
+> kataloğu ve preinstall, imza anahtarı indirme, harici snapshot, Gravatar kapalı); anonim kapalı;
+> `min_refresh_interval` 10 sn; panellerde sadece gateway (G3: her istek upstream'de bir daha sayılıyor).
+>
+> **Kanıt:**
+> - **Tarama:** CI kurallarıyla istisnalarla 0 bulgu (istisnasız 9); CI'da `scan-third-party
+>   (grafana/grafana:12.4.13)` engelleyici modda geçti.
+> - **Dışarıya bağlantı:** ağsız bir container'da varsayılan ayarlar grafana.com'dan imza
+>   anahtarı indirmeye ve **4 eklenti kurmaya** çalıştı; `grafana.ini` ile hiç deneme yok. Prod log'unda
+>   da 0.
+> - **Prod (port-forward):** admin 200, yanlış parola 401, anonim (search, dashboard, datasource,
+>   admin) 401; dashboard ve salt okunur datasource provision edilmiş; admin bile provision edilmiş
+>   dashboard'un üzerine kaydedemiyor ("Cannot save provisioned dashboard"); 8 ayar devrede.
+>   Hafif trafik altında paneller: istek hızı en çok 1,47/s (gönderilen ~1,3–2/s), p95 en çok 7,8 ms,
+>   p99 13,6 ms, hata 0.
+> - **Dışarıdan erişilemiyor:** 3000 kapalı; `api.gamemesh.app` üzerinden Grafana yolları
+>   (`/login`, `/api/health`, `/public-dashboards/…`, `/api/public/…`, `/d/…`) gateway'in 404'ü;
+>   `grafana.`/`status.` Host'ları 404.
+> - **Yerel (k3d, k6 40 matchmaking + 20 WS VU):** istek hızı 11,6–15,1/s, p95 7,9–9,6 ms, hata 0,
+>   bağlantı **20 = k6'nın 20 VU'su**, sonra 0.
+>
+> **K8 ikinci ölçüm (Prometheus + Grafana):** `available` 2127 Mi, request'ler %37, OOMKilled yok,
+> disk %24. Grafana working set 266 Mi: anonim 95 Mi, 199 Mi sayfa önbelleği (binary ve veritabanı;
+> kernel OOM'dan önce geri alır), Go heap 71 Mi. K8'in son ölçümü birkaç saatlik çalışmadan sonra.
+>
+> **G6 için not:** Grafana'nın `/metrics`'i girişsiz 200 dönüyor; Traefik sadece public dashboard
+> yollarını (ve statik dosyaları) geçirmeli. Ölçümde bir kez prod'da onaysız `kubectl exec`
+> (cgroup `memory.stat` okuma, salt okuma) çalıştırıldı; kural ihlali olarak kayıtlı.
 
 ### G6. Herkese açık salt okunur dashboard: `status.gamemesh.app` (danışman madde 4)
 
