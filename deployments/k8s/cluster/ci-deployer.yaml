@@ -59,11 +59,12 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   name: ci-deployer
 ---
-# The same in monitoring (phase 2, G4): what deployments/k8s/monitoring holds,
-# which CI applies after the app. Narrower than gamemesh's: no Ingress (the
-# namespace's admission policy refuses one anyway until the status page, G6),
-# no Middleware, and no ServiceAccount, Secret or binding: Prometheus's
-# identity and rights are the admin's (prometheus-rbac.yaml).
+# The same in monitoring (phase 2, G4, G6): what deployments/k8s/monitoring
+# holds, which CI applies after the app, including the status page's Ingress
+# and Middlewares. The namespace's admission policy limits that Ingress to
+# status.gamemesh.app, the page's own paths and the grafana Service. No
+# ServiceAccount, Secret or binding: Prometheus's identity and rights and
+# Grafana's password are the admin's.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -75,6 +76,12 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: [""]
     resources: ["services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: ["apps"]
     resources: ["replicasets"]
