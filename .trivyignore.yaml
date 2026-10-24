@@ -263,7 +263,9 @@ vulnerabilities:
       Brotli's decoder in grafana/grafana:12.4.13's Alpine (fixed in
       1.2.1-r0), needed only by libcurl for the image's curl. Grafana's
       binaries are static and link neither; the probes are Kubernetes
-      httpGet, which runs no curl.
+      httpGet. curl runs in the publisher container only (G6,
+      grafana/publish.sh), against Grafana on localhost and without
+      --compressed, so it never decodes a compressed answer.
     expired_at: 2026-11-10
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.

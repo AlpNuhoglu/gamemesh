@@ -1,4 +1,4 @@
-# Monitoring in its own namespace (phase 2, G2/G4/G5), for every cluster:
+# Monitoring in its own namespace (phase 2, G2/G4/G5/G6), for every cluster:
 #
 #   kubectl apply -k deployments/k8s/monitoring      (production: CI, after the app)
 #
@@ -13,6 +13,7 @@ namespace: monitoring
 resources:
   - prometheus.yaml
   - grafana.yaml
+  - status.yaml
 # Each name carries a hash of its files, so a change restarts what reads it.
 configMapGenerator:
   - name: prometheus-config
@@ -30,3 +31,6 @@ configMapGenerator:
   - name: grafana-dashboards
     files:
       - grafana/dashboards/status.json
+  - name: grafana-publisher
+    files:
+      - grafana/publish.sh

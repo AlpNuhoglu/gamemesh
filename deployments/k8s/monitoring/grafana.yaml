@@ -4,8 +4,9 @@
 # use kubectl port-forward. The admin password is in the grafana-admin Secret,
 # created by the admin (docs/deployment.md, "Monitoring"); CI only names it.
 #
-# Its database (users, the public dashboard's settings in G6) lives on the
-# volume, so a restart keeps them.
+# Its database (users, the status page's share) lives on the volume, so a
+# restart keeps them. The publisher container next to it keeps the status
+# dashboard shared (G6, grafana/publish.sh; status.yaml routes the page).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -77,6 +78,10 @@ spec:
             - name: GF_SECURITY_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef: { name: grafana-admin, key: password }
+            # The address viewers use (status.yaml); links and redirects in
+            # pages are built from it.
+            - name: GF_SERVER_ROOT_URL
+              value: https://status.gamemesh.app/
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -102,6 +107,31 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 160Mi }
             limits: { cpu: 500m, memory: 384Mi }
+        # Shares the status dashboard and keeps it shared (grafana/publish.sh).
+        # Grafana's own image, for its shell and curl: no other image to pull,
+        # scan or update.
+        - name: publisher
+          image: grafana/grafana:12.4.13@sha256:41bbc1b5e04416f81891806076db2a2ff60a5d4da5f78d36a88b033a8c199185
+          command: ["sh", "/scripts/publish.sh"]
+          env:
+            # The status page's URL (status.yaml); public by design.
+            - name: STATUS_TOKEN
+              value: "9782bc70504e655baec00a8c4a3e8690"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: grafana-admin, key: password }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: publisher
+              mountPath: /scripts
+            - name: publisher-tmp
+              mountPath: /tmp
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { cpu: 50m, memory: 48Mi }
       volumes:
         - name: config
           configMap:
@@ -121,6 +151,11 @@ spec:
         - name: logs
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: publisher
+          configMap:
+            name: grafana-publisher
+        - name: publisher-tmp
           emptyDir: {}
 ---
 apiVersion: v1

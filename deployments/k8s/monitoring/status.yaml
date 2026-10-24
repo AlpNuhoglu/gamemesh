@@ -1,0 +1,85 @@
+# The public status page (phase 2, G6): https://status.gamemesh.app shows the
+# status dashboard, read-only and without login, through Grafana's shared
+# ("public") dashboard. The token in the paths below is that share's, kept by
+# Grafana's publisher container (grafana/publish.sh); it is the page's URL,
+# public by design, and CI checks it is the same everywhere.
+#
+# Only what the page itself loads is routed, measured with a headless browser
+# (58 requests, three prefixes): the page, Grafana's static files, and the
+# share's own API (its definition and its panels' stored queries). Anything
+# else on this host (/login, /api/..., /metrics, other shares) never reaches
+# Grafana and is a 404. The namespace's admission policy holds Ingresses here
+# to this host, these prefixes and the grafana Service, whoever writes them.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: status
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "256"
+    # In order: plain HTTP to HTTPS, the per-client limit, then / to the page.
+    traefik.ingress.kubernetes.io/router.middlewares: monitoring-redirect-https@kubernetescrd,monitoring-status-ratelimit@kubernetescrd,monitoring-status-root@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - status.gamemesh.app
+      secretName: status-tls
+  rules:
+    - host: status.gamemesh.app
+      http:
+        paths:
+          # Only routed so status-root can redirect it.
+          - path: /
+            pathType: Exact
+            backend:
+              service: { name: grafana, port: { number: 3000 } }
+          - path: /public-dashboards/9782bc70504e655baec00a8c4a3e8690
+            pathType: Prefix
+            backend:
+              service: { name: grafana, port: { number: 3000 } }
+          - path: /api/public/dashboards/9782bc70504e655baec00a8c4a3e8690
+            pathType: Prefix
+            backend:
+              service: { name: grafana, port: { number: 3000 } }
+          # JavaScript, CSS, fonts and icons.
+          - path: /public/
+            pathType: Prefix
+            backend:
+              service: { name: grafana, port: { number: 3000 } }
+---
+# As in gamemesh (overlays/prod/redirect-https.yaml): Traefik does not let an
+# Ingress use another namespace's middleware, so monitoring has its own.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+# The bare host goes to the page.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: status-root
+spec:
+  redirectRegex:
+    regex: ^https://[^/]+/$
+    replacement: https://status.gamemesh.app/public-dashboards/9782bc70504e655baec00a8c4a3e8690
+---
+# Per client address (Traefik sees the real one: externalTrafficPolicy Local).
+# Measured: a first load is about 47 requests at once (mostly static files),
+# then 5 every 10 s per open page. The burst admits two first loads, the
+# average about 20 open pages behind one address.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: status-ratelimit
+spec:
+  rateLimit:
+    average: 10
+    period: 1s
+    burst: 100
