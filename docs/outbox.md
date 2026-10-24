@@ -300,8 +300,9 @@ never be delivered without operator action, so alert on
 `increase(gamemesh_outbox_events_dead_lettered_total[5m]) > 0`.
 
 **Alert rules.** These signals are shipped as Prometheus rules in
-`config/prometheus/alerts.yml` (compose) and the `prometheus-config` ConfigMap in
-`deployments/k8s/components/monitoring/monitoring.yaml` (k8s):
+`config/prometheus/alerts.yml` (docker-compose only). Kubernetes, production
+included, runs no alert rules until phase 3 (`docs/deployment-phase2-plan.md`,
+G8):
 
 | Alert                     | Severity | Fires when                                                       |
 | ------------------------- | -------- | ---------------------------------------------------------------- |
