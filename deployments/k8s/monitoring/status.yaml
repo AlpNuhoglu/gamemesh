@@ -15,7 +15,9 @@ kind: Ingress
 metadata:
   name: status
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-staging
+    # Staging first (it issued in under a minute, the HTTP-01 solver's
+    # Ingress passing the namespace's admission policy), then production.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
     cert-manager.io/private-key-algorithm: ECDSA
     cert-manager.io/private-key-size: "256"
     # In order: plain HTTP to HTTPS, the per-client limit, then / to the page.

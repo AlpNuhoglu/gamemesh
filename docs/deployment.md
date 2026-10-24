@@ -423,9 +423,10 @@ no anonymous user at all.
   is about 47 requests, then 5 every 10 s); beyond that, 429. Viewers cannot
   change the time range or run their own queries: a panel query runs the
   query stored in the dashboard, whatever the request says.
-- **TLS:** cert-manager, like the API. The Ingress names `letsencrypt-staging`
-  until the staging certificate has been seen to work; then
-  `letsencrypt-prod`.
+- **TLS:** cert-manager and `letsencrypt-prod`, like the API (ECDSA P-256, 90
+  days, renewed 30 days before it ends). It was tried with
+  `letsencrypt-staging` first; on a new cluster without the public name, leave
+  the issuer out ("Cluster-level manifests").
 
 ### Deploying by hand
 
