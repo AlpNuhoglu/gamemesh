@@ -157,8 +157,8 @@ In this order; each step is described in the sections below.
 7. **GitHub environment `production`:** update `K8S_HOST` (the new tailnet
    address) and `K8S_CA_DATA` (the new cluster's CA); the Tailscale secrets
    stay. Run `Actions -> cluster-access`.
-8. **DNS.** Point `api.gamemesh.app` (A record, DNS only) at the new public
-   address.
+8. **DNS.** Point `api.gamemesh.app` and `status.gamemesh.app` (A records, DNS
+   only) at the new public address.
 9. **Deploy.** `Actions -> deploy` with the latest commit of `main` (or push).
    cert-manager then obtains the certificate through port 80, which needs step
    8 done. Check `curl https://api.gamemesh.app/health`.
@@ -328,8 +328,9 @@ CI holds no long-lived credential for the cluster or the tailnet. A job in the
 4. RBAC (`deployments/k8s/cluster/ci-deployer.yaml`) lets that user write what
    the prod overlay holds in `gamemesh` and what `deployments/k8s/monitoring`
    holds in `monitoring`, and read pods, logs and rollouts in both. No
-   Secrets, exec, delete, namespace, ServiceAccount or RBAC rights, and no
-   Ingress in `monitoring`.
+   Secrets, exec, delete, namespace, ServiceAccount or RBAC rights. In
+   `monitoring` its Ingress is held to the status page by the admission
+   policy.
 
 Around it:
 
@@ -346,7 +347,9 @@ Around it:
 - An admission policy (`gamemesh-admission-policy.yaml`) keeps Services
   ClusterIP without externalIPs and Ingresses on class traefik and host
   `api.gamemesh.app`, whoever writes them. In `monitoring`
-  (`monitoring-admission-policy.yaml`): Services ClusterIP, no Ingress at all.
+  (`monitoring-admission-policy.yaml`): Services ClusterIP, and Ingresses only
+  for `status.gamemesh.app`, only the status page's paths to the `grafana`
+  Service (or an ACME challenge to cert-manager's solver).
 - The namespaces (`deployments/k8s/namespace/`), the policies and the RBAC are
   cluster-level: copied into k3s's auto-deploy directory by the admin.
 
@@ -379,8 +382,8 @@ the namespace's admission policy refuses any other Service type and any
 Ingress. Grafana has one data source (Prometheus) and the status dashboard
 (`grafana/dashboards/status.json`), both provisioned from the repository and
 not editable in its UI; its settings (`grafana/grafana.ini`) turn off every
-connection out of the cluster and anonymous access. It is not exposed either
-(until the status page, G6). CI deploys both after the
+connection out of the cluster and anonymous access. Its admin side is not
+exposed; only the status page is ("Status page"). CI deploys both after the
 app; they need the namespace, Prometheus's ServiceAccount and Role in
 `gamemesh` ("Cluster-level manifests") and the `grafana-admin` Secret
 ("Production secrets") first.
@@ -395,6 +398,34 @@ curl -s 127.0.0.1:9090/api/v1/query --data-urlencode 'query=count by (app) (up{n
 kprod -n monitoring port-forward svc/grafana 3000:3000       # then http://127.0.0.1:3000, user admin
 kprod -n monitoring get secret grafana-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy
 ```
+
+### Status page
+
+`https://status.gamemesh.app` shows the status dashboard to anyone, read-only
+and without login. It is Grafana's shared ("public") dashboard; Grafana has
+no anonymous user at all.
+
+- **What is routed** (`deployments/k8s/monitoring/status.yaml`): only what the
+  page loads, measured with a headless browser: `/public-dashboards/<token>`,
+  `/api/public/dashboards/<token>/...` (the share's definition and its panels'
+  stored queries) and `/public/` (static files); `/` redirects to the page.
+  Everything else on that host is a 404 from Traefik and never reaches
+  Grafana: its login, admin and query APIs, `/metrics`, other shares. The
+  namespace's admission policy refuses any other Ingress there.
+- **The share** lives in Grafana's database. The `publisher` container in
+  Grafana's pod creates it with the token written in `grafana.yaml`, and puts
+  it back if it is switched off, changed or replaced; its log has one line per
+  change (`kprod -n monitoring logs deploy/grafana -c publisher`). The token is
+  the page's URL, public by design. To change it, change all four places
+  (`status.yaml` and `grafana.yaml`; `scripts/k8s/check-status-token.sh`, run
+  by CI, fails otherwise).
+- **Load:** 10 requests/s per client address, burst 100 (a page's first load
+  is about 47 requests, then 5 every 10 s); beyond that, 429. Viewers cannot
+  change the time range or run their own queries: a panel query runs the
+  query stored in the dashboard, whatever the request says.
+- **TLS:** cert-manager, like the API. The Ingress names `letsencrypt-staging`
+  until the staging certificate has been seen to work; then
+  `letsencrypt-prod`.
 
 ### Deploying by hand
 

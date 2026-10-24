@@ -336,6 +336,9 @@ jobs:
               -schema-location default \
               -schema-location "${CRDS_CATALOG}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -
           done
+          # The status page's token is written in four places; a mismatch is
+          # schema-valid but breaks the page.
+          scripts/k8s/check-status-token.sh
 
   govulncheck:
     runs-on: ubuntu-latest

@@ -62,7 +62,8 @@ jobs:
           yes patch deployments monitoring
           yes create persistentvolumeclaims monitoring
           no get secrets monitoring
-          no create ingresses.networking.k8s.io monitoring
+          yes create ingresses.networking.k8s.io monitoring
+          yes patch middlewares.traefik.io monitoring
           no create serviceaccounts monitoring
           no create pods/exec monitoring
           no create rolebindings.rbac.authorization.k8s.io monitoring

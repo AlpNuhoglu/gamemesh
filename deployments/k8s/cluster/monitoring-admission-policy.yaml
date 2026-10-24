@@ -1,14 +1,21 @@
 # What a Service or an Ingress in the monitoring namespace may look like
-# (phase 2, G4), next to gamemesh's own policy (gamemesh-admission-policy.yaml):
+# (phase 2, G4/G6), next to gamemesh's own policy (gamemesh-admission-policy.yaml):
 #
 # - Services: ClusterIP only, no externalIPs, for the same reasons as there.
-# - Ingresses: none. Prometheus is never exposed: its query API and raw
-#   metrics describe the system's insides. The public status page (G6) will
-#   allow exactly one host here, and nothing else.
+# - Ingresses: only the public status page (G6). Class traefik, host
+#   status.gamemesh.app (rules and TLS), no default backend, and every path
+#   either
+#     - to the grafana Service, and only the page's own prefixes: / (exact,
+#       redirected to the page), /public/ (static files),
+#       /public-dashboards/ and /api/public/dashboards/ (a shared dashboard),
+#       measured with a headless browser as all the page loads; or
+#     - cert-manager's HTTP-01 challenge (/.well-known/acme-challenge/...),
+#       its own solver Service (cm-acme-http-solver-...).
 #
-# So "Prometheus is not reachable from outside" holds by policy, whoever
-# applies what. Cluster-level, written by the admin (k3s auto-deploy
-# directory); CI has no permission on admission policies.
+# So Prometheus, Grafana's login, admin and query APIs and its /metrics stay
+# unexposed by policy, whoever applies what. Cluster-level, written by the
+# admin (k3s auto-deploy directory); CI has no permission on admission
+# policies.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -25,6 +32,10 @@ spec:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["ingresses"]
+  variables:
+    - name: acme
+      expression: >-
+        "/.well-known/acme-challenge/"
   validations:
     - expression: >-
         request.kind.kind != 'Service' ||
@@ -34,8 +45,39 @@ spec:
         request.kind.kind != 'Service' ||
         !has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0
       message: "in monitoring, Services may not set externalIPs"
-    - expression: request.kind.kind != 'Ingress'
-      message: "in monitoring, Ingresses are not allowed"
+    - expression: >-
+        request.kind.kind != 'Ingress' ||
+        (has(object.spec.ingressClassName) && object.spec.ingressClassName == 'traefik')
+      message: "in monitoring, Ingresses must use ingressClassName traefik"
+    - expression: >-
+        request.kind.kind != 'Ingress' ||
+        (has(object.spec.rules) && size(object.spec.rules) > 0 &&
+         object.spec.rules.all(r, has(r.host) && r.host == 'status.gamemesh.app' && has(r.http)))
+      message: "in monitoring, every Ingress rule must be for host status.gamemesh.app"
+    - expression: >-
+        request.kind.kind != 'Ingress' || !has(object.spec.tls) ||
+        object.spec.tls.all(t, has(t.hosts) && t.hosts.all(h, h == 'status.gamemesh.app'))
+      message: "in monitoring, Ingress TLS may name status.gamemesh.app only"
+    - expression: >-
+        request.kind.kind != 'Ingress' || !has(object.spec.defaultBackend)
+      message: "in monitoring, Ingresses may not set a default backend"
+    - expression: >-
+        request.kind.kind != 'Ingress' ||
+        object.spec.rules.all(r, r.http.paths.all(p,
+          has(p.path) && has(p.backend.service) && (
+            (p.backend.service.name == 'grafana' && (
+              (p.pathType == 'Exact' && p.path == '/') ||
+              (p.pathType == 'Prefix' && (
+                p.path.startsWith('/public/') ||
+                p.path.startsWith('/public-dashboards/') ||
+                p.path.startsWith('/api/public/dashboards/'))))) ||
+            (p.backend.service.name.startsWith('cm-acme-http-solver-') &&
+             (p.pathType == 'Exact' || p.pathType == 'ImplementationSpecific') &&
+             p.path.startsWith(variables.acme)))))
+      message: >-
+        in monitoring, Ingress paths may only route the status page (/, /public/,
+        /public-dashboards/, /api/public/dashboards/) to grafana, or an ACME
+        challenge to its solver
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
