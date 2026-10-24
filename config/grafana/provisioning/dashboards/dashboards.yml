@@ -6,3 +6,12 @@ providers:
     type: file
     options:
       path: /var/lib/grafana/dashboards
+  # The status dashboard, from deployments/k8s/monitoring (the same file
+  # Kubernetes provisions).
+  - name: GameMesh status
+    folder: GameMesh
+    type: file
+    allowUiUpdates: false
+    disableDeletion: true
+    options:
+      path: /etc/grafana/dashboards

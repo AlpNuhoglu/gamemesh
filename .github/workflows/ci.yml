@@ -253,12 +253,10 @@ jobs:
       list: ${{ steps.list.outputs.list }}
     env:
       # Report only, by name; every other image blocks, including one added
-      # later. These run outside production: Jaeger and the collector in
-      # docker-compose only, Grafana locally until phase 2's G5 picks a
-      # release without blocking findings (finding #94; none exists yet).
-      # Upgrading them is tracked as finding #68. Prometheus left this list
-      # when it was upgraded for production (G4).
-      REPORT_ONLY: grafana/grafana jaegertracing/all-in-one otel/opentelemetry-collector-contrib
+      # later. These run in docker-compose only and are a major version
+      # behind; upgrading them is tracked as finding #68. Prometheus (G4) and
+      # Grafana (G5) left this list when they went to production.
+      REPORT_ONLY: jaegertracing/all-in-one otel/opentelemetry-collector-contrib
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: list

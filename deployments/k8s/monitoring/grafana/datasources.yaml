@@ -1,0 +1,15 @@
+# Grafana's one data source (phase 2, G5): Prometheus in the same namespace.
+# Provisioned, so it cannot be edited in the UI; the uid is the one the
+# dashboards name, and the one docker-compose's data source has too.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: gamemesh-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Prometheus's scrape interval: the smallest step worth querying.
+      timeInterval: 15s
