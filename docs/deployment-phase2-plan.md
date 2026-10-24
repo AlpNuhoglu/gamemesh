@@ -336,7 +336,7 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ### G6. Herkese açık salt okunur dashboard: `status.gamemesh.app` (danışman madde 4)
 
-- [ ] **Ne:** 4 paneli girişsiz ve düzenlenemez biçimde dışarı açmak; admin paneli ve
+- [x] **Ne:** 4 paneli girişsiz ve düzenlenemez biçimde dışarı açmak; admin paneli ve
   Prometheus açılmadan.
 - **Seçenekler (karar):**
   | Seçenek | Nasıl | Risk |
@@ -358,6 +358,52 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 - **Bitti sayılır:** K13 (ve K6): anonim bir tarayıcı dashboard'u görüyor; bir kaydetme denemesi
   (`POST /api/dashboards/db`) ve admin API'leri (`/api/admin/...`, `/api/users`) reddediliyor;
   `/login` ya kapalı ya işe yaramıyor; Prometheus'a dışarıdan ulaşılamıyor.
+
+> **Sonuç (2026-10-24): bitti (PR #99, #100; prod'da `6b12caf`).** `https://status.gamemesh.app`
+> girişsiz ve salt okunur; Grafana'nın paylaşılan (public) dashboard'u, Grafana'da anonim kullanıcı
+> hiç yok. Seçenek (c), üç katman:
+>
+> 1. **Grafana:** sadece paylaşımın token'lı yolları girişsiz çalışıyor.
+> 2. **Traefik** (`deployments/k8s/monitoring/status.yaml`): sadece sayfanın yüklediği yollar
+>    (headless Chromium ile ölçüldü: 58 istek, üç önek): `/public-dashboards/<token>`,
+>    `/api/public/dashboards/<token>`, `/public/`; `/` sayfaya 302; HTTP→HTTPS; istemci başına
+>    10 istek/sn, burst 100 (ilk yükleme ~47 istek, sonra 10 sn'de 5).
+> 3. **Admission policy** (cluster seviyesi): `monitoring`'de Ingress sadece `status.gamemesh.app`,
+>    bu önekler ve `grafana` Service'i (ya da cert-manager'ın ACME challenge'ı, kendi solver'ına).
+>
+> **Kararlar (onaylandı):** paylaşımı `publisher` sidecar'ı kuruyor ve koruyor (Grafana'nın kendi
+> imajı; `grafana/publish.sh`): yoksa sabit token'la oluşturuyor, kapatılırsa ya da ayarları
+> değişirse geri alıyor, elle başka token'la değiştirilirse silip yeniden kuruyor. Token sayfanın
+> URL'si, bilerek repoda; dört yerde yazılı ve CI tutarlılığını kontrol ediyor
+> (`scripts/k8s/check-status-token.sh`). İzleyici zaman aralığını değiştiremiyor, annotation yok.
+> `root_url` public adres. TLS önce staging (deploy'dan sonra 1 dk'dan kısa; HTTP-01 solver'ın
+> Ingress'i policy'den geçti), sonra prod: Let's Encrypt YE1, ECDSA P-256, 2027-01-22'ye kadar.
+> DNS: `status` A kaydı, `api` ile aynı adres, DNS-only, AAAA yok (kullanıcı ekledi).
+>
+> **Kanıt (internetten, gerçek sertifikayla):**
+> - **Anonim tarayıcı:** headless Chromium `https://status.gamemesh.app/` → 302 → sayfa; 53 istek,
+>   hepsi bu host'ta ve üç önekte, 302 dışında hepsi 200; paneller prod verisini gösteriyor
+>   (1,5 req/s, p95/p99 2,5–5 ms, %0 hata, 0 bağlantı); ekran görüntüsü alındı.
+> - **Kapalı (Traefik'in 404'ü, Grafana'ya ulaşmıyor; 23 yol):** `/login` (GET, POST), `/logout`,
+>   `/metrics`, `/api/health`, `/api/search`, `/api/datasources` ve Prometheus proxy'si,
+>   `/api/admin/settings`, `/api/users`, `/api/org`, `/api/dashboards/…`,
+>   `POST /api/dashboards/db` (kaydetme), `POST /api/ds/query`, başka bir paylaşımın sayfası ve
+>   API'si, `/d/…`, `/apis/`, `/explore`, Prometheus'un `/api/v1/query`, `/-/ready`, `/graph`'ı.
+> - **İzinli önekte değiştirme:** `DELETE`/`PATCH /api/public/dashboards/<token>` Traefik'ten
+>   geçiyor (Ingress method ayırmıyor), Grafana 401 ile reddediyor.
+> - **Kendi sorgusu:** panel sorgusunun gövdesi `up` ya da ham sayaçları istese de kayıtlı sorgunun
+>   tek serisi dönüyor (`up` 15 seri); olmayan panel veri döndürmüyor.
+> - **Rate limit:** tek IP'den 250 hızlı istek → 117 × 200, 133 × 429; 12 sn sonra 200.
+> - **Politika (prod, `--dry-run=server`):** izinli 3 durum kabul, yasak 5 durum (`/login`,
+>   `/metrics`, `/` Prefix, Prometheus'a yönlendirme, başka host) ret; yerelde 5/9.
+> - **K6:** Grafana'nın admin girişi dışarıdan yok (`/login` 404, 3000 kapalı), sadece port-forward
+>   (tailnet); Prometheus dışarıdan erişilemiyor.
+> - **Yerel:** publisher 4 senaryoda (yokken, kararlı, elle kapatılmış, başka token) her birini bir
+>   turda düzeltti; admin girişi `root_url` ayarlıyken port-forward'la çalışıyor.
+>
+> **Not:** Grafana arayüzündeki paylaşım linkleri artık public adresi gösteriyor (`appUrl`); admin
+> işini bozmuyor. Yerel ölçümde test token'ı bir dosyada bir süre maskelenmeden kaldı (silinmiş
+> yerel bir paylaşıma ait, scratchpad'de).
 
 ### G7. k6 ile doğrulama (danışman madde 5)
 
