@@ -152,8 +152,9 @@ In this order; each step is described in the sections below.
 4. **k3s** with its config, the OIDC authentication file and the cluster-level
    manifests ("k3s", "Cluster-level manifests").
 5. **Admin kubeconfig** on the admin's machine ("k3s").
-6. **The Secret** `gamemesh-secrets` ("Production secrets"). New random values
-   mean a new, empty database: there are no Postgres backups yet.
+6. **The Secrets** `gamemesh-secrets` ("Production secrets") and
+   `gamemesh-backup` ("Backups"). New random values mean a new, empty
+   database; to keep the data, restore the latest backup ("Backups").
 7. **GitHub environment `production`:** update `K8S_HOST` (the new tailnet
    address) and `K8S_CA_DATA` (the new cluster's CA); the Tailscale secrets
    stay. Run `Actions -> cluster-access`.
@@ -427,6 +428,69 @@ no anonymous user at all.
   days, renewed 30 days before it ends). It was tried with
   `letsencrypt-staging` first; on a new cluster without the public name, leave
   the issuer out ("Cluster-level manifests").
+
+### Backups
+
+Every night at 02:15 UTC the `postgres-backup` CronJob
+(`overlays/prod/backup.yaml`, image from `deployments/backup`) dumps the
+database (`pg_dump --format=custom`), encrypts it with
+[age](https://age-encryption.org) for the admin's **public** key and uploads it
+to the Cloudflare R2 bucket `gamemesh-backups` as
+`postgres/gamemesh-<UTC time>.dump.age`. The server can write a backup but not
+read one: the private key is offline, with the admin. The bucket's lock keeps
+every object for 30 days, so not even a leaked token can delete or overwrite
+it; a lifecycle rule deletes it after 90 days.
+
+Once, before the first deploy that carries the CronJob:
+
+1. **R2 (Cloudflare dashboard → R2):** create the bucket `gamemesh-backups`
+   (Standard storage); in its settings add a **bucket lock** rule (all objects,
+   30 days) and an **object lifecycle** rule (delete after 90 days). Then
+   *Manage API tokens → Create API token*: permission **Object Read & Write**,
+   applied to `gamemesh-backups` only. Keep the Access Key ID, the Secret Access
+   Key and the S3 endpoint (`https://<account id>.r2.cloudflarestorage.com`).
+2. **The age key pair**, without installing anything on the admin's machine:
+   ```bash
+   docker run --rm alpine:3.24 sh -c 'apk add -q age && age-keygen'
+   ```
+   It prints a `Public key: age1...` comment and an `AGE-SECRET-KEY-...` line.
+   The secret line goes into the password manager **and** an offline copy; it
+   is the only way to read a backup. Only the public key goes to the cluster.
+3. **The Secret**, typed in without leaving the values in the shell history:
+   ```bash
+   read -r  "R2_ID?Access Key ID: ";        read -rs "R2_KEY?Secret Access Key: "; echo
+   read -r  "R2_EP?S3 endpoint: ";          read -r  "AGE_PUB?age public key: "
+   kprod -n gamemesh create secret generic gamemesh-backup \
+     --from-literal=RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ID" \
+     --from-literal=RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_KEY" \
+     --from-literal=RCLONE_CONFIG_R2_ENDPOINT="$R2_EP" \
+     --from-literal=AGE_RECIPIENT="$AGE_PUB"
+   unset R2_ID R2_KEY R2_EP AGE_PUB
+   ```
+   (`read "VAR?prompt"` is zsh; in bash, `read -p "prompt" VAR`.) The dead man's
+   switch's URL comes later as `PING_URL` (phase 2, F2).
+4. CI's RBAC (`ci-deployer.yaml`) must allow CronJobs before that deploy
+   ("Cluster-level manifests"); otherwise the apply is refused and the deploy
+   rolls back.
+
+Run one now, and check it:
+
+```bash
+kprod -n gamemesh create job --from=cronjob/postgres-backup backup-manual-$(date +%s)
+kprod -n gamemesh logs -f job/<that name>      # ... "uploaded r2:gamemesh-backups/postgres/..."
+kprod -n gamemesh get cronjob,jobs
+```
+
+Restore one (into an empty database; the full drill is in the phase 2 plan, E5):
+
+```bash
+# Admin machine: the object from R2 (dashboard, or rclone with the same token), then
+age --decrypt -i <the private key file> gamemesh-<time>.dump.age > gamemesh.dump
+pg_restore --no-owner --no-privileges -d <empty database> gamemesh.dump
+```
+
+Restoring over the live database is a decision to take with the application
+stopped; the drill comes first.
 
 ### Deploying by hand
 
