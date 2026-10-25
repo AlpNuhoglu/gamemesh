@@ -14,6 +14,19 @@
 | **Affected components** | `internal/matchmaking`, `pkg/middleware` (gateway rate limiter), `scripts/k6/matchmaking.js`, go-redis client pool |
 | **Related commits** | `63a80b6`, `6aabcd8`, `567d5f4`, `79a16b3` |
 
+> **Addendum (2026-10-25).** This document's p95 figures are k6's
+> `http_req_duration` over *all* requests, setup's bcrypt-bound register and
+> login calls (about 200 ms each, about 5 % of matchmaking's requests at
+> 500 VUs) included, so "112 ms" sits between two modes and moved between
+> 86 and 190 ms in later runs. The load tests now report the load's own
+> `http_req_duration{phase:load}`: 27–31 ms for matchmaking at 500 VUs on the
+> same kind of laptop. The leaderboard figures (133 req/s) could not be
+> reproduced: on current code the gateway ran out of local ports at about
+> 770 requests/s (12.7 % 502) until it reused its upstream connections; it
+> now carries 2,838 requests/s at 0.01 % errors. The analysis below stands
+> as written; the README has the current table. See
+> `docs/deployment-phase2-plan.md`, findings #91 and #96.
+
 ---
 
 ## 1. Executive Summary
