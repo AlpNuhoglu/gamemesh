@@ -54,6 +54,9 @@ jobs:
           yes patch deployments gamemesh
           yes patch middlewares.traefik.io gamemesh
           yes watch replicasets gamemesh
+          yes patch cronjobs.batch gamemesh
+          yes watch jobs.batch gamemesh
+          no create jobs.batch gamemesh
           no get secrets gamemesh
           no create pods/exec gamemesh
           no delete deployments gamemesh

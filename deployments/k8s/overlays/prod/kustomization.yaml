@@ -17,6 +17,7 @@ namespace: gamemesh
 resources:
   - ../../base
   - redirect-https.yaml
+  - backup.yaml
 # The images CI published, at the commit being deployed: the deploy job sets
 # the tag with kustomize edit set image <name>=...:<sha> before applying
 # (step D). The value here is a deliberate placeholder: an apply by hand pulls
@@ -42,6 +43,10 @@ images:
     newTag: set-by-deploy
   - name: gamemesh/presence
     newName: ghcr.io/alpnuhoglu/gamemesh-presence
+    newTag: set-by-deploy
+  # The backup CronJob's (backup.yaml), built from deployments/backup.
+  - name: gamemesh/backup
+    newName: ghcr.io/alpnuhoglu/gamemesh-backup
     newTag: set-by-deploy
 # One replica each. On a single node a second replica adds no availability
 # (the node is the failure domain) and costs memory; the outbox-relay

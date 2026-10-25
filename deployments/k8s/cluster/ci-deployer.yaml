@@ -30,6 +30,15 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # The daily Postgres backup (overlays/prod/backup.yaml, phase 2 E2). CI
+  # writes the schedule; it does not start jobs (the admin does, with
+  # kubectl create job --from), and reads them for diagnosis.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
