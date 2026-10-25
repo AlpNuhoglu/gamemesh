@@ -47,6 +47,7 @@ not come up.
 - [Testing & load testing](#testing--load-testing)
 - [Configuration](#configuration)
 - [Repository layout](#repository-layout)
+- [Roadmap](#roadmap)
 - [Documentation](#documentation)
 
 ## Highlights
@@ -475,6 +476,44 @@ tests/          Testcontainers integration tests
 docs/           architecture, API, operations
 ```
 
+## Roadmap
+
+Deliberately not built yet; none of it is in the code.
+
+**Before real users (in progress, deployment phase 2):** daily encrypted
+Postgres backups kept off the server, with a restore drill; a backup of k3s's
+own state, kept apart from its encryption key; an outside check of the API, the
+status page and the certificate's expiry, alerting by email and phone, and a
+dead man's switch on the backups.
+
+**Monitoring, beyond phase 2's scope:**
+- **Alerting** (phase 3): Alertmanager with rules for pods not ready or crash
+  looping, disk over 80 %, memory pressure and OOM kills, failed scrapes;
+  tested with `promtool test rules` and a real trigger.
+- **Logs:** collected and searchable (Loki), next to the metrics.
+- **Long-term metrics:** today 7 days or 2 GB on the node.
+- **Status page polish:** theme; a logarithmic latency axis, so a burst of
+  bcrypt-bound logins does not flatten the millisecond scale.
+- **More panels:** per-service breakdowns, container and node resources
+  (cAdvisor, node-exporter), Traefik's own edge metrics.
+- **Load tests from CI:** k6 from GitHub Actions runners rather than a laptop on
+  a home network, and as a performance regression check.
+
+**Platform and security:**
+- High availability: more than one node, a managed or operator-run Postgres
+  (CloudNativePG), a leader lock so matchmaking can roll out without a gap.
+- NetworkPolicy between pods; GitOps (Argo CD or Flux) instead of push deploys.
+- k3s 1.36; dual-stack, then an AAAA record.
+- Scanning the arm64 images and cert-manager's; Secrets encrypted with
+  secretbox once k3s supports it as stable.
+- JWT: asymmetric signing, so only the player service can mint tokens, and a
+  key ID for rotation without logging everyone out.
+- One versioned migration tool instead of four places that define the schema;
+  distroless images.
+
+The deployment plans keep the full lists, with what each item is waiting for:
+[phase 1](docs/deployment-phase1-plan.md), [phase 2](docs/deployment-phase2-plan.md) *(Turkish)*.
+
 ## Documentation
 
 - [Architecture & design decisions](docs/architecture.md) · [Design document](docs/design-document.md)
@@ -485,6 +524,7 @@ docs/           architecture, API, operations
 - [Troubleshooting](docs/troubleshooting.md)
 - [Throughput post-mortem](docs/postmortem-throughput-ceiling.md)
 - [Deployment phase 1 plan & findings](docs/deployment-phase1-plan.md) *(Turkish)* — every step from a laptop to production, with measurements
+- [Deployment phase 2 plan & findings](docs/deployment-phase2-plan.md) *(Turkish)* — monitoring, the public status page, load validation; backups and outside alerting
 
 ## License
 

@@ -472,6 +472,12 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
     paneller; Faz 1 sonrası listesinden öne çıkanlar.
 - **Bitti sayılır:** K9, K15; E5 tatbikatı bu bölümlerle yapıldı.
 
+> **Ara sonuç (2026-10-25): K15 bitti, K9 E ve F'yi bekliyor.** README'de "Roadmap" bölümü
+> (danışmanın kapsam dışı listesi, bu fazda not edilenler, Faz 1 sonrası listesinden öne çıkanlar;
+> henüz yapılmamış yedek ve dış izleme "devam ediyor" olarak). `docs/deployment.md`'de "Monitoring" ve
+> "Status page" bölümleri G4–G6'da yazıldı; "Restoring from backup" ve "When an outside alert fires"
+> E ve F'yle birlikte gelecek, kutu onlarla işaretlenecek.
+
 ## Bölüm E — Veri dayanıklılığı
 
 ### E1. Yedekleme stratejisi kararı
