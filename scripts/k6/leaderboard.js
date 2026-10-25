@@ -16,6 +16,11 @@ import { Counter } from "k6/metrics";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
 const POOL = Number(__ENV.POOL || 100);
+// Requests of the load itself carry phase: load, so the duration threshold
+// (and the summary line it prints) leave out setup's register and login
+// calls: bcrypt-bound, about 200 ms each, enough of them to move p95 by
+// themselves (finding #91). Cite http_req_duration{phase:load}.
+const LOAD = { phase: "load" };
 const scoreUpdates = new Counter("score_updates");
 
 export const options = {
@@ -30,7 +35,7 @@ export const options = {
   },
   thresholds: {
     http_req_failed: ["rate<0.01"],
-    http_req_duration: ["p(95)<300"],
+    "http_req_duration{phase:load}": ["p(95)<300"],
   },
 };
 
@@ -84,14 +89,14 @@ export default function (data) {
   const res = http.post(
     `${BASE_URL}/api/v1/score`,
     JSON.stringify({ score: Math.floor(Math.random() * 100) + 1, increment: true }),
-    { headers }
+    { headers, tags: LOAD }
   );
   check(res, { "score accepted": (r) => r.status === 200 });
   if (res.status === 200) scoreUpdates.add(1);
 
   // Mix in reads: top-10 and paginated views.
   if (__ITER % 10 === 0) {
-    const top = http.get(`${BASE_URL}/api/v1/leaderboard/top/10`);
+    const top = http.get(`${BASE_URL}/api/v1/leaderboard/top/10`, { tags: LOAD });
     check(top, { "top-10 ok": (r) => r.status === 200 });
   }
   sleep(0.05);

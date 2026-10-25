@@ -19,6 +19,11 @@ const matchedRate = new Rate("matched_before_timeout");
 // DELETE /queue answers 404 ("player not in queue") once the match tick has
 // already dequeued the player — that is the SUCCESS path, so 404 is expected.
 const expectOkOrMissing = http.expectedStatuses(200, 404);
+// Requests of the load itself carry phase: load, so the duration threshold
+// (and the summary line it prints) leave out setup's register and login
+// calls: bcrypt-bound, about 200 ms each, enough of them to move p95 by
+// themselves (finding #91). Cite http_req_duration{phase:load}.
+const LOAD = { phase: "load" };
 
 export const options = {
   setupTimeout: "5m",
@@ -36,7 +41,7 @@ export const options = {
   },
   thresholds: {
     http_req_failed: ["rate<0.02"],
-    http_req_duration: ["p(95)<500"],
+    "http_req_duration{phase:load}": ["p(95)<500"],
   },
 };
 
@@ -91,6 +96,7 @@ export default function (data) {
   const rank = Math.max(0, Math.round(1000 + (Math.random() - 0.5) * 600));
   const join = http.post(`${BASE_URL}/api/v1/queue`, JSON.stringify({ rank }), {
     headers,
+    tags: LOAD,
   });
   check(join, { "queued": (r) => r.status === 200 });
   queueJoinTime.add(join.timings.duration);
@@ -103,6 +109,7 @@ export default function (data) {
     sleep(2);
     const status = http.get(`${BASE_URL}/api/v1/queue/status`, {
       headers,
+      tags: LOAD,
       responseCallback: expectOkOrMissing,
     });
     check(status, {
@@ -120,6 +127,7 @@ export default function (data) {
   if (!matched) {
     const left = http.del(`${BASE_URL}/api/v1/queue`, null, {
       headers,
+      tags: LOAD,
       responseCallback: expectOkOrMissing,
     });
     check(left, {
