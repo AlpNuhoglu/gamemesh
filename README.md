@@ -377,9 +377,17 @@ Details: [docs/presence.md](docs/presence.md)
 - **Logs** — structured zap with `request_id`, `user_id`, `client_ip` and
   `trace_id`/`span_id` on every request, so a log line jumps to its trace.
 
-The observability stack runs in compose and in the local k3d overlay;
-production runs without it for now (the 4 GB node is sized for the
-application). Details: [docs/observability.md](docs/observability.md)
+In production, Prometheus and Grafana run in their own namespace, never
+exposed; tracing (the Collector and Jaeger) runs in compose and locally only.
+Four of Grafana's panels are public at
+[status.gamemesh.app](https://status.gamemesh.app), here under a k6 load from
+outside (30 requests/s and 20 WebSocket connections; the latency spike at the
+start is k6's 40 bcrypt-bound register and login calls, the load's own p95 is
+2.5 ms server-side):
+
+![The status page under load](docs/images/status-page-under-load.png)
+
+Details: [docs/observability.md](docs/observability.md)
 
 ## Testing & load testing
 
