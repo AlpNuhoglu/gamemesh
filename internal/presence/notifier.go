@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -33,6 +34,15 @@ type HTTPNotifier struct {
 	client  *http.Client
 }
 
+// notifierTransport keeps up to 64 idle connections to the Presence Service.
+// Go's default keeps 2 per host, so under concurrency most calls dialled a
+// new connection and left the old one in TIME_WAIT (finding #96).
+func notifierTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = 64
+	return t
+}
+
 // NewHTTPNotifier builds a notifier targeting the Presence Service base URL
 // (e.g. http://presence:8086). The timeout keeps a slow/absent presence service
 // from blocking WS connection handling.
@@ -42,7 +52,7 @@ func NewHTTPNotifier(baseURL string, timeout time.Duration) *HTTPNotifier {
 	}
 	return &HTTPNotifier{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: timeout},
+		client:  &http.Client{Timeout: timeout, Transport: notifierTransport()},
 	}
 }
 
@@ -100,7 +110,11 @@ func (n *HTTPNotifier) postBody(ctx context.Context, path string, body []byte) e
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	// Read to the end, or the connection is closed instead of reused.
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("presence %s: status %d", path, resp.StatusCode)
 	}
