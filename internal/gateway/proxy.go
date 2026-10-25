@@ -4,6 +4,8 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -16,6 +18,11 @@ import (
 
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 )
+
+// statusClientClosedRequest is nginx's 499: the client closed the request
+// before the answer. Not in net/http, not a standard code; used only in logs
+// and metrics, since the client is gone.
+const statusClientClosedRequest = 499
 
 // upstreamTransport carries every proxied request; one idle pool per
 // upstream. Go's default keeps 2 idle connections per host, so under
@@ -64,6 +71,15 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 		Transport: otelhttp.NewTransport(upstreamTransport),
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		// The client gave up (closed the page or the connection, or hit its
+		// own timeout): not the upstream's failure, and nobody reads the
+		// answer. It was a 502, so the status page's error rate (5xx) counted
+		// users giving up as server errors (finding #97). 499 is nginx's
+		// "client closed request"; it stays visible in requests_total.
+		if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+			w.WriteHeader(statusClientClosedRequest)
+			return
+		}
 		log.Error("upstream unavailable",
 			zap.String("target", target),
 			zap.String("path", r.URL.Path),
