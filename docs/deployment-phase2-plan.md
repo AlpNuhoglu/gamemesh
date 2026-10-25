@@ -118,7 +118,7 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ### G1. Kapasite ölçümü ve karar
 
-- [ ] **Ne:** Monitoring yükünü ölçüp node'un yetip yetmediğine karar vermek.
+- [x] **Ne:** Monitoring yükünü ölçüp node'un yetip yetmediğine karar vermek.
 - **Nasıl:** compose'da ölçülen tüketim (Prometheus ~95 MiB, Grafana ~217 MiB; Faz 1 M2) +
   seçilen yığının diğer bileşenleri (kube-state-metrics, node-exporter; Alertmanager yok, Faz 3);
   saklama süresiyle Prometheus belleği. Önce yerel k3d'de prod'a yakın ayarla ölçüm.
@@ -142,6 +142,12 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 > monitoring sonrası prod'da `available` < 1 GiB, bir OOMKilled ya da bellek request'leri
 > allocatable'ın %75'ini geçerse VPS 1000 G12.5'e (€14,50/ay, şu an €8,26; G12.5 içinde yerinde
 > yükseltme; kesinti ve disk büyümesi **doğrulanacak**). K8'in kanıtı G4'ten sonra prod'da.
+>
+> **Sonuç (2026-10-25, K8): 4 GB yeter, büyütme yok.** Prod'da Prometheus ve Grafana çalışırken,
+> G7'nin yükünün zirvesinde (30 istek/sn, 20 WebSocket): `available` **2121 Mi** (eşik 1 GiB),
+> bellek request'leri **%37** (1468 Mi; eşik %75), limitler %80, OOMKilled yok, load 1,04. Prometheus
+> 1,5 gündür çalışıyor ve 48 Mi, Grafana 100 Mi. Önceki okumalar: 2313 (öncesi), 2273 (G4), 2127 Mi
+> (G5).
 
 ### G2. Monitoring mimarisi
 
@@ -407,7 +413,7 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
 
 ### G7. k6 ile doğrulama (danışman madde 5)
 
-- [ ] **Ne:** Prod'a ölçülü bir yük basıp panellerin gerçek zamanlı hareket ettiğini görmek,
+- [x] **Ne:** Prod'a ölçülü bir yük basıp panellerin gerçek zamanlı hareket ettiğini görmek,
   ekran görüntüsü almak.
 - **Dikkat:**
   - **Rate limit:** tek IP'den 50 rps'in altında kalmak (ör. 30–40 rps) ya da yükü birden fazla
@@ -422,6 +428,31 @@ paralelde E ve F; H tarihlerinde. (G8 Faz 3'te.)
     (`http_req_duration{scenario:...}`) ayrı raporlanır ve README'deki tablo buna göre düzeltilir.
 - **Bitti sayılır:** K14: yük sırasında 4 panelin ekran görüntüsü; panel değerleri k6'nın
   raporuyla (req/s, p95, hata, bağlantı sayısı) karşılaştırılıp tutarlılığı yazıldı.
+
+> **Sonuç (2026-10-25, K14): bitti.** `scripts/k6/status-demo.js` (prod'a güvenli: okumalar ve
+> WebSocket'ler, 20 işaretli hesap `k6g7…`, skor/kuyruk/oda yok; mevcut betikler yüzlerce hesap açıyor
+> ve herkese açık skor tablosuna yazıyor). Evden, 12:08:51–12:14:23 UTC, 1 dk rampa + 3 dk sabit + 1 dk
+> iniş; ağ önce 52 ms / %0, sonra 68 ms / %0.
+>
+> | Panel (12:10:20–12:13:20, public API'den) | Panel | k6 | |
+> |---|---|---|---|
+> | İstek hızı | ort. 28,7, en çok 30/s | hedef 30/s (okumalar 7199) | ✓ ±%10 |
+> | Hata oranı | %0 | %0 (0/7199) | ✓ |
+> | Aktif bağlantı | 18–20 (ort. 19,6) | 20 VU, 64 açılış %100 | ✓ (bağlantılar 90 sn'de bir yenileniyor) |
+> | Gecikme | p95 2,5 ms, p99 4,5 ms (sunucu) | p95 57,5 ms, medyan 46,9 ms (istemci) | ✓ fark ~55 ms ≈ RTT |
+>
+> Ekran görüntüsü yükün ortasında (12:11 UTC) alındı: `docs/images/status-page-under-load.png`,
+> README'de. Gecikme panelinin başındaki 5 s'lik sıçrama gerçek: k6'nın setup'ı 20 register + 20 login'i
+> aynı anda gönderiyor, bcrypt 2 vCPU'da sıraya giriyor (en çok 4,9 s) ve o dakikada tek trafik onlar
+> (#91'in prod'daki karşılığı). Logaritmik y ekseni ikisini birden gösterirdi; görsel cila, roadmap.
+>
+> **Notlar:** İlk koşu geçersiz: Mac pildeyken kapağı kapanınca uykuya geçti (pmset: Clamshell Sleep,
+> 22:58:29 UTC; k6 1 sa 11 dk sürdü); ikincisi `caffeinate` ve şarjla. Test hesapları kullanıcının
+> çalıştırdığı transaction'la silindi (40 → 0, sahipsiz `player_stats` 0; prod'da `exec`'i otomatik izin
+> kontrolü engellemişti). **#91:** k6 betikleri artık `http_req_duration{phase:load}`'u raporluyor;
+> yerelde matchmaking (500 VU, 1 dk) iki koşuda yükün p95'i 21,5 ve 26,6 ms, bütün isteklerin 111,9 ve
+> 182,5 ms. README'nin benchmark tablosu #96'nın düzeltmesinden sonra yeniden ölçülecek: leaderboard
+> satırı (133/s, %0) güncel kodla yeniden üretilemiyor.
 
 ### G8. Uyarı kuralları ve yönlendirme — *Faz 3'e taşındı*
 
@@ -569,3 +600,4 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 93 | k3s'te kubelet'in `/metrics`'i aynı süreçteki kontrol düzleminin metriklerini de veriyor; kube-prometheus-stack'in varsayılanları kontrol düzlemini iki kez scrape ediyor | G1 ölçümü (yerel k3d) | Ölçüldü (`job="kubelet"` `/metrics`: 37.346 `apiserver_*` + 12.966 etcd/workqueue/scheduler, 947 `kubelet_*`) | G2 (sade yığın seçildi; kube-prometheus-stack'e dönülürse `kubelet` job'unda `/metrics` filtrelenir) |
 | 94 | Planlanan monitoring sürümlerinde CI'ı kıracak bulgular; temiz bir Grafana sürümü yok (hepsi Go'nun CVE-2026-111943'üyle derlenmiş) | G4 (yükseltme öncesi tarama) | Ölçüldü (Trivy 0.76.1, CI kuralları: Prometheus 3.13.5 → 2, 3.15.1 → 0; Grafana 13.2.4 → 75, 13.1.8 → 18, 12.4.13 → 8) | G4 (Prometheus 3.15.1); G5 (Grafana sürümü) |
 | 95 | CI'da bir build'in GitHub Actions cache'ine aktarımı 17 dk 40 sn takıldı (job sınırına 81 sn kala); `type=gha`'nın 10 dk varsayılan timeout'u devreye girmedi. Repo cache'i 10,17 GiB ile sınırın üstündeydi, 3,68 GiB'ı kapanmış PR'lardan | PR #95'in CI'ı | Ölçüldü (job log'u: `sending cache export 1060.2s`; aynı koşudaki diğer 6 servis 1,7–6,9 sn) | G4 (cache import/export 3 dk timeout + `ignore-error`; kapanan PR'ın cache'ini silen workflow; tek seferlik temizlik → 7,05 GB) |
+| 96 | Gateway upstream bağlantılarını eşzamanlı yükte yeniden kullanmıyor: `http.DefaultTransport` upstream başına 2 boşta bağlantı tutuyor, gerisi her yanıttan sonra kapanıp `TIME_WAIT`'e düşüyor ve yerel portlar tükeniyor; aynı varsayılan presence notifier'da | G7 (README benchmark'ının yeniden ölçümü) | Ölçüldü (yerel, leaderboard 500 VU, ~770 istek/sn: 9941 × 502, %12,7; hepsi `dial tcp …:8083: connect: cannot assign requested address`) | Ayrı `fix(gateway)` PR'ı: kendi Transport'u (`MaxIdleConnsPerHost` 256), test, yeniden ölçüm |
