@@ -503,6 +503,21 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
   şifreleme, değiştirilemez yedek.
 - **Bitti sayılır:** Kararlar plana yazıldı ve onaylandı.
 
+> **Kararlar (2026-10-25, onaylandı):**
+>
+> | # | Konu | Karar | Gerekçe |
+> |---|---|---|---|
+> | 1 | Yöntem | Günlük `pg_dump --format=custom` | Veri küçük (7,7 MB); RPO ≤ 24 saat şimdilik yeter |
+> | 2 | Depo | **Cloudflare R2**, `gamemesh-backups` | Hesap var; ücretsiz katman 10 GB, çıkış ücretsiz (doğrulandı); bucket lock var. Risk: DNS, alan adı ve yedek aynı hesapta (not edildi; ileride ikinci depo) |
+> | 3 | Şifreleme | `age`, admin'in açık anahtarına | Sunucuda sadece açık anahtar; özel anahtar parola yöneticisinde ve çevrimdışı. `rclone crypt` simetrik olduğu için parolayı sunucuya koymayı gerektirirdi |
+> | 4 | Token | Tek bucket'a **Object Read & Write** | R2'de "yazar, silemez" yetkisi yok (doğrulandı) |
+> | 5 | Saklama | Her gün; **bucket lock 30 gün**, **yaşam döngüsü 90 gün** | Sızan bir token son 30 günü silemez/değiştiremez; lock kuralını sadece hesap yöneticisi kaldırabilir |
+> | 6 | Zaman | 02:15 UTC, `Forbid`, 15 dk sınır | 03:30'daki reboot penceresinden önce |
+> | 7 | Yer | Prod overlay'i (CI kurar); CI'a `cronjobs` yazma, `jobs` okuma | Uygulamayla birlikte sürümlenir |
+> | 8 | İmaj | Kendi imajımız (`deployments/backup`): Alpine, `postgresql16-client`, `age`, `rclone` | CI'da servislerle birlikte derlenir, taranır, yayınlanır |
+> | 9 | Dead man's switch | Başarıda `PING_URL`'e ping (F2'de servis seçilir) | Başarısız ya da hiç çalışmayan koşu ping atmaz |
+> | 10 | k3s durumu | Ayrı adım (E3) | #80 |
+
 ### E2. Postgres yedek CronJob'u
 
 - [ ] **Ne:** `gamemesh` namespace'inde günlük bir CronJob: `pg_dump --format=custom` →
