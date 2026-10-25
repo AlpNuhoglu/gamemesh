@@ -400,15 +400,25 @@ make k6-leaderboard     # 10,000 leaderboard updates
 make k6-websocket       # 1,000 concurrent WebSocket clients
 ```
 
-Measured at 500 virtual users on a single laptop that also runs the load
-generator, all seven services and every datastore — a realistic arrival pattern,
-not a throughput benchmark:
+Measured at 500 virtual users for 1 minute on a single laptop that also runs
+the load generator, all seven services and every datastore (`POOL=500 k6 run
+--vus 500 --duration 1m`, docker-compose, rate limit raised as below;
+2026-10-25) — a realistic arrival pattern, not a throughput benchmark. The p95
+is the load's own (`http_req_duration{phase:load}`): setup's register and login
+calls are bcrypt-bound, about 200 ms each, and counting them put matchmaking's
+p95 anywhere between 86 and 190 ms from run to run (the "112 ms" this table
+used to show):
 
 | Scenario | Iterations | Req/s | p95 | Errors |
 |---|---|---|---|---|
-| matchmaking | 6,500 | 193 | 112 ms | 0.00 % |
-| leaderboard | 4,000 | 133 | 208 ms | 0.00 % |
-| websocket | 549 sessions (avg 44 s) | — | 35.7 ms *(connect)* | 0.00 % |
+| matchmaking | 6,500 | 194 | 27–31 ms *(two runs)* | 0.00–0.13 % |
+| leaderboard | 332,138 | 2,838 | 18 ms | 0.01 % |
+| websocket | 989 sessions (avg 43 s) | — | 129 ms *(connect)* | 0.00 % |
+
+The few errors are connections reset between k6 and Docker Desktop's port
+forwarding, before the gateway. Before the gateway reused its upstream
+connections (finding #96), the leaderboard run at 770 requests/s answered
+12.7 % with 502: the gateway had run out of local ports.
 
 <details>
 <summary><b>Before citing numbers</b></summary>
