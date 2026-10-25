@@ -3,9 +3,12 @@ package gateway
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -225,6 +228,52 @@ func TestPublicHealthShowsOnlyStatusAndVersion(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"status":"ok","version":"abc1234"}`, string(body))
+}
+
+// TestProxyReusesUpstreamConnections: with Go's default transport the proxy
+// kept 2 idle connections per upstream, so under concurrency it closed
+// almost every connection after its response and dialled a new one for the
+// next request; at about 770 requests/s the gateway ran out of local ports
+// (connect: cannot assign requested address) and answered 502 (finding #96).
+func TestProxyReusesUpstreamConnections(t *testing.T) {
+	var dialled atomic.Int64
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(2 * time.Millisecond) // keeps the clients overlapping
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	upstream.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			dialled.Add(1)
+		}
+	}
+	upstream.Start()
+	t.Cleanup(upstream.Close)
+	gw, _ := newGatewayUnderTest(t, upstream.URL)
+
+	const clients, perClient = 50, 20
+	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: clients}}
+	var wg sync.WaitGroup
+	var failed atomic.Int64
+	for range clients {
+		wg.Go(func() {
+			for range perClient {
+				resp, err := client.Get(gw.URL + "/api/v1/leaderboard")
+				if err != nil || resp.StatusCode != http.StatusOK {
+					failed.Add(1)
+				}
+				if resp != nil {
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
+				}
+			}
+		})
+	}
+	wg.Wait()
+
+	require.Zero(t, failed.Load())
+	t.Logf("%d requests from %d clients: %d upstream connections", clients*perClient, clients, dialled.Load())
+	assert.LessOrEqual(t, dialled.Load(), int64(2*clients),
+		"%d requests from %d clients opened %d upstream connections", clients*perClient, clients, dialled.Load())
 }
 
 func TestUpstreamDownReturns502(t *testing.T) {

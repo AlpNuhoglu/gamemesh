@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -15,6 +16,22 @@ import (
 
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 )
+
+// upstreamTransport carries every proxied request; one idle pool per
+// upstream. Go's default keeps 2 idle connections per host, so under
+// concurrency the proxy closed almost every connection after its response
+// and dialled a new one for the next: each left a socket in TIME_WAIT, and at
+// about 770 requests/s the gateway ran out of local ports and answered 502
+// (connect: cannot assign requested address, finding #96). 256 per upstream
+// covers the concurrency the gateway sees; there is no cap on open
+// connections, so a burst is never queued behind the pool.
+var upstreamTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 1024
+	t.MaxIdleConnsPerHost = 256
+	t.IdleConnTimeout = 90 * time.Second
+	return t
+}()
 
 // newProxy builds a gin handler that strips /api/v1 and forwards to target.
 // The authenticated identity travels on X-User-ID / X-Token-JTI headers —
@@ -44,7 +61,7 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 		// is a client span and the W3C traceparent header is injected
 		// automatically. Combined with otelgin on the downstream, gateway ->
 		// service -> store shows up as a single distributed trace.
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Transport: otelhttp.NewTransport(upstreamTransport),
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Error("upstream unavailable",
