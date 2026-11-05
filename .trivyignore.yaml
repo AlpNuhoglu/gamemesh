@@ -181,13 +181,6 @@ vulnerabilities:
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
-  - id: CVE-2026-84782
-    purls: ["pkg:apk/alpine/libcrypto3@3.3.7-r1", "pkg:apk/alpine/libssl3@3.3.7-r1"]
-    statement: >-
-      OpenSSL in redis:7.4.11-alpine (Alpine 3.21). Alpine has the fix
-      (3.3.7-r2); the image has not been rebuilt yet. Dependabot proposes the
-      new digest once it is; revisit if it has not by then.
-    expired_at: 2026-11-18
   - id: CVE-2026-111943
     paths: ["usr/local/bin/gosu"]
     statement: >-
@@ -195,78 +188,33 @@ vulnerabilities:
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
-  # Finding #88. Unlike gosu, nats-server runs: it is NATS itself, built with
-  # go1.27.2, and no fixed release exists yet (2.15.1 is the latest). The flaw
-  # is in certificate chain verification, which NATS only performs with TLS,
-  # and ours has none: no TLS on clients, no cluster, leafnode or gateway
-  # (measured on the running server via /varz: tls_required unset, 0
-  # routes). Short expiry on purpose: Dependabot proposes the patched image
-  # when it ships, and this entry goes with it. Invalid as soon as NATS gets
-  # TLS.
-  - id: CVE-2026-111943
-    paths: ["usr/local/bin/nats-server"]
-    statement: >-
-      nats:2.15.1-alpine's nats-server is built with go1.27.2 (fixed in
-      1.27.3). The vulnerable path is x509 chain verification, used only with
-      TLS; this NATS has no TLS, cluster, leafnode or gateway.
-    expired_at: 2026-11-04
-  # Grafana 12.4.13 (phase 2, G5; finding #94): no Grafana release is free of
-  # blocking findings (13.2.4 has 75), and 12.4 is 12.x's last minor,
-  # supported until 2027-05-24. Short expiry: Grafana publishes a patch
-  # release about every two weeks, and Dependabot proposes it; these go
-  # with it. Revisit before the status page (G6) exposes Grafana at all.
-  - id: CVE-2026-111943
-    paths: ["usr/share/grafana/bin/grafana", "usr/share/grafana/bin/grafana-cli", "usr/share/grafana/bin/grafana-server"]
-    statement: >-
-      Grafana 12.4.13 is built with go1.26.9 (fixed in 1.26.10). The flaw is
-      in x509 chain verification, used when Grafana is a TLS client; its
-      settings (deployments/k8s/monitoring/grafana/grafana.ini) turn off
-      every outbound connection, and it reaches Prometheus over plain HTTP.
-    expired_at: 2026-11-10
+  # Grafana 12.4.14 (phase 2, G5; finding #94): its 12.4.13 exceptions for
+  # Go's x509, kin-openapi and brotli went with the upgrade (fixed there);
+  # these remain. 12.4 is 12.x's last minor, supported until 2027-05-24; 13.3.0
+  # has 39 findings, mostly in bundled plugins. Short expiry: Grafana publishes
+  # a patch release about every two weeks, and Dependabot proposes it.
   - id: CVE-2026-21728
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
       Tempo's query code, compiled into Grafana for its Tempo data source.
       There is none (one provisioned data source, Prometheus; no one but the
       admin can add another).
-    expired_at: 2026-11-10
+    expired_at: 2026-11-24
   - id: CVE-2026-28377
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
       Tempo's status config endpoint, compiled into Grafana for its Tempo data
       source. There is none, and Grafana serves no Tempo endpoint.
-    expired_at: 2026-11-10
-  - id: CVE-2026-100352
+    expired_at: 2026-11-24
+  - id: CVE-2026-116587
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
-      kin-openapi request decoding (denial of service). Reachability in
-      Grafana is not verified; Grafana is cluster-internal until G6, whose
-      Traefik route lets only the shared dashboard's paths through.
-    expired_at: 2026-11-10
-  - id: CVE-2026-100353
-    paths: ["usr/share/grafana/bin/grafana"]
-    statement: >-
-      kin-openapi request decoding (denial of service). Reachability in
-      Grafana is not verified; Grafana is cluster-internal until G6, whose
-      Traefik route lets only the shared dashboard's paths through.
-    expired_at: 2026-11-10
-  - id: CVE-2026-100354
-    paths: ["usr/share/grafana/bin/grafana"]
-    statement: >-
-      kin-openapi schema validation (denial of service). Reachability in
-      Grafana is not verified; Grafana is cluster-internal until G6, whose
-      Traefik route lets only the shared dashboard's paths through.
-    expired_at: 2026-11-10
-  - id: CVE-2026-111497
-    purls: ["pkg:apk/alpine/brotli-libs@1.2.0-r1"]
-    statement: >-
-      Brotli's decoder in grafana/grafana:12.4.13's Alpine (fixed in
-      1.2.1-r0), needed only by libcurl for the image's curl. Grafana's
-      binaries are static and link neither; the probes are Kubernetes
-      httpGet. curl runs in the publisher container only (G6,
-      grafana/publish.sh), against Grafana on localhost and without
-      --compressed, so it never decodes a compressed answer.
-    expired_at: 2026-11-10
+      go-jose 4.1.4 (fixed in 4.1.6) parses RSA values from a JWK without
+      bounds. Grafana reads JWKs for JWT and OAuth logins, both off here
+      (deployments/k8s/monitoring/grafana/grafana.ini), and opens no outbound
+      connection to fetch a key set; the status page routes only the shared
+      dashboard's paths. Reasoned from configuration, not exercised.
+    expired_at: 2026-11-24
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.
 misconfigurations:
