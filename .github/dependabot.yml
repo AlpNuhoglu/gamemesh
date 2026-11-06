@@ -50,8 +50,12 @@ updates:
 
   # The two FROM lines: tag and digest move together. A golang bump must
   # also match go.mod's toolchain line, which CI checks.
+  # The services' Dockerfile and the backup image's (phase 2, E2): both on
+  # Alpine, so they move to a new Alpine together.
   - package-ecosystem: docker
-    directory: /deployments/docker
+    directories:
+      - /deployments/docker
+      - /deployments/backup
     schedule:
       interval: weekly
     commit-message:

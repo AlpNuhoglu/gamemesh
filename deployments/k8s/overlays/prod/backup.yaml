@@ -1,0 +1,88 @@
+# The daily Postgres backup (phase 2, E2): deployments/backup's image dumps
+# the database, encrypts it for the admin's age public key and uploads it to
+# Cloudflare R2. Production only: locally there is no bucket to write to.
+#
+# Needs the gamemesh-backup Secret, created by the admin (docs/deployment.md,
+# "Backups"):
+#   RCLONE_CONFIG_R2_ACCESS_KEY_ID, RCLONE_CONFIG_R2_SECRET_ACCESS_KEY
+#                          an R2 token for this bucket only (Object Read & Write)
+#   RCLONE_CONFIG_R2_ENDPOINT  https://<account id>.r2.cloudflarestorage.com
+#   AGE_RECIPIENT          the admin's age public key (age1...)
+#   PING_URL               optional: the dead man's switch (phase 2, F2)
+# The database's own credentials come from gamemesh-secrets.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  labels:
+    app.kubernetes.io/name: postgres-backup
+spec:
+  # Before the 03:30 UTC window in which the node reboots after updates.
+  schedule: "15 2 * * *"
+  timeZone: Etc/UTC
+  # One at a time; a run that could not start within an hour (the node was
+  # down) is skipped, and the dead man's switch notices the gap.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+            app.kubernetes.io/name: postgres-backup
+            app.kubernetes.io/part-of: gamemesh
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: backup
+              image: gamemesh/backup
+              envFrom:
+                - secretRef: { name: gamemesh-backup }
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGUSER
+                  valueFrom: { secretKeyRef: { name: gamemesh-secrets, key: POSTGRES_USER } }
+                - name: PGPASSWORD
+                  valueFrom: { secretKeyRef: { name: gamemesh-secrets, key: POSTGRES_PASSWORD } }
+                - name: PGDATABASE
+                  valueFrom: { secretKeyRef: { name: gamemesh-secrets, key: POSTGRES_DB } }
+                - name: BACKUP_DEST
+                  value: r2:gamemesh-backups/postgres
+                # The R2 remote, besides what the Secret holds. The token
+                # cannot create buckets, so rclone must not try.
+                - name: RCLONE_CONFIG_R2_TYPE
+                  value: s3
+                - name: RCLONE_CONFIG_R2_PROVIDER
+                  value: Cloudflare
+                - name: RCLONE_S3_NO_CHECK_BUCKET
+                  value: "true"
+                - name: RCLONE_CONFIG
+                  value: /dev/null
+                - name: HOME
+                  value: /work
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 500m, memory: 256Mi }
+          volumes:
+            # The encrypted dump before upload; a few MB today.
+            - name: work
+              emptyDir: { sizeLimit: 1Gi }

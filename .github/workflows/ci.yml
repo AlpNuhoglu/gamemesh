@@ -118,7 +118,9 @@ jobs:
   services:
     # The image matrix comes from the cmd/ directories, so a new service is
     # built (and later published) without anyone remembering to list it here.
-    # A hand-written list had drifted to 5 of the 7 services.
+    # A hand-written list had drifted to 5 of the 7 services. Plus backup, the
+    # Postgres backup job's image (deployments/backup, phase 2 E2), built,
+    # scanned and published the same way.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -127,7 +129,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: list
         run: |
-          list=$(for d in cmd/*/; do basename "$d"; done | jq -Rcs 'split("\n") | map(select(length > 0))')
+          list=$( (for d in cmd/*/; do basename "$d"; done; echo backup) | jq -Rcs 'split("\n") | map(select(length > 0))')
           echo "services: $list"
           echo "list=$list" >> "$GITHUB_OUTPUT"
 
@@ -148,8 +150,9 @@ jobs:
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
-          file: deployments/docker/Dockerfile
+          # backup has its own Dockerfile and build context; the services share one.
+          context: ${{ matrix.service == 'backup' && 'deployments/backup' || '.' }}
+          file: ${{ matrix.service == 'backup' && 'deployments/backup/Dockerfile' || 'deployments/docker/Dockerfile' }}
           build-args: |
             SERVICE=${{ matrix.service }}
             VERSION=${{ github.sha }}
@@ -418,8 +421,9 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
-          file: deployments/docker/Dockerfile
+          # backup has its own Dockerfile and build context; the services share one.
+          context: ${{ matrix.service == 'backup' && 'deployments/backup' || '.' }}
+          file: ${{ matrix.service == 'backup' && 'deployments/backup/Dockerfile' || 'deployments/docker/Dockerfile' }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             SERVICE=${{ matrix.service }}

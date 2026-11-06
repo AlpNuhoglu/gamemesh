@@ -15,7 +15,9 @@
 # git with the repository checked out in the working directory, curl, jq.
 set -euo pipefail
 
-SERVICES=(gateway player matchmaking leaderboard websocket outbox-relay presence)
+# The images CI publishes for each commit (the services, and the backup job's
+# since phase 2 E2).
+SERVICES=(gateway player matchmaking leaderboard websocket outbox-relay presence backup)
 API=https://api.gamemesh.app
 WORK=${RUNNER_TEMP:-$(mktemp -d)}/deploy
 mkdir -p "$WORK"
@@ -41,13 +43,15 @@ prepare() {
   git cat-file -e "${sha}^{commit}" 2>/dev/null || git fetch --quiet --depth 1 origin "$sha" || return 1
   git archive "$sha" deployments/k8s | tar -x -C "$tree" || return 1
   f="$tree/deployments/k8s/overlays/prod/kustomization.yaml"
+  # Counted from the commit's own overlay: an older commit, from before the
+  # backup image, has one placeholder less, and a rollback to it must work.
   n=$(grep -c 'newTag: set-by-deploy' "$f" || true)
-  if [ "$n" -ne 7 ]; then echo "expected 7 placeholders in ${sha}'s overlay, found $n" >&2; return 1; fi
+  if [ "$n" -lt 7 ]; then echo "expected at least 7 placeholders in ${sha}'s overlay, found $n" >&2; return 1; fi
   sed -i "s/newTag: set-by-deploy/newTag: ${sha}/" "$f"
   kubectl kustomize "$tree/deployments/k8s/overlays/prod" > "$WORK/render-$sha.yaml" || return 1
   if grep -q 'set-by-deploy' "$WORK/render-$sha.yaml"; then echo "a placeholder is left" >&2; return 1; fi
   m=$(grep -cE "image: ghcr.io/alpnuhoglu/gamemesh-[a-z-]+:${sha}$" "$WORK/render-$sha.yaml" || true)
-  if [ "$m" -ne 7 ]; then echo "expected 7 images at ${sha}, found $m" >&2; return 1; fi
+  if [ "$m" -ne "$n" ]; then echo "expected $n images at ${sha}, found $m" >&2; return 1; fi
   echo "$tree/deployments/k8s/overlays/prod"
 }
 
