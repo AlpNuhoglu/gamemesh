@@ -444,8 +444,11 @@ it; a lifecycle rule deletes it after 90 days.
 Once, before the first deploy that carries the CronJob:
 
 1. **R2 (Cloudflare dashboard → R2):** create the bucket `gamemesh-backups`
-   (Standard storage); in its settings add a **bucket lock** rule (all objects,
-   30 days) and an **object lifecycle** rule (delete after 90 days). Then
+   (Standard storage); in its settings add a **bucket lock** rule (no prefix,
+   so all objects; retention 30 days, never "Indefinite", which would keep
+   every object forever) and an **object lifecycle** rule on the prefix
+   `postgres/` (delete after 90 days; R2's default multipart-abort rule
+   already holds the empty prefix, and E3's backups get their own). Then
    *Manage API tokens → Create API token*: permission **Object Read & Write**,
    applied to `gamemesh-backups` only. Keep the Access Key ID, the Secret Access
    Key and the S3 endpoint (`https://<account id>.r2.cloudflarestorage.com`).
@@ -453,9 +456,11 @@ Once, before the first deploy that carries the CronJob:
    ```bash
    docker run --rm alpine:3.24 sh -c 'apk add -q age && age-keygen'
    ```
-   It prints a `Public key: age1...` comment and an `AGE-SECRET-KEY-...` line.
+   It prints a `Public key: age1...` line and an `AGE-SECRET-KEY-...` line.
    The secret line goes into the password manager **and** an offline copy; it
    is the only way to read a backup. Only the public key goes to the cluster.
+   Saved next to it, the public key line needs a leading `#`: age reads every
+   other line of a key file as a key.
 3. **The Secret**, typed in without leaving the values in the shell history:
    ```bash
    read -r  "R2_ID?Access Key ID: ";        read -rs "R2_KEY?Secret Access Key: "; echo
@@ -480,6 +485,26 @@ kprod -n gamemesh create job --from=cronjob/postgres-backup backup-manual-$(date
 kprod -n gamemesh logs -f job/<that name>      # ... "uploaded r2:gamemesh-backups/postgres/..."
 kprod -n gamemesh get cronjob,jobs
 ```
+
+Then check that the private key opens it; a backup only the wrong key could
+read is no backup. Download the object from the dashboard (it saves as
+`postgres_gamemesh-<time>.dump.age`) and, with the key pasted at the prompt
+(not from the clipboard: copying this command replaces it):
+
+```bash
+F="$HOME/Downloads/postgres_gamemesh-<time>.dump.age"
+read -rs "AGEKEY?age secret key: "; echo
+printf '%s\n' "$AGEKEY" | docker run --rm -i --mount type=bind,src="$F",dst=/b.age,readonly alpine:3.24 sh -c '
+apk add -q age postgresql16-client >/dev/null 2>&1
+grep -io "AGE-SECRET-KEY-1[0-9A-Z]*" > /tmp/key || { echo "no AGE-SECRET-KEY in the input"; exit 1; }
+age --decrypt -i /tmp/key /b.age | pg_restore --list | head -25'
+unset AGEKEY
+```
+
+It lists the archive (`dbname: gamemesh`, the tables `players`,
+`player_stats`, `outbox_events` and their data). `--mount` rather than `-v`:
+given a path that does not exist, `-v` mounts a new empty directory there
+instead of failing.
 
 Restore one (into an empty database; the full drill is in the phase 2 plan, E5):
 
