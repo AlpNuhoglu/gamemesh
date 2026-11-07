@@ -541,18 +541,24 @@ Once, on top of the Postgres backup's setup:
    second API token, **Object Read & Write** on `gamemesh-backups` only, for
    this backup alone.
 2. **The server token**, into the password manager and the offline copy,
-   without showing it on screen:
+   without showing it on screen. Two machines, one block each:
    ```bash
    # Server, as alp
    sudo install -m 600 -o alp -g alp /var/lib/rancher/k3s/server/token ~/k3s-token
-   # Admin machine
+   ```
+   ```bash
+   # Admin machine (pbcopy and the gamemesh host name exist only there)
    ssh gamemesh 'cat ~/k3s-token' | pbcopy && ssh gamemesh 'shred -u ~/k3s-token'
-   # paste it into the password manager entry, then
+   # paste it into the password manager entry (one line: K10...::server:...), then
    pbcopy </dev/null
    ```
    It changes only if the token is rotated; save it again then.
-3. **The Secret** for the pod, as for the CronJob's (the same four keys, the
-   new token's):
+3. **The Secret** for the pod, as for the CronJob's: the new R2 token's keys
+   and endpoint, and the same age **public** key (`age1...`). That one is not
+   on R2's token page; it is the key pair's public line, or, without showing
+   it, from the Postgres backup's Secret:
+   `kprod -n gamemesh get secret gamemesh-backup -o jsonpath='{.data.AGE_RECIPIENT}' | base64 -d | pbcopy`
+   (run in a second terminal while the prompt below waits).
    ```bash
    read -r  "R2_ID?Access Key ID: ";        read -rs "R2_KEY?Secret Access Key: "; echo
    read -r  "R2_EP?S3 endpoint: ";          read -r  "AGE_PUB?age public key: "
@@ -565,15 +571,18 @@ Once, on top of the Postgres backup's setup:
    ```
 4. **The server:** sqlite3 from Ubuntu (main), the script and the units:
    ```bash
-   # Admin machine, in the repo
+   # Admin machine, in the repository's directory (the paths are relative to it)
    scp deployments/server/backup/{k3s-backup.sh,gamemesh-k3s-backup.service,gamemesh-k3s-backup.timer} gamemesh:
+   ```
+   ```bash
    # Server, as alp, in ~
    sudo apt-get install -y sqlite3
    sudo install -m 755 k3s-backup.sh /usr/local/sbin/gamemesh-k3s-backup
    sudo install -m 644 gamemesh-k3s-backup.service gamemesh-k3s-backup.timer /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now gamemesh-k3s-backup.timer
-   systemctl list-timers gamemesh-k3s-backup.timer     # NEXT: 02:30 UTC
+   rm k3s-backup.sh gamemesh-k3s-backup.service gamemesh-k3s-backup.timer
+   systemctl list-timers --no-pager gamemesh-k3s-backup.timer     # NEXT: 02:30 UTC
    ```
    age and rclone stay off the host: Ubuntu's are built with go1.22.2 and
    never rebuilt; the image's are CI's.
@@ -583,9 +592,14 @@ Run one now, and check it:
 ```bash
 # Server
 sudo systemctl start gamemesh-k3s-backup.service   # returns when done; non-zero if it failed
-journalctl -u gamemesh-k3s-backup.service -n 20 -o cat
+sudo journalctl -u gamemesh-k3s-backup.service -n 20 -o cat --no-pager
 #   copied ...: <n> rows, integrity ok / received <n> bytes, sha256 as expected / uploaded r2:gamemesh-backups/k3s/...
 ```
+
+`journalctl` needs `sudo`: as alp it shows a system service's log as
+nothing at all. And `--no-pager` on both: without it they open `less`, and
+the rest of a pasted block becomes its keystrokes (an `s` among them saves
+the screen to a file named after what follows).
 
 Then that the private key opens it, as for the Postgres backup (the dashboard
 saves it as `k3s_k3s-<time>.db.gz.age`):
