@@ -569,6 +569,42 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
   **doğrulanacak**), şifrele, yükle; `cred/` için ayrı anahtar/depo ya da çevrimdışı.
 - **Bitti sayılır:** E5'te geri yükleme denendi (K4).
 
+> **Ölçüm (2026-11-07), #80'i düzeltiyor:** k3s'in kaynağında (v1.35.9,
+> `ControlRuntimeBootstrap`) bootstrap kaydı CA'ları ve anahtarlarını, ServiceAccount
+> anahtarını ve **`EncryptionConfig`**'i tutuyor; datastore'a `/bootstrap/<hash>` olarak,
+> token'dan PBKDF2 ile türetilen anahtarla AES-GCM şifreli yazılıyor. SQLite'ta da: yerel
+> k3d'de 11.781 baytlık kayıt, değeri `salt:şifreli` biçiminde. Yani datastore ve **token**
+> birlikte her şeyi açıyor; ayrı tutulacak olan `cred/` değil token (`cred/`'deki her şey
+> bootstrap kaydında).
+>
+> **Kararlar (2026-11-07, onaylandı; 2 ve 3 ölçümle iki kez değişti):**
+>
+> | # | Konu | Karar | Gerekçe |
+> |---|---|---|---|
+> | 1 | Yöntem | SQLite'ta kalınıyor; her gece `sqlite3 .backup` (online, tutarlı) + `integrity_check` + bootstrap kaydı var mı | k3s durmuyor. Embedded etcd'ye geçiş: daha çok bellek/disk, geçiş riski, snapshot'lar age'siz |
+> | 2 | Yer | Sunucuda systemd timer; servis root ama **hiç capability'si yok**, dosya sistemi kendi dizini dışında salt okunur (`systemd-analyze security`: 2.0) | Datastore root'un. CronJob'la `hostPath` privileged bir namespace isterdi |
+> | 3 | Araçlar | Sunucuda sadece `sqlite3` (main) ve gzip. Şifreleme ve yükleme **E2'nin imajında, bir pod'da**: timer kopyayı `kubectl run -i` ile pod'un stdin'ine veriyor; pod CronJob'un o anki imajıyla, `restricted` ayarlarıyla çalışıyor, SHA-256'yı karşılaştırıyor | İlk öneri Ubuntu paketleriydi: `age` 1.1.1 ve `rclone` 1.60.1 universe'te, **go1.22.2** ile derlenmiş, govulncheck 73 standart kütüphane açığı; yeniden derlenmiyorlar, Trivy de görmüyor. İkinci öneri `k3s ctr run`'dı: ctr imajın kullanıcısını çözmek için kök dosya sistemini istemci tarafında bağlıyor (`mount`, `CAP_SYS_ADMIN`; seccomp audit'te syscall 40) |
+> | 4 | Hedef | Aynı age açık anahtarı, aynı bucket, `k3s/` öneki | Tek özel anahtar; 30 günlük lock bunları da kapsıyor |
+> | 5 | Token | R2'ye **hiç** gitmiyor; admin bir kez parola yöneticisine ve çevrimdışı kopyaya alıyor | #80'in asıl ayrımı |
+> | 6 | R2 token'ı | Ayrı bir token, Secret `gamemesh-k3s-backup` | Ayrı iptal, ayrı iz |
+> | 7 | Saklama | `k3s/` lifecycle 31 gün | Geri yüklemede en yenisi yeter; eski Secret'lar uzun durmasın |
+> | 8 | Zaman | 02:30 UTC, `Persistent=true` | Postgres'ten sonra, reboot penceresinden önce |
+> | 9 | Dead man's switch | Başarıda `PING_URL` (F2) | E2'yle aynı |
+> | 10 | Kanıt | İlk elle tetiklenen koşu ve anahtarla açma; gerçek geri yükleme E5'te (K4) | — |
+>
+> **Tatbikat (Multipass, Ubuntu 24.04, k3s v1.35.9, Secret şifrelemesi açık; R2 yerine
+> imajın `rclone serve s3`'ü):**
+> - Koşu sırasında 400 ConfigMap yazıldı: kopyada 47'si var (yük ortasında alındı),
+>   `integrity_check` ok, bootstrap kaydı 1; 2,9 MB sıkıştırılmış; obje
+>   `age-encryption.org/v1` ile başlıyor, test anahtarıyla açılıyor; 7 Secret'ın 7'si
+>   `k8s:enc:aescbc:v1:` önekli. Geride ne dosya ne pod kalıyor. Runbook'taki anahtar
+>   kontrolü komutu aynen: `ok`, `1`.
+> - Negatif testler, hepsi exit 1, hiçbir şey yüklenmedi, geride bir şey kalmadı: pod'a
+>   eksik veri (1 MB) → SHA-256 uyuşmuyor; bozuk veritabanı → `malformed` (`.backup`'ta
+>   yakalandı); bootstrap kaydı silinmiş → "no bootstrap data"; S3 kapalı → rclone 3 deneme,
+>   ~11 dk. Her negatif testin yanında aynı düzende sağlam bir kopya: exit 0.
+> - Timer: VM İstanbul saatindeyken bir sonraki koşu `05:30 +03` = 02:30 UTC.
+
 ### E4. Yedek izleme
 
 - [ ] **Ne:** Başarılı her yedek bir dead man's switch'e (F2) ping atar; ping gelmezse uyarı.

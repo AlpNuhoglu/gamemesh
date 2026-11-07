@@ -517,6 +517,96 @@ pg_restore --no-owner --no-privileges -d <empty database> gamemesh.dump
 Restoring over the live database is a decision to take with the application
 stopped; the drill comes first.
 
+#### The cluster's own state
+
+Every night at 02:30 UTC a systemd timer on the server
+(`deployments/server/backup`) backs up k3s's datastore, the SQLite file that
+holds every Kubernetes object, Secrets included. It takes a consistent copy
+while k3s runs (SQLite's online backup), checks it (`integrity_check`, and
+that k3s's bootstrap entry is there), compresses it and pipes it into a pod
+of the same backup image, which encrypts it for the same age public key and
+uploads it as `k3s/k3s-<UTC time>.db.gz.age`. The service runs as root with
+no capabilities and a read-only file system but for its own directory; the
+pod runs under the namespace's restricted rules, like the CronJob's.
+
+The datastore also holds, encrypted with the **server token**, the cluster's
+CA keys and the key that encrypts the Secrets. The token is never uploaded:
+it is kept by the admin, so the bucket and the age key together still do not
+open a Secret. Without the token, a backup of the datastore restores nothing.
+
+Once, on top of the Postgres backup's setup:
+
+1. **R2:** an object lifecycle rule on the prefix `k3s/`, deleting after 31
+   days (the lock keeps them 30; only the newest matters for a restore). A
+   second API token, **Object Read & Write** on `gamemesh-backups` only, for
+   this backup alone.
+2. **The server token**, into the password manager and the offline copy,
+   without showing it on screen:
+   ```bash
+   # Server, as alp
+   sudo install -m 600 -o alp -g alp /var/lib/rancher/k3s/server/token ~/k3s-token
+   # Admin machine
+   ssh gamemesh 'cat ~/k3s-token' | pbcopy && ssh gamemesh 'shred -u ~/k3s-token'
+   # paste it into the password manager entry, then
+   pbcopy </dev/null
+   ```
+   It changes only if the token is rotated; save it again then.
+3. **The Secret** for the pod, as for the CronJob's (the same four keys, the
+   new token's):
+   ```bash
+   read -r  "R2_ID?Access Key ID: ";        read -rs "R2_KEY?Secret Access Key: "; echo
+   read -r  "R2_EP?S3 endpoint: ";          read -r  "AGE_PUB?age public key: "
+   kprod -n gamemesh create secret generic gamemesh-k3s-backup \
+     --from-literal=RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ID" \
+     --from-literal=RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_KEY" \
+     --from-literal=RCLONE_CONFIG_R2_ENDPOINT="$R2_EP" \
+     --from-literal=AGE_RECIPIENT="$AGE_PUB"
+   unset R2_ID R2_KEY R2_EP AGE_PUB
+   ```
+4. **The server:** sqlite3 from Ubuntu (main), the script and the units:
+   ```bash
+   # Admin machine, in the repo
+   scp deployments/server/backup/{k3s-backup.sh,gamemesh-k3s-backup.service,gamemesh-k3s-backup.timer} gamemesh:
+   # Server, as alp, in ~
+   sudo apt-get install -y sqlite3
+   sudo install -m 755 k3s-backup.sh /usr/local/sbin/gamemesh-k3s-backup
+   sudo install -m 644 gamemesh-k3s-backup.service gamemesh-k3s-backup.timer /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now gamemesh-k3s-backup.timer
+   systemctl list-timers gamemesh-k3s-backup.timer     # NEXT: 02:30 UTC
+   ```
+   age and rclone stay off the host: Ubuntu's are built with go1.22.2 and
+   never rebuilt; the image's are CI's.
+
+Run one now, and check it:
+
+```bash
+# Server
+sudo systemctl start gamemesh-k3s-backup.service   # returns when done; non-zero if it failed
+journalctl -u gamemesh-k3s-backup.service -n 20 -o cat
+#   copied ...: <n> rows, integrity ok / received <n> bytes, sha256 as expected / uploaded r2:gamemesh-backups/k3s/...
+```
+
+Then that the private key opens it, as for the Postgres backup (the dashboard
+saves it as `k3s_k3s-<time>.db.gz.age`):
+
+```bash
+F="$HOME/Downloads/k3s_k3s-<time>.db.gz.age"
+read -rs "AGEKEY?age secret key: "; echo
+printf '%s\n' "$AGEKEY" | docker run --rm -i --mount type=bind,src="$F",dst=/b.age,readonly alpine:3.24 sh -c '
+apk add -q age sqlite >/dev/null 2>&1
+grep -io "AGE-SECRET-KEY-1[0-9A-Z]*" > /tmp/key || { echo "no AGE-SECRET-KEY in the input"; exit 1; }
+age --decrypt -i /tmp/key /b.age | gunzip > /tmp/state.db
+sqlite3 /tmp/state.db "PRAGMA integrity_check; SELECT count(*) FROM kine WHERE name LIKE '"'"'/bootstrap/%'"'"';"'
+unset AGEKEY
+```
+
+It prints `ok` and `1`. Restoring it, per k3s's documentation: on a server
+with k3s stopped, the file as `/var/lib/rancher/k3s/server/db/state.db` (no
+`-wal` or `-shm` beside it) and the saved token as
+`/var/lib/rancher/k3s/server/token`, then start k3s. Not yet tried; the
+phase 2 plan's E5 drill does it on an empty VM.
+
 ### Deploying by hand
 
 Only images CI has published are deployed, by the commit SHA they were built
