@@ -482,7 +482,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### E1. Yedekleme stratejisi kararı
 
-- [ ] **Ne:** Postgres için yöntem, uzak depo, şifreleme ve saklama süresi kararı.
+- [x] **Ne:** Postgres için yöntem, uzak depo, şifreleme ve saklama süresi kararı.
 - **Seçenekler:**
   | Yöntem | RPO | Karmaşıklık | Not |
   |---|---|---|---|
@@ -534,6 +534,29 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
     seviyesinde mi; karar (en az yetki).
 - **Bitti sayılır:** Elle tetiklenen bir job uzak depoya şifreli bir dosya bıraktı; ertesi gün
   kendiliğinden bir tane daha geldi (K1).
+
+> **Sonuç (2026-11-06, PR #112, `afc1ad9`):** CronJob `postgres-backup` prod'da, kararlar
+> E1'deki gibi. Kurulumu admin yaptı: R2 bucket'ı (lock: önek yok, 30 gün; lifecycle:
+> `postgres/` öneki, 90 gün; boş önek R2'nin varsayılan multipart-abort kuralında), Secret
+> `gamemesh-backup` (4 anahtar, biçimleri doğrulandı, değerler basılmadı), `ci-deployer`
+> (`auth can-i`: `patch cronjobs` yes; `create jobs`, `delete cronjobs`, `get secrets` no).
+>
+> - **Elle tetiklenen ilk job:** 11 sn; 10.836 bayt, `postgres/gamemesh-2026-11-06T185109Z.dump.age`;
+>   yüklenen boyut gönderilenle aynı.
+> - **Şifreli mi:** cluster içinden aynı imaj ve token'la: dosya `age-encryption.org/v1` ile
+>   başlıyor; tablo adları, `CREATE TABLE` ve pg_dump'ın `PGDMP` imzası için 0 eşleşme.
+> - **Kilit:** aynı token'la bir deneme dosyasını silmek ve yedeğin üzerine yazmak →
+>   `409 ObjectLockedByBucketPolicy`, ikisi de exit 1; yedek değişmedi. Deneme dosyası
+>   (`postgres/lock-test-20261106T185159Z.txt`, 10 bayt) lifecycle'la 90 günde gidiyor.
+> - **Anahtar çifti:** admin'in özel anahtarı yedeği açtı: `pg_restore --list` →
+>   `dbname: gamemesh`, 17 TOC girdisi, üç tablo ve verileri (Postgres ve pg_dump 16.15).
+> - **Runbook'a giren dersler:** dashboard nesneyi `postgres_` önekiyle indiriyor;
+>   `age-keygen`'in `Public key:` satırı `#` olmadan anahtar dosyasında hata veriyor; komutu
+>   kopyalamak panodaki anahtarın yerine geçiyor (anahtar `read -s` ile); Docker'ın `-v`'si
+>   olmayan bir dosya yerine boş dizin bağlıyor (`--mount` kullanıldı).
+>
+> Kalan: ilk iki kendiliğinden koşu (2026-11-07 ve 11-08 02:15 UTC); K1'in "ardışık 3 gün"ü
+> 2026-11-08'de tamamlanıyor, kutu o zaman işaretlenir.
 
 ### E3. k3s durumunun yedeği (#80)
 
