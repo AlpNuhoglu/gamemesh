@@ -604,6 +604,26 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 >   yakalandı); bootstrap kaydı silinmiş → "no bootstrap data"; S3 kapalı → rclone 3 deneme,
 >   ~11 dk. Her negatif testin yanında aynı düzende sağlam bir kopya: exit 0.
 > - Timer: VM İstanbul saatindeyken bir sonraki koşu `05:30 +03` = 02:30 UTC.
+>
+> **Sonuç (2026-11-07, PR #115, `fdb79b0`):** admin kurdu: `k3s/` lifecycle 31 gün, ikinci
+> R2 token'ı, server token'ı parola yöneticisinde ve çevrimdışı, Secret `gamemesh-k3s-backup`
+> (4 anahtar, biçimleri doğru; age açık anahtarı ve endpoint E2'ninkiyle aynı, token farklı),
+> sunucuda sqlite3 + script + timer (NEXT `2026-11-08 02:30:00 UTC`).
+>
+> - **Elle iki koşu** (14:22, 14:53 UTC): ikincisi 1878 satır, `integrity ok`; 4.472.650 bayt
+>   sıkıştırılmış, pod'a aynısı ulaştı (`sha256 as expected`); 4.473.938 bayt şifreli, R2'deki
+>   boyutla aynı; 1,5 sn CPU.
+> - **R2'de, cluster içinden yeni token'la:** iki obje `k3s/` altında; en yenisi
+>   `age-encryption.org/v1` ile başlıyor, `SQLite format 3`, `CREATE TABLE kine`, `/registry/`
+>   için 0 eşleşme; eskisini silmek → `409 ObjectLockedByBucketPolicy`, iki obje de yerinde.
+> - **Anahtar çifti:** admin'in özel anahtarı açtı: `integrity_check` → `ok`, bootstrap → `1`.
+> - **Runbook'a giren dersler:** iki makinenin komutları tek blokta kopyalanınca sunucuda
+>   `pbcopy` ve `ssh gamemesh` çalıştırıldı (zararsız; `cat` çalışmadı); `scp` ev dizininde
+>   çalıştırıldı (yollar repoya göre); `journalctl` `sudo`suz boş görünüyor; `systemctl`'in
+>   sayfalayıcısı yapıştırılan bloğun kalanını tuş olarak yuttu (`s` ekranı bir dosyaya
+>   kaydetti). Her makineye ayrı blok, `sudo journalctl`, `--no-pager`.
+>
+> Kalan: ilk kendiliğinden koşu (2026-11-08 02:30 UTC). Geri yükleme (K4) E5'te; kutu o zaman.
 
 ### E4. Yedek izleme
 
