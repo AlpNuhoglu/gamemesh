@@ -1,0 +1,14 @@
+# Every night at 02:30 UTC (phase 2, E3): after the Postgres backup (02:15),
+# before the 03:30 window in which the server reboots after updates. Install
+# as /etc/systemd/system/gamemesh-k3s-backup.timer, then
+# `systemctl enable --now gamemesh-k3s-backup.timer`.
+[Unit]
+Description=Back up the k3s datastore every night (GameMesh)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+# A night the server was down runs at the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

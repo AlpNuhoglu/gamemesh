@@ -1,0 +1,41 @@
+# The k3s datastore's backup (phase 2, E3); started by
+# gamemesh-k3s-backup.timer. Install as
+# /etc/systemd/system/gamemesh-k3s-backup.service.
+#
+# Root, because the datastore and the admin kubeconfig are root's (it reads
+# them as their owner); narrowed by the sandbox below, which leaves it no
+# capability and a read-only file system but for its own directory. Tried
+# on Ubuntu 24.04 with k3s v1.35.9.
+[Unit]
+Description=Back up the k3s datastore to R2 (GameMesh)
+Requires=k3s.service
+After=k3s.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gamemesh-k3s-backup
+StateDirectory=gamemesh-k3s-backup
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=15min
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
