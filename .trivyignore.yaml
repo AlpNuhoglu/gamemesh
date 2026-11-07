@@ -215,6 +215,24 @@ vulnerabilities:
       connection to fetch a key set; the status page routes only the shared
       dashboard's paths. Reasoned from configuration, not exercised.
     expired_at: 2026-11-24
+  - id: CVE-2026-78661
+    paths: ["usr/share/grafana/bin/grafana"]
+    statement: >-
+      golang.org/x/net 0.60.0 (fixed in 0.62.0; GO-2026-6860): quadratic time
+      coalescing text nodes in x/net/html. Grafana compiles the package in,
+      but not the vulnerable functions: govulncheck -mode=binary lists it at
+      package level only, not among the symbols present. No newer 12.4 yet.
+    expired_at: 2026-11-24
+  # Prometheus 3.15.1 (phase 2, G4). 3.16.0 has the same finding (x/net
+  # 0.61.0), so upgrading does not clear it.
+  - id: CVE-2026-78661
+    paths: ["usr/bin/prometheus", "usr/bin/promtool"]
+    statement: >-
+      golang.org/x/net 0.60.0 (fixed in 0.62.0; GO-2026-6860), in x/net/html.
+      Neither binary contains the package: no x/net/html symbol in them, and
+      govulncheck -mode=binary lists the module only. Expires after the next
+      minor release, due about 2026-12-16.
+    expired_at: 2026-12-16
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.
 misconfigurations:
