@@ -520,7 +520,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### E2. Postgres yedek CronJob'u
 
-- [ ] **Ne:** `gamemesh` namespace'inde günlük bir CronJob: `pg_dump --format=custom` →
+- [x] **Ne:** `gamemesh` namespace'inde günlük bir CronJob: `pg_dump --format=custom` →
   `age` ile şifrele → uzak depoya yükle → başarıda dead man's switch'e ping (F2).
 - **Nasıl (taslak):**
   - Postgres'le **aynı sürümde** bir imaj (`postgres:16.x-alpine`, digest ile) ve yükleme
@@ -555,8 +555,9 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 >   kopyalamak panodaki anahtarın yerine geçiyor (anahtar `read -s` ile); Docker'ın `-v`'si
 >   olmayan bir dosya yerine boş dizin bağlıyor (`--mount` kullanıldı).
 >
-> Kalan: ilk iki kendiliğinden koşu (2026-11-07 ve 11-08 02:15 UTC); K1'in "ardışık 3 gün"ü
-> 2026-11-08'de tamamlanıyor, kutu o zaman işaretlenir.
+> **K1: bitti (2026-11-08).** İki kendiliğinden koşu: `gamemesh-2026-11-07T021500Z.dump.age` ve
+> `gamemesh-2026-11-08T021502Z.dump.age`, ikisi de 10.836 bayt; elle tetiklenen 11-06'dakiyle
+> `postgres/` altında ardışık üç gün (cluster içinden aynı imaj ve token'la listelendi).
 
 ### E3. k3s durumunun yedeği (#80)
 
