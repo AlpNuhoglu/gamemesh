@@ -154,10 +154,12 @@ In this order; each step is described in the sections below.
 5. **Admin kubeconfig** on the admin's machine ("k3s").
 6. **The Secrets** `gamemesh-secrets` ("Production secrets") and
    `gamemesh-backup` ("Backups"). New random values mean a new, empty
-   database; to keep the data, restore the latest backup ("Backups").
+   database. To keep the data, restore the latest backups instead ("Restoring
+   after losing the server"): the Secrets come back with the cluster's state.
 7. **GitHub environment `production`:** update `K8S_HOST` (the new tailnet
-   address) and `K8S_CA_DATA` (the new cluster's CA); the Tailscale secrets
-   stay. Run `Actions -> cluster-access`.
+   address) and `K8S_CA_DATA` (the new cluster's CA; after a restore the CA is
+   the old one, so it should not change); the Tailscale secrets stay. Run
+   `Actions -> cluster-access`.
 8. **DNS.** Point `api.gamemesh.app` and `status.gamemesh.app` (A records, DNS
    only) at the new public address.
 9. **Deploy.** `Actions -> deploy` with the latest commit of `main` (or push).
@@ -506,16 +508,9 @@ It lists the archive (`dbname: gamemesh`, the tables `players`,
 given a path that does not exist, `-v` mounts a new empty directory there
 instead of failing.
 
-Restore one (into an empty database; the full drill is in the phase 2 plan, E5):
-
-```bash
-# Admin machine: the object from R2 (dashboard, or rclone with the same token), then
-age --decrypt -i <the private key file> gamemesh-<time>.dump.age > gamemesh.dump
-pg_restore --no-owner --no-privileges -d <empty database> gamemesh.dump
-```
-
-Restoring over the live database is a decision to take with the application
-stopped; the drill comes first.
+Restoring one onto a new server, with the cluster's state, is "Restoring after
+losing the server" below. Restoring over the live database is a decision to
+take with the application stopped, and has not been tried.
 
 #### The cluster's own state
 
@@ -615,11 +610,136 @@ sqlite3 /tmp/state.db "PRAGMA integrity_check; SELECT count(*) FROM kine WHERE n
 unset AGEKEY
 ```
 
-It prints `ok` and `1`. Restoring it, per k3s's documentation: on a server
-with k3s stopped, the file as `/var/lib/rancher/k3s/server/db/state.db` (no
-`-wal` or `-shm` beside it) and the saved token as
-`/var/lib/rancher/k3s/server/token`, then start k3s. Not yet tried; the
-phase 2 plan's E5 drill does it on an empty VM.
+It prints `ok` and `1`. Restoring it is the next section.
+
+#### Restoring after losing the server
+
+**What this assumes:** the server is gone, but the R2 bucket, the age private
+key and the server token are intact. Without any one of the three, this
+restores nothing: the bucket holds the only copies, the key opens them, and
+the token opens the datastore's CA keys and the Secrets' encryption key.
+Rehearsed on an empty VM in the phase 2 plan's E5 (2026-11-08): the cluster,
+its Secrets and the players came back, less what is listed at the end.
+
+First the rebuild's steps 1-3 ("Rebuilding the server from nothing"): the VPS
+with the hostname `gamemesh-prod-1`, the host, Tailscale. The hostname matters:
+k3s names the node after it, and the restored pods and volumes belong to that
+node. Then, in place of steps 4 and 6:
+
+1. **k3s, installed but not started**, with its files and every cluster-level
+   manifest in place as in "k3s" and "Cluster-level manifests" (the issuers'
+   CRDs come back with the datastore, so their files can go in at once). The
+   first start runs without the agent: the API server alone, no pod.
+   ```bash
+   # Server, as alp: the installer as in "k3s", but
+   sudo INSTALL_K3S_VERSION='v1.35.9+k3s1' INSTALL_K3S_SKIP_START=true sh /tmp/k3s-install.sh
+   sudo install -d -m 755 /etc/rancher/k3s/config.yaml.d
+   echo 'disable-agent: true' | sudo tee /etc/rancher/k3s/config.yaml.d/90-restore.yaml >/dev/null
+   sudo apt-get install -y sqlite3
+   ```
+   `disable-agent` is an experimental flag that `k3s server --help` does not
+   list; v1.35.9 accepts it.
+2. **The backups and the token**, from the admin's machine. Download the
+   newest `postgres/` and `k3s/` objects from the dashboard, then decrypt them
+   there and stream them over ssh: the private key never reaches the server
+   and no decrypted copy lands on the admin's disk. Paste the block, then the
+   key at its prompt, then the token at its prompt:
+   ```bash
+   # Admin machine, in ~/Downloads
+   read -rs "AGEKEY?age secret key: "; echo
+   for f in k3s_k3s-<time>.db.gz.age postgres_gamemesh-<time>.dump.age; do
+     printf '%s\n' "$AGEKEY" | docker run --rm -i --mount type=bind,src="$PWD/$f",dst=/b.age,readonly alpine:3.24 sh -c '
+       apk add -q age >/dev/null 2>&1
+       grep -io "AGE-SECRET-KEY-1[0-9A-Z]*" > /tmp/key || { echo "no AGE-SECRET-KEY in the input" >&2; exit 1; }
+       age --decrypt -i /tmp/key /b.age' | ssh gamemesh "umask 077; mkdir -p ~/restore && cat > ~/restore/${f%.age}" && echo "$f: ok"
+   done
+   unset AGEKEY
+   read -rs "K3STOKEN?server token: "; echo
+   printf '%s\n' "$K3STOKEN" | ssh gamemesh 'umask 077; cat > ~/restore/token' && echo "token: ok"
+   unset K3STOKEN
+   ```
+   The drill streamed into the VM's root directly (its user needed no sudo
+   password); into alp's home, as here, is the same pipe without the sudo.
+3. **Check what arrived** before using it. A transfer can be cut short
+   without an error: in the drill, `multipass exec` stopped a 4.5 MB stream at
+   2 MB and exited 0; ssh delivered it whole.
+   ```bash
+   # Server, in ~/restore
+   gzip -t k3s_k3s-<time>.db.gz && gunzip -c k3s_k3s-<time>.db.gz > state.db
+   sqlite3 state.db "PRAGMA integrity_check; SELECT count(*) FROM kine WHERE name LIKE '/bootstrap/%';"   # ok, 1
+   head -c 5 postgres_gamemesh-<time>.dump; echo                                                          # PGDMP
+   ```
+4. **The datastore and the token, then the API server:**
+   ```bash
+   D=/var/lib/rancher/k3s/server
+   sudo install -d -m 700 $D/db
+   sudo install -m 600 state.db $D/db/state.db
+   sudo install -m 600 token $D/token
+   sudo systemctl start k3s
+   sudo k3s secrets-encrypt status            # Enabled; All hashes match
+   sudo k3s kubectl -n gamemesh get secret gamemesh-secrets
+   ```
+   A wrong token stops k3s with `bootstrap data already found and encrypted
+   with different token`, and that failed start still changes the copy (in the
+   drill: a new hash, an 11 MB `-wal`, and new `tls/`, `cred/`, `etc/`). Before
+   trying again: `sudo systemctl stop k3s`, remove `$D/db`, `$D/tls`, `$D/cred`,
+   `$D/etc` and `$D/token`, and install a fresh `state.db`.
+   The API now shows the old server's pods as Running; none is.
+5. **Hold the application, and give the volumes their directories.** The
+   player service creates the tables when it starts (AutoMigrate), and empty
+   tables would stop the dump. The volumes come back as objects whose
+   directories are not on the new disk; without them their pods wait in
+   ContainerCreating (`path ... does not exist`). The force delete removes the
+   old server's pod records, which the kubelet would otherwise start. (In the
+   drill the directories came after the agent's start, to pods already
+   waiting; here they come first.)
+   ```bash
+   k=(sudo k3s kubectl)
+   app=(gateway leaderboard matchmaking outbox-relay player presence websocket)
+   "${k[@]}" -n gamemesh scale deploy "${app[@]}" --replicas=0
+   for d in "${app[@]}"; do "${k[@]}" -n gamemesh delete pods -l app=$d --force --grace-period=0; done
+   for p in $("${k[@]}" get pv -o jsonpath='{.items[*].spec.local.path}'); do sudo mkdir -m 0777 -p "$p"; done
+   ```
+6. **The agent, then the database, then the application** (the same shell
+   as step 5, for `k` and `app`):
+   ```bash
+   sudo rm /etc/rancher/k3s/config.yaml.d/90-restore.yaml
+   sudo systemctl restart k3s
+   until "${k[@]}" -n gamemesh exec deploy/postgres -- pg_isready -q; do sleep 5; done
+   "${k[@]}" -n gamemesh exec -i deploy/postgres -- sh -c \
+     'pg_restore --no-owner --no-privileges --exit-on-error -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+     < postgres_gamemesh-<time>.dump
+   "${k[@]}" -n gamemesh scale deploy "${app[@]}" --replicas=1
+   "${k[@]}" -n gamemesh rollout status deploy --timeout=300s
+   shred -u ~/restore/*; rmdir ~/restore
+   ```
+7. **The rest of the rebuild:** steps 5 and 7-9 (kubeconfig, GitHub, DNS,
+   deploy), and the k3s backup's units on the host ("The cluster's own
+   state", step 4).
+
+A rehearsal (a VM without the public name) restores production's issuers and
+backup credentials with everything else. There, leave the issuer files out,
+and in step 5 also stop what would reach out:
+`"${k[@]}" -n gamemesh patch cronjob postgres-backup -p '{"spec":{"suspend":true}}'`
+and `"${k[@]}" -n cert-manager scale deploy --all --replicas=0`. k3s does not
+delete the restored issuers for their missing files.
+
+**What does not come back:**
+
+- **Sessions.** Redis and NATS start empty, so every player logs in again: a
+  token the old server issued still has a valid signature but is refused
+  (`token revoked`). Presence and the leaderboard start empty too.
+- **Metrics.** Prometheus's and Grafana's volumes start empty; Grafana's
+  dashboards come from the repo.
+- **The last hours.** Whatever was written after the backups: up to a day
+  (Postgres at 02:15, k3s at 02:30 UTC).
+
+**How long it took:** 38 minutes from the start of the download to a working
+login, about 25 of them spent on the two problems above (the cut transfer,
+the volumes' directories). The steps themselves: download and decrypt about 4
+minutes, the API server 7 s, the dump 1 s, the application 23 s; Postgres was
+ready 74 s after its directory existed. The VPS, DNS and GitHub are not in
+that figure.
 
 ### Deploying by hand
 
