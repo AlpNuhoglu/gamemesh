@@ -561,7 +561,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### E3. k3s durumunun yedeği (#80)
 
-- [ ] **Ne:** k3s datastore'u (SQLite) ve `server/cred/` + `server/token` için yedek; ikisi
+- [x] **Ne:** k3s datastore'u (SQLite) ve `server/cred/` + `server/token` için yedek; ikisi
   **ayrı** yerlerde.
 - **Neden:** Datastore'da bütün Kubernetes nesneleri var (Secret'lar şifreli); anahtar
   `cred/`'de. İkisi birlikte sızarsa bütün Secret'lar açılır. Ayrıca bu yedek olmadan bir
@@ -624,7 +624,8 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 >   sayfalayıcısı yapıştırılan bloğun kalanını tuş olarak yuttu (`s` ekranı bir dosyaya
 >   kaydetti). Her makineye ayrı blok, `sudo journalctl`, `--no-pager`.
 >
-> Kalan: ilk kendiliğinden koşu (2026-11-08 02:30 UTC). Geri yükleme (K4) E5'te; kutu o zaman.
+> **Kapandı (2026-11-08):** ilk kendiliğinden koşu 02:30:10'da
+> (`k3s-2026-11-08T023007Z.db.gz.age`, 4.440.115 bayt); geri yükleme E5'te denendi, K4 kanıtlandı.
 
 ### E4. Yedek izleme
 
@@ -633,12 +634,80 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### E5. Geri yükleme tatbikatı
 
-- [ ] **Ne:** Boş bir Ubuntu VM'de (Faz 1 D4'teki Multipass yöntemi) runbook'u izleyerek
+- [x] **Ne:** Boş bir Ubuntu VM'de (Faz 1 D4'teki Multipass yöntemi) runbook'u izleyerek
   cluster kurmak, k3s durumunu ve Postgres yedeğini geri yüklemek, geri yüklenen bir hesapla
   giriş yapmak.
 - **Ölçülecek:** RTO, RPO, adım adım süre, runbook'taki eksikler.
 - **Dikkat:** Tatbikat cluster'ına `letsencrypt-prod` kurulmaz (Faz 1 D4 bulgusu).
 - **Bitti sayılır:** K2 ve K4.
+
+> **Kararlar (2026-11-08, ikinci bir modelin incelemesinden sonra güncellendi):**
+>
+> | # | Konu | Karar | Neden |
+> |---|---|---|---|
+> | 1 | Yer | Multipass VM, Ubuntu 24.04 arm64, 2 CPU, 4 GB, 20 GB | D4'teki yöntem; prod'a dokunmuyor |
+> | 2 | Kapsam | "Rebuilding" ve "Backups"; provider firewall, Tailscale, DNS, GitHub, CI dışarıda | Yedekle ilgisi yok, gerçek kurulumda ölçüldü |
+> | 3 | Node adı | VM'de `node-name: gamemesh-prod-1` | Geri yüklenen pod'lar ve local-path PV'leri o node'a bağlı. Prod'da ad hostname'den geliyor, rebuild'in 1. adımı onu zaten veriyor |
+> | 4 | Kilit | İlk açılış agentsız (`disable-agent`, hiçbir pod çalışmıyor); CronJob `suspend`, cert-manager 0; issuer dosyaları yok | Prod'un R2 token'ı ve Let's Encrypt hesabı VM'de canlanır; kilitli bucket'a yazılan bir dosya 30 gün silinemez |
+> | 5 | Anahtarlar | age özel anahtarı sadece Mac'te, tek kullanımlık container'ın stdin'inden; çözülen veri VM'e borulanıyor; token `read -rs` ile | E3'ün ilkesi: sunucuda age yok |
+> | 6 | Hesaplar | Prod'da `e5drill` → iki yedek elle → `e5late`; parolalar `openssl rand`, ekrana basılmadı; sonra psql ile silindi | Bilinen parolayla login; `e5late` negatif test. Prod'a yazan adımları otomatik modun denetimi engelledi, admin çalıştırdı |
+> | 7 | Postgres | Uygulama 0'dayken `pg_restore --no-owner --no-privileges` | player'ın AutoMigrate'i boş tablo yaratır |
+> | 8 | K4 kanıtı | Secret başına `ns/name` + sıralı `data`'nın SHA-256'sı (16 karakter), prod'la karşılaştırma; önce yanlış token (state.db hash'i önce/sonra) | Tek toplam hash `k3s-serving` yüzünden farklı çıkar ve nedenini göstermez |
+> | 9 | K2 kanıtı | `curl --resolve` ile geri yüklenen gerçek sertifika (`notAfter` önce); `e5drill` 200, `e5late` 401; VM'in JWT'si prod'da; R2'de yeni nesne yok | Uçtan uca; son madde kilidin kanıtı |
+> | 10 | Ölçüm | RTO adım adım; RPO tasarım ve ölçülen ayrı; runbook eksikleri | |
+> | 11 | Temizlik | `multipass delete --purge` ve `multipass list`; indirilen dosyalar, parolalar, JWT, tatbikat ssh anahtarı silindi | VM'de prod'un Secret'ları vardı |
+>
+> **Sonuç (2026-11-08): K2 ve K4 kanıtlandı.**
+>
+> - **Yedekler:** `e5drill` 20:29:54'te açıldı; Postgres yedeği 20:30:23 (11.065 bayt, job 6 sn),
+>   k3s yedeği 20:30:54 (4.510.218 bayt); ikisi de çıkış durumuyla ve cluster içinden R2
+>   listesiyle (boyutlar log'la aynı). `e5late` 20:33:38'de. Felaket anı 20:40:51 (indirme).
+> - **k3s sürümü:** prod `v1.35.9+k3s1` (amd64); VM'e aynısı (arm64), binary resmi
+>   `sha256sum-arm64.txt`'yle aynı. `disable-agent` yardımda yok, parser kabul ediyor.
+> - **Aktarım:** `multipass exec` stdin'i ~2 MB'ta sessizce kesti (k3s dosyası 3,3 MB geldi; 4,5 MB
+>   rastgele veriyle 5/5 2.162.688 bayt, exit 0). Çözülmüş dosyayı kullanmadan önceki boyut ve
+>   gzip kontrolü yakaladı. ssh (tatbikata özel anahtar ve `known_hosts`) 3/3 tam (#102).
+> - **Dosyalar:** gzip 4.508.930 bayt (sunucu log'undaki `compressed:` ile aynı), `integrity_check`
+>   ok, bootstrap 1, 1.849 satır; döküm `PGDMP`; token 108 karakter, `K10…::server:…`.
+> - **Yanlış token:** k3s `level=fatal … bootstrap data already found and encrypted with different
+>   token`. Başarısız açılış kopyayı değiştirdi: sha256 `9778fd60…` → `d89dcb6c…`, 11,5 MB `-wal`,
+>   `tls/`, `cred/`, `etc/` (satır sayısı aynı); temizlenip yeni kopyayla başlandı (#103).
+> - **K4:** doğru token'la agentsız açılış 7 sn; `secrets-encrypt status` Enabled, all hashes
+>   match. 17 Secret'ın 16'sı prod'la aynı hash; farklı olan sadece `kube-system/k3s-serving`
+>   (k3s VM'in adresiyle yeniden üretti). API 20 pod'u Running gösterirken VM'de çalışan
+>   container 0 (agentsız kilit gerçekten kilit).
+> - **Diskler:** agent açılınca diskli pod'ların hepsi (Postgres, NATS, Redis, Prometheus, Grafana)
+>   `ContainerCreating`'de kaldı: local PV'lerin dizinleri yeni diskte yok (`path ... does not
+>   exist`). `mkdir -m 0777` ile dizinler oluşturulunca Postgres 74 sn'de hazır (#100).
+> - **Postgres:** `pg_restore --exit-on-error` 1 sn, exit 0 (var olan bir tablo onu durdururdu,
+>   yani veritabanı boştu). 2 oyuncu, 2 istatistik, 83 olay; `e5drill` var, `e5late` yok; en yeni
+>   oyuncu 20:29:54.778 (prod'daki `created_at` ile aynı). gorm'un şeması
+>   `fk_players_stats … ON DELETE CASCADE` (prod'daki silme bunu kullandı).
+> - **K2:** uygulama 23 sn'de 10/10 Running. `curl --resolve` ile Let's Encrypt YE2 sertifikası,
+>   `notAfter` 2027-01-19, doğrulama 0; `/health` 200 (`fdf6cbeb…`); `e5drill` login 200,
+>   `e5late` 401; `/players/me` prod'daki kaydı veriyor. VM'in imzaladığı JWT prod'da imzadan
+>   geçti ve oturum kontrolünde `token revoked` aldı; imzası bozulan token
+>   `invalid or expired token` (JWT anahtarı aynı; oturumlar Redis'te, geri gelmiyor: #101).
+> - **Kilit:** tatbikat boyunca R2'ye yeni nesne yok (cluster içinden listelendi, 21:19);
+>   VM'de CronJob `suspend`, son koşusu prod'daki 02:15; cert-manager 0 pod; yeni job yok.
+>   k3s, dosyası olmayan iki issuer'ı iki açılışta da silmedi.
+> - **RTO:** felaket anından çalışan login'e **38 dk** (20:40:51 → 21:18:54); bunun ~25 dk'sı
+>   #102 ve #100'ün araştırması. Adımlar: indirme + şifre çözme ~4 dk, API sunucusu 7 sn,
+>   döküm 1 sn, uygulama 23 sn. Düzeltilmiş runbook'la süre ölçülmedi. VPS, DNS, GitHub dahil değil.
+> - **RPO:** tasarım **24 saate kadar** (Postgres 02:15, k3s 02:30 UTC). Tatbikatta ölçülen
+>   10,5 dk (yedek 20:30:23, felaket 20:40:51) **elle tetiklenen** yedeklerin değeri.
+> - **Kaybolanlar:** oturumlar (her oyuncu yeniden giriş yapar), presence, leaderboard
+>   (Redis); NATS; Prometheus ve Grafana geçmişi.
+> - **Temizlik:** VM purge edildi (`multipass list`: yok); Mac'in `~/.ssh/known_hosts`'unda VM
+>   yok; indirilen yedekler, parolalar, JWT ve tatbikat anahtarı silindi. Rotasyon gerekmiyor: age
+>   anahtarı Mac'ten çıkmadı, token ve Secret'lar sadece silinen VM'deydi.
+> - **Prod'daki tatbikat hesapları:** admin tek transaction'da sildi: iki oyuncu (istatistikleri
+>   `ON DELETE CASCADE` ile), onlara ait iki `PUBLISHED` olay; kalan 0, `COMMIT`.
+> - **Runbook'a giren:** `docs/deployment.md`, "Restoring after losing the server": varsayımlar
+>   (bucket, anahtar ve token sağlam), agentsız ilk açılış, ssh ile aktarım ve kontrolü, yanlış
+>   token sonrası temizlik, uygulamayı 0'da tutma, PV dizinleri, tatbikat kilidi, kaybolanlar, süre.
+>   Alp'in ev dizinine aktarım (sudo'suz) ve dizinlerin agent'tan önce yaratılması tatbikattaki
+>   sıradan farklı, o haliyle çalıştırılmadı.
 
 ## Bölüm F — Dış izleme ve uyarı
 
@@ -705,3 +774,7 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 95 | CI'da bir build'in GitHub Actions cache'ine aktarımı 17 dk 40 sn takıldı (job sınırına 81 sn kala); `type=gha`'nın 10 dk varsayılan timeout'u devreye girmedi. Repo cache'i 10,17 GiB ile sınırın üstündeydi, 3,68 GiB'ı kapanmış PR'lardan | PR #95'in CI'ı | Ölçüldü (job log'u: `sending cache export 1060.2s`; aynı koşudaki diğer 6 servis 1,7–6,9 sn) | G4 (cache import/export 3 dk timeout + `ignore-error`; kapanan PR'ın cache'ini silen workflow; tek seferlik temizlik → 7,05 GB) |
 | 96 | Gateway upstream bağlantılarını eşzamanlı yükte yeniden kullanmıyor: `http.DefaultTransport` upstream başına 2 boşta bağlantı tutuyor, gerisi her yanıttan sonra kapanıp `TIME_WAIT`'e düşüyor ve yerel portlar tükeniyor; aynı varsayılan presence notifier'da | G7 (README benchmark'ının yeniden ölçümü) | Ölçüldü (yerel, leaderboard 500 VU, ~770 istek/sn: 9941 × 502, %12,7; hepsi `dial tcp …:8083: connect: cannot assign requested address`) | **Düzeltildi** (`fix/gateway-upstream-pool`): gateway'e kendi Transport'u (upstream başına 256 boşta bağlantı), notifier'a gövdeyi okuma + 64 bağlantı. Test: 1000 istek 594 → 50 bağlantı; notifier 500 → 20. Yük altında: `TIME_WAIT` 28.396 → 967 (port aralığı 28.232), hata %5,7 → %0, 782 → 3374 istek/sn |
 | 97 | İstemcinin iptal ettiği istekler (`context canceled`) gateway'de 502 olarak yanıtlanıyor ve sayılıyor: hata oranı paneli (5xx) kullanıcının vazgeçtiği istekleri sunucu hatası gösteriyor | #96'nın yeniden ölçümü | Ölçüldü (yerel, leaderboard koşusunun son dakikası: 436 × 502, 424'ü `context canceled`, 12'si `EOF`, hepsi k6 süre dolunca iptal ettiğinde) | **Düzeltildi** (`fix/gateway-upstream-pool`): iptalde 499 (nginx'in "client closed request"'i), 5xx sayılmıyor; test 502 → 499, kapalı upstream hâlâ 502 |
+| 100 | Yeni bir sunucuya geri yüklenen local-path PV'leri, dizinleri diskte olmayan nesneler olarak geliyor; diskli pod'lar `ContainerCreating`'de kalıyor (`path ... does not exist`) | E5 | Ölçüldü (tatbikat: 5 diskli pod 400 sn; dizinler `mkdir -m 0777` ile yaratılınca Postgres 74 sn'de hazır) | E5 (runbook: agent'tan önce dizinler) |
+| 101 | Geri yüklemede oturumlar kaybolur: Redis yedeklenmiyor, her oyuncu yeniden giriş yapmalı; presence ve leaderboard boş başlar | E5 | Ölçüldü (VM'in JWT'si prod'da imzadan geçti, `token revoked`) | E5, kabul edildi (runbook: "What does not come back") |
+| 102 | `multipass exec` stdin'den verilen veriyi ~2 MB'ta sessizce kesiyor, exit 0 | E5 | Ölçüldü (4,5 MB rastgele veri 5/5 2.162.688 bayt; ssh 3/3 tam) | E5 (ssh; runbook: aktarımdan sonra kontrol) |
+| 103 | Yanlış token'la başarısız bir k3s açılışı datastore kopyasını değiştiriyor | E5 | Ölçüldü (sha256 `9778fd60…` → `d89dcb6c…`, 11,5 MB `-wal`, `tls/`/`cred/`/`etc/`) | E5 (runbook: yeni kopyayla yeniden dene) |
