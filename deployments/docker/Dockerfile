@@ -18,18 +18,24 @@
 FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-# Cache mounts keep the module and build caches between builds, so a code
-# change recompiles only the packages it touches.
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+# The modules go into this layer, not into a cache mount: CI's layer cache
+# (GitHub Actions) keeps layers but not the contents of cache mounts, so with
+# a mount every CI build fetched every module again, and a proxy error failed
+# it (finding #99). The layer changes only with go.mod and go.sum; the
+# services share it.
+RUN go mod download
 COPY . .
 ARG SERVICE
 ARG TARGETOS TARGETARCH
 # The commit this image is built from; /health and traces report it.
 ARG VERSION=dev
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
+# The build cache stays a cache mount (kept between local builds, so a code
+# change recompiles only the packages it touches). GOPROXY=off: every module
+# must come from the layer above; a missing one fails the build instead of
+# being fetched.
+RUN --mount=type=cache,target=/root/.cache/go-build \
     test -n "$SERVICE" || { echo "set --build-arg SERVICE=<name of a cmd/ dir>" >&2; exit 1; }; \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    CGO_ENABLED=0 GOPROXY=off GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath \
       -ldflags="-s -w -X github.com/alpnuhoglu/gamemesh/pkg/config.version=$VERSION" \
       -o /out/service "./cmd/$SERVICE"
