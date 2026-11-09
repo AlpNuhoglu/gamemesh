@@ -133,10 +133,31 @@ jobs:
           echo "services: $list"
           echo "list=$list" >> "$GITHUB_OUTPUT"
 
+  # The Dockerfile's modules stage, built once per run into its own cache
+  # scope. Every service's build (and publish) reads that scope first, so
+  # they all use this one layer: built in each job, the same modules made
+  # eight different 200 MiB layers, 1.65 GiB of cache per go.mod change
+  # (finding #99). Runs beside lint and test, which take longer.
+  go-modules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the modules stage into the cache
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deployments/docker/Dockerfile
+          target: modules
+          push: false
+          cache-from: type=gha,scope=go-modules,timeout=3m
+          cache-to: type=gha,mode=max,scope=go-modules,timeout=3m,ignore-error=true
+
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [lint, test, services]
+    needs: [lint, test, services, go-modules]
     strategy:
       # Every service's build and scan runs to the end. With the default
       # (fail-fast: true) one failing image cancelled the jobs still running,
@@ -169,7 +190,10 @@ jobs:
           # not fail the build. One stalled for 17 min 40 s after its layers
           # were written, past the 10 min default timeout, while the six
           # other services' took 2-7 s (finding #95).
-          cache-from: type=gha,scope=${{ matrix.service }},timeout=3m
+          # go-modules first: its layer, not one of this scope's own.
+          cache-from: |
+            type=gha,scope=go-modules,timeout=3m
+            type=gha,scope=${{ matrix.service }},timeout=3m
           cache-to: type=gha,mode=max,scope=${{ matrix.service }},timeout=3m,ignore-error=true
       # The filesystem scan sees go.mod only; this one sees what ships: the
       # Alpine packages (musl, busybox, openssl) and the compiled binary.
@@ -376,7 +400,7 @@ jobs:
   # required check passes.
   ci-ok:
     if: always()
-    needs: [lint, test, integration, services, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party, manifests]
+    needs: [lint, test, integration, services, go-modules, docker, scan-deps, gitleaks, govulncheck, third-party-images, scan-third-party, manifests]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -438,7 +462,10 @@ jobs:
           push: true
           # As in the docker job: a stalled cache export must not hold up the
           # deploy (finding #95).
-          cache-from: type=gha,scope=${{ matrix.service }},timeout=3m
+          # go-modules first: its layer, not one of this scope's own.
+          cache-from: |
+            type=gha,scope=go-modules,timeout=3m
+            type=gha,scope=${{ matrix.service }},timeout=3m
           cache-to: type=gha,mode=max,scope=${{ matrix.service }},timeout=3m,ignore-error=true
 
   # Deploys this commit to production (plan D2): the images publish just

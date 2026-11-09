@@ -15,15 +15,20 @@
 # digest, so the pin holds for every target architecture. Dependabot bumps
 # tag and digest together; the golang tag also has to match go.mod's
 # toolchain line.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.24@sha256:9ce231b28998b32e116927c61aa5c406183061d4f3f2d61b292c88e7f6bdf7ca AS modules
 WORKDIR /src
 COPY go.mod go.sum ./
 # The modules go into this layer, not into a cache mount: CI's layer cache
 # (GitHub Actions) keeps layers but not the contents of cache mounts, so with
 # a mount every CI build fetched every module again, and a proxy error failed
-# it (finding #99). The layer changes only with go.mod and go.sum; the
-# services share it.
+# it (finding #99). The layer changes only with go.mod and go.sum. It is a
+# stage of its own because two builds of it differ (Go's telemetry files,
+# directory times): CI builds it once, in the go-modules job, and every
+# service's build takes that one from the cache instead of making its own
+# 200 MiB copy.
 RUN go mod download
+
+FROM modules AS build
 COPY . .
 ARG SERVICE
 ARG TARGETOS TARGETARCH
