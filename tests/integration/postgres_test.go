@@ -26,7 +26,7 @@ func startPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
 	ctx := context.Background()
 
-	pgC, err := tcpostgres.Run(ctx, "postgres:16-alpine",
+	pgC, err := tcpostgres.Run(ctx, "postgres:16.15-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab",
 		tcpostgres.WithDatabase("gamemesh_test"),
 		tcpostgres.WithUsername("test"),
 		tcpostgres.WithPassword("test"),
