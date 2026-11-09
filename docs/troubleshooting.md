@@ -83,8 +83,8 @@ Testcontainers needs a running Docker daemon. On CI use a runner with Docker
 (GitHub's `ubuntu-latest` works out of the box).
 
 **Integration tests are slow the first run**
-They pull `postgres:16-alpine` / `redis:7-alpine` once; subsequent runs reuse
-the local images.
+They pull the Postgres and Redis images production runs (the same
+tag@digest, which CI checks) once; subsequent runs reuse the local images.
 
 ## Observability
 
