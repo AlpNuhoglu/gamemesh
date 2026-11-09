@@ -790,6 +790,19 @@ reports again.
   --first-parent main` lists the merges.
 - What it does not undo: cluster-level manifests (they are not in CI's hands)
   and data. A release that changed the database schema needs its own way back.
+- **Redis 8 back to 7.4** (any commit before the move to Redis 8.8). Redis 7.4
+  reads 8.8's files only until 8.8 rewrites its append-only file: until then
+  the file's base stays in 7.4's format (`REDIS0012`). After a rewrite, which
+  8.8 does on its own once the file has grown by 64 MB, the base is
+  `REDIS0014` and 7.4 stops with `Can't handle RDB format version 14`. Redis then
+  stays down, and with it every request that checks a session. The way out is
+  to drop Redis's data, which is sessions, presence and the leaderboard
+  (every player logs in again; nothing there is backed up anyway):
+  `kprod -n gamemesh delete pvc data-redis-0 --wait=false` then
+  `kprod -n gamemesh delete pod redis-0`, and the StatefulSet starts it on a
+  new, empty volume. Measured with containers (back to 7.4 works before a
+  rewrite, fails after it, works again on an empty volume); the two `delete`
+  commands have not been tried on a cluster.
 
 ### Rotating secrets
 
