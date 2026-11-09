@@ -1,0 +1,70 @@
+# Checks the public TLS certificates once a day (phase 2, F1; K5): each must
+# verify for its name and have at least 21 days left. Better Stack's free plan
+# watches the URLs but not certificate expiry.
+#
+# The alert goes through Healthchecks.io, not GitHub: the run pings the
+# cert-check check on success and its /fail URL otherwise, and the check sends
+# the alert to ops@gamemesh.app. A run that never happens alerts too, by its
+# missing ping; GitHub turns off scheduled workflows in a repository with no
+# activity for 60 days. GitHub's own "run failed" mail would go to a personal
+# address instead.
+#
+# The ping URL is the repository secret HC_PING_CERT.
+name: cert-check
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      min_days:
+        description: Fail when a certificate has fewer days left (a large number tests the alert)
+        default: "21"
+
+permissions:
+  contents: read
+
+jobs:
+  certs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the certificates
+        id: check
+        env:
+          MIN_DAYS: ${{ inputs.min_days || '21' }}
+        run: |
+          case $MIN_DAYS in ''|*[!0-9]*) echo "::error::min_days must be a number"; exit 1 ;; esac
+          bad=0
+          for host in api.gamemesh.app status.gamemesh.app; do
+            # The chain and the name are verified; a certificate that fails
+            # either is no certificate at all to a browser.
+            if ! pem=$(openssl s_client -connect "$host:443" -servername "$host" \
+                         -verify_return_error -verify_hostname "$host" </dev/null 2>/dev/null |
+                       openssl x509 2>/dev/null); then
+              echo "::error::$host: no certificate that verifies for this name"
+              bad=1
+              continue
+            fi
+            end=$(printf '%s\n' "$pem" | openssl x509 -noout -enddate | cut -d= -f2)
+            days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+            echo "$host: $days days left (until $end, $(printf '%s\n' "$pem" | openssl x509 -noout -issuer))"
+            if [ "$days" -lt "$MIN_DAYS" ]; then
+              echo "::error::$host: $days days left, fewer than $MIN_DAYS"
+              bad=1
+            fi
+          done
+          exit $bad
+      - name: Ping the dead man's switch
+        if: always()
+        env:
+          PING_URL: ${{ secrets.HC_PING_CERT }}
+          RESULT: ${{ steps.check.outcome }}
+        run: |
+          if [ -z "$PING_URL" ]; then
+            echo "::error::the HC_PING_CERT secret is not set"
+            exit 1
+          fi
+          if [ "$RESULT" = success ]; then suffix=""; else suffix=/fail; fi
+          curl -fsS -m 10 --retry 3 -o /dev/null "$PING_URL$suffix"
+          echo "pinged: ${suffix:-success}"
