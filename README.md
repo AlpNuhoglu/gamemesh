@@ -170,7 +170,7 @@ flowchart LR
     U(("Players")) -->|"api.gamemesh.app<br/>DNSSEC, CAA: Let's Encrypt only"| FW
     subgraph VPS["VPS · Ubuntu 24.04 · 2 vCPU / 4 GB"]
         FW["Provider firewall<br/>80/443 only"] --> TR["Traefik<br/>TLS 1.2/1.3, HTTP → HTTPS"]
-        TR -->|"/health, /api"| GWp["gateway"]
+        TR -->|"/, /health, /api"| GWp["gateway"]
         TR -->|"/ws"| WSp["websocket"]
         CM["cert-manager"] -. "HTTP-01, ECDSA P-256" .-> TR
         API["Kubernetes API<br/>(tailnet only)"]
@@ -185,7 +185,7 @@ flowchart LR
 | **Host** | One netcup VPS (x86), Ubuntu 24.04 with unattended security updates and reboots only when an update needs one; SSH only over Tailscale, keys only, no root login |
 | **Network** | Provider-level firewall in front of the VM: only 80/443 (and Tailscale's WireGuard port) reach it. The Kubernetes API, the kubelet and SSH are unreachable from the internet (measured from another network) |
 | **Cluster** | k3s v1.35 (single node), Secrets encrypted at rest, flannel `host-gw` (no UDP listener), Traefik keeping the client's real address for per-client rate limiting |
-| **TLS** | cert-manager v1.21 with Let's Encrypt (staging proven first), ECDSA P-256 certificate renewed at two thirds of its life; only `/health`, `/api` and `/ws` are routed |
+| **TLS** | cert-manager v1.21 with Let's Encrypt (staging proven first), ECDSA P-256 certificate renewed at two thirds of its life; only `/`, `/health`, `/api` and `/ws` are routed |
 | **Workloads** | The prod Kustomize overlay: 10 pods, all under Pod Security `restricted` (non-root, read-only root filesystem, no capabilities, seccomp), with startup/readiness/liveness probes and graceful shutdown |
 | **Rebuild** | The whole server is reproducible from [docs/deployment.md](docs/deployment.md), verified by a rebuild drill on an empty VM |
 

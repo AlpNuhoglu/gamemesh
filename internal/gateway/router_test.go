@@ -231,6 +231,59 @@ func TestPublicHealthShowsOnlyStatusAndVersion(t *testing.T) {
 	assert.JSONEq(t, `{"status":"ok","version":"abc1234"}`, string(body))
 }
 
+// TestRootDescribesTheService: the bare address answered 404, which reads as
+// "nothing here" to someone following a link to the host (phase 2, F3).
+func TestRootDescribesTheService(t *testing.T) {
+	t.Setenv("SERVICE_VERSION", "abc1234")
+	t.Setenv("STATUS_PAGE_URL", "https://status.example.test")
+	gw, _ := newGatewayUnderTest(t, newEchoUpstream(t).URL)
+
+	resp, err := http.Get(gw.URL + "/")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"name": "GameMesh API",
+		"version": "abc1234",
+		"health": "/health",
+		"api": "/api/v1",
+		"documentation": "https://github.com/AlpNuhoglu/gamemesh/blob/main/docs/api.md",
+		"source": "https://github.com/AlpNuhoglu/gamemesh",
+		"status_page": "https://status.example.test"
+	}`, string(body))
+}
+
+// Without a status page (a local stack) the link is left out, not empty.
+func TestRootWithoutAStatusPage(t *testing.T) {
+	t.Setenv("STATUS_PAGE_URL", "")
+	gw, _ := newGatewayUnderTest(t, newEchoUpstream(t).URL)
+
+	resp, err := http.Get(gw.URL + "/")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.NotContains(t, got, "status_page")
+}
+
+// The root is one address, not a prefix: an unknown path is still a 404 and
+// reaches no upstream.
+func TestUnknownPathIsStillNotFound(t *testing.T) {
+	gw, _ := newGatewayUnderTest(t, newEchoUpstream(t).URL)
+
+	for _, path := range []string{"/nope", "/api", "/api/v1", "/index.html"} {
+		resp, err := http.Get(gw.URL + path)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, path)
+	}
+}
+
 // TestProxyReusesUpstreamConnections: with Go's default transport the proxy
 // kept 2 idle connections per upstream, so under concurrency it closed
 // almost every connection after its response and dialled a new one for the

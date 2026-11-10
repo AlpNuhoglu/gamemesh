@@ -5,7 +5,8 @@
 # The class must be traefik: under the old nginx class (from Minikube) k3s's
 # Traefik ignored this Ingress silently, no address and every request a 404.
 # Only these paths are public. The gateway also serves /livez, /readyz and
-# /metrics, which stay inside the cluster.
+# /metrics, which stay inside the cluster. The root is Exact: "/" as a
+# Prefix would route every path, those three included.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -16,6 +17,15 @@ spec:
   rules:
     - http:
         paths:
+          # The bare address: the service's name, version and links (phase 2,
+          # F3); it answered 404.
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8080
           # The public health check (status and version): curl
           # https://api.<domain>/health is what phase 1 is done on.
           - path: /health

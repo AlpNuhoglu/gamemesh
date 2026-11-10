@@ -39,7 +39,7 @@ Events. NATS, Redis and Postgres need the `local-path` StorageClass k3s ships.
 
 **Every request through Traefik returns 404**
 Send the Ingress host: `curl -H 'Host: gamemesh.localhost'
-http://127.0.0.1:18080/health`. Only `/health`, `/api` and `/ws` are routed.
+http://127.0.0.1:18080/health`. Only `/`, `/health`, `/api` and `/ws` are routed.
 An Ingress with a class other than `traefik` is ignored without an error
 (`kubectl -n gamemesh get ingress` shows no address).
 

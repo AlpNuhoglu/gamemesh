@@ -11,6 +11,22 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 )
 
+const (
+	sourceURL        = "https://github.com/AlpNuhoglu/gamemesh"
+	documentationURL = sourceURL + "/blob/main/docs/api.md"
+)
+
+// index is the body of GET /.
+type index struct {
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Health        string `json:"health"`
+	API           string `json:"api"`
+	Documentation string `json:"documentation"`
+	Source        string `json:"source"`
+	StatusPage    string `json:"status_page,omitempty"`
+}
+
 // RegisterRoutes wires every public route to its upstream service.
 // Routes are declared explicitly (no blanket wildcards) so the gateway is
 // also the authoritative, reviewable map of the public API surface.
@@ -31,6 +47,21 @@ func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager
 	// probes use /livez and /readyz, which must not be routed from outside.
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": cfg.ServiceVersion})
+	})
+
+	// The root: what this host is and where to go from here, for someone who
+	// opens the bare address (it answered 404). The same two facts /health
+	// gives, and links; nothing about dependencies or configuration.
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, index{
+			Name:          "GameMesh API",
+			Version:       cfg.ServiceVersion,
+			Health:        "/health",
+			API:           "/api/v1",
+			Documentation: documentationURL,
+			Source:        sourceURL,
+			StatusPage:    cfg.StatusPageURL,
+		})
 	})
 
 	v1 := r.Group("/api/v1")
