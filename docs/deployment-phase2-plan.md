@@ -734,7 +734,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 > | 4 | Dead man's switch | Healthchecks.io, ücretsiz plan: `postgres-backup` (02:15 UTC, pay 30 dk), `k3s-backup` (02:30 UTC, 30 dk), `cert-check` | Bu işe özel ve açık kaynak; yoklamadan ayrı sağlayıcı, biri sessizce bozulursa diğeri kalır |
 > | 5 | Ping URL'leri | Yedeklerin Secret'larında `PING_URL`, workflow için repo secret'ı `HC_PING_CERT`; repoya girmez | URL'yi bilen sahte "başarılı" ping atıp gerçek bir hatayı gizleyebilir |
 > | 6 | Hata bildirimi | Yedeklerde şimdilik sadece başarıda ping; `/fail` E4'te. `cert-check` baştan `/fail` gönderiyor | Önce en basit hali kurulup ölçüldü |
-> | 7 | Kanal | E-posta: `ops@gamemesh.app` (Cloudflare Email Routing ile bu işe ayrılmış bir posta kutusuna). GitHub'ın "run failed" e-postası kullanılmıyor | Kişisel adres hiçbir yerde yok. Karardaki mobil bildirim **kurulmadı** (açık) |
+> | 7 | Kanal | E-posta: `ops@gamemesh.app` (Cloudflare Email Routing ile bu işe ayrılmış bir posta kutusuna). GitHub'ın "run failed" e-postası kullanılmıyor | Kişisel adres hiçbir yerde yok. Karardaki mobil bildirimden vazgeçildi (kabul, 2026-11-10) |
 > | 8 | Hesaplar | Admin açtı, ikisi de `ops@` ile, ayrı TOTP 2FA; kart istenmedi | Dışarıya açık hesaplar adminin |
 > | 9 | Kanıt | K5: gateway 0 replika (onaylı). Sertifika yolu: workflow elle, büyük bir eşikle. K3: E4'te | |
 > | 10 | F3 | Şimdilik yapılmadı | İsteğe bağlı |
@@ -762,7 +762,9 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 >   73 gün, `pinged: success`. Healthchecks 08:00'de (2 saatlik pay dolunca) DOWN e-postası
 >   gönderdi: sahte alarm, ama hiç çalışmayan bir koşunun yakalandığının da kanıtı. Kontrol
 >   "her gün 06:00" yerine "günde bir, pay 12 saat" yapıldı.
-> - **Açık:** mobil bildirim; runbook'ta kurulum ve uyarıya müdahale (G9).
+> - **Kabul (2026-11-10):** kanal sadece e-posta; mobil bildirim kurulmuyor. Gece gelen bir
+>   kesinti uyarısı sabah görülür.
+> - **Açık:** runbook'ta kurulum ve uyarıya müdahale (G9).
 
 ### F2. Dead man's switch
 
