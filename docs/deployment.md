@@ -834,6 +834,86 @@ minutes, the API server 7 s, the dump 1 s, the application 23 s; Postgres was
 ready 74 s after its directory existed. The VPS, DNS and GitHub are not in
 that figure.
 
+### When an outside alert fires
+
+Prometheus and Grafana run on the server; if the server or its network goes,
+so do they. Two services outside watch it and send e-mail to
+`ops@gamemesh.app` (the ops accounts, each with its own second factor):
+
+| Service | Watches | Alerts when |
+|---|---|---|
+| Better Stack (free plan) | `https://api.gamemesh.app/health`: status 200 and `"status":"ok"` in the body | a check fails; checks every 3 minutes, no confirmation period |
+| | `https://api.gamemesh.app/api/v1/leaderboard`: status 200 | the same |
+| | `https://status.gamemesh.app/`: status 200 | the same |
+| Healthchecks.io | the two backups and the daily certificate check ("The dead man's switch") | a run reports a failure, or its ping is overdue |
+
+There is no phone notification: an alert at night is read in the morning.
+Better Stack closes an incident by itself once the address has answered for
+3 minutes, and sends a second e-mail.
+
+Measured on 2026-11-10 with the gateway scaled to 0 for 40 seconds: the
+e-mails for `/health` and the leaderboard route left 13 and 41 seconds after
+the scale command, the "resolved" e-mails about 3.5 minutes after the first
+good answer, and the status page stayed up. The interval is what is
+promised: an outage shorter than 3 minutes can pass unseen.
+
+**`/health` or the leaderboard route is down.** Ask from outside first; the
+answer says where to look:
+
+```bash
+curl -si https://api.gamemesh.app/health | head -12
+```
+
+- **`503` with `no available server`:** Traefik is up and has no gateway pod
+  to send to.
+  ```bash
+  kprod -n gamemesh get deploy/gateway
+  kprod -n gamemesh get pods -l app=gateway
+  kprod -n gamemesh describe pods -l app=gateway      # the events at the end
+  kprod -n gamemesh logs deploy/gateway --tail=50
+  ```
+  A deployment at `0/0` was scaled down (`kprod -n gamemesh scale
+  deploy/gateway --replicas=1`); a pod that does not become ready is "A pod
+  does not come up" under "Troubleshooting"; a release that broke it is
+  "Rolling back".
+- **Only the leaderboard route fails** and `/health` answers: the gateway is
+  fine and what it calls is not. `kprod -n gamemesh get pods`, then the
+  leaderboard pod's log.
+- **No answer at all, or a timeout:** the node or its network. `ssh` over the
+  tailnet, then `sudo systemctl status k3s` and `kprod get nodes`; if `ssh`
+  does not answer either, the provider's console. A server that is gone is
+  "Rebuilding the server from nothing" and "Restoring after losing the
+  server".
+- **A certificate error:** "The certificate is not renewed" under
+  "Troubleshooting".
+
+**The status page is down** and the API is not: Grafana.
+`kprod -n monitoring get pods`, then "Status page".
+
+**`cert-check` is down.** The e-mail says which kind:
+
+- **"received a failure signal":** a certificate has fewer than 21 days left
+  or does not verify for its name. The run's log names the host and the days:
+  ```bash
+  gh run list --workflow cert-check.yml --limit 3
+  gh run view <run id> --log | grep -E 'days left|no certificate|pinged'
+  ```
+  Then "The certificate is not renewed".
+- **the ping is overdue:** the workflow did not run for a day and a half.
+  GitHub turns off scheduled workflows after 60 days without activity in the
+  repository; `gh workflow list` shows it, `gh workflow enable
+  cert-check.yml` turns it on again, and `gh workflow run cert-check.yml`
+  runs it now. Its runs start hours after 06:00 UTC; that alone is not a
+  failure.
+
+**A backup's check is down:** "The dead man's switch" under "Backups".
+
+Setting the monitors up again, on a new account: the three addresses above,
+for `/health` the "keyword" type with `"status":"ok"`, the others "status
+200"; frequency 3 minutes, confirmation "immediate start", recovery 3
+minutes; e-mail to `ops@gamemesh.app`. Certificate expiry is a paid feature
+there, which is why `cert-check` exists.
+
 ### Deploying by hand
 
 Only images CI has published are deployed, by the commit SHA they were built
@@ -987,7 +1067,8 @@ kprod -n gamemesh get endpointslices          # which pods a Service sends traff
   `describe`); 143 is SIGTERM; 1 is the program's own error.
 
 **The certificate is not renewed.** cert-manager renews 30 days before expiry
-(at two thirds of 90 days); nothing alerts before it expires (finding #85).
+(at two thirds of 90 days); the daily `cert-check` workflow alerts when fewer
+than 21 days are left ("When an outside alert fires").
 
 ```bash
 kprod -n gamemesh get certificate,certificaterequest,order,challenge

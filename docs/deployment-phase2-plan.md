@@ -464,7 +464,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### G9. Runbook ve README roadmap
 
-- [ ] **Ne:**
+- [x] **Ne:**
   - `docs/deployment.md`: "Restoring from backup", "Monitoring access", "Status page",
     "When an outside alert fires" (F1, F2).
   - README: "Roadmap" bölümü (danışman: koda değil): Alertmanager ve alarm kuralları (Faz 3),
@@ -477,6 +477,20 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 > henüz yapılmamış yedek ve dış izleme "devam ediyor" olarak). `docs/deployment.md`'de "Monitoring" ve
 > "Status page" bölümleri G4–G6'da yazıldı; "Restoring from backup" ve "When an outside alert fires"
 > E ve F'yle birlikte gelecek, kutu onlarla işaretlenecek.
+
+> **Sonuç (2026-11-10): K9 bitti.** Runbook'un yeni bölümleri ve dayandıkları tatbikat:
+>
+> | Bölüm (`docs/deployment.md`) | Nasıl denendi |
+> |---|---|
+> | "Backups", "The cluster's own state" | E2, E3: kurulum ve elle koşular; K1 |
+> | "Restoring after losing the server" | E5: boş VM'de geri yükleme (K2, K4); runbook'a giren düzeltmeler orada |
+> | "The dead man's switch", "Trying the alert" | E4: iki yedek prod'da bilerek bozuldu (K3) |
+> | "When an outside alert fires" | F1: gateway 0 replika (K5); teşhis komutları (`curl`, `kprod get`, `gh run view`) prod'da çalıştırıldı. `cert-check`'in "ping gecikti" kolundaki `gh workflow enable` denenmedi (workflow hiç kapanmadı) |
+> | "Monitoring", "Status page" | G4–G6 |
+>
+> README: "Highlights"a yedekler (geri yükleme 38 dk) ve dış uyarılar (13 sn; bozuk yedek < 10 sn)
+> eklendi; "Roadmap"teki "devam ediyor" paragrafı kalktı, yerine yapılmayan kaldı: telefon
+> bildirimi ve nöbet, 3 dakikadan sık yoklama.
 
 ## Bölüm E — Veri dayanıklılığı
 
