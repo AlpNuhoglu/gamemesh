@@ -56,6 +56,8 @@ not come up.
 |---|---|
 | **Live in production** | Single-node k3s on a VPS, behind Traefik with a Let's Encrypt certificate managed by cert-manager: [`api.gamemesh.app`](https://api.gamemesh.app/health) |
 | **Public status page** | [`status.gamemesh.app`](https://status.gamemesh.app): request rate, p95/p99 latency, 5xx rate and open WebSocket connections, live from Prometheus; read-only, no login. Only the page's own paths reach Grafana, and an admission policy keeps it that way |
+| **Backups, restored for real** | Postgres and k3s's own state, encrypted for a key that is not on the server, sent off it every night to a bucket that keeps each object undeletable for 30 days. Restored into an empty VM following the runbook: **38 min** from disaster to a working login |
+| **Alerts from outside** | Probes of the API and the status page, a daily certificate check and a dead man's switch on the backups, all outside the server. Tested by breaking things: the gateway scaled to 0 alerted in **13 s**, a backup broken on purpose in under **10 s** |
 | **Continuous deployment** | Merge to live in **6 min 46 s** (measured); **3,494 / 3,494** public requests answered 200 during the rollout |
 | **Self-healing releases** | A deliberately broken release was merged to test it: the rollout hit its deadline, the previous commit was redeployed with its own manifests, the old pod never restarted |
 | **No standing credentials in CI** | GitHub Actions reaches the cluster over Tailscale with short-lived OIDC tokens only — no kubeconfig, no service-account token, no VPN key stored anywhere |
@@ -480,11 +482,9 @@ docs/           architecture, API, operations
 
 Deliberately not built yet; none of it is in the code.
 
-**Before real users (in progress, deployment phase 2):** daily encrypted
-Postgres backups kept off the server, with a restore drill; a backup of k3s's
-own state, kept apart from its encryption key; an outside check of the API, the
-status page and the certificate's expiry, alerting by email and phone, and a
-dead man's switch on the backups.
+**Alerts that wake someone:** outside alerts go by e-mail only; a phone
+notification or an on-call rotation is not set up. The outside probes run
+every 3 minutes (the free plan), so a shorter outage can pass unseen.
 
 **Monitoring, beyond phase 2's scope:**
 - **Alerting** (phase 3): Alertmanager with rules for pods not ready or crash
