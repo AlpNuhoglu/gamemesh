@@ -222,6 +222,16 @@ jobs:
       # The same build with no cache at all: the modules come from the Go
       # proxy and everything is compiled again. A build that failed for a
       # reason of its own fails here a second time, and the job with it.
+      # In a builder of its own: the stopped step's build keeps running in
+      # the first one, and a second build there joins it and waits for the
+      # same download (seen with a 1-minute limit: every step came back
+      # CACHED, the compile "DONE 66.4s" 14 s into the step).
+      - name: Stop the first build
+        if: steps.build.outcome != 'success'
+        run: pkill -f 'buildx build' || true
+      - name: Set up a second builder
+        if: steps.build.outcome != 'success'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build image without the cache
         if: steps.build.outcome != 'success'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -511,6 +521,13 @@ jobs:
             type=gha,scope=go-modules,timeout=3m
             type=gha,scope=${{ matrix.service }},timeout=3m
           cache-to: type=gha,mode=max,scope=${{ matrix.service }},timeout=3m,ignore-error=true
+      # In a builder of its own, as in the docker job.
+      - name: Stop the first build
+        if: steps.build.outcome != 'success'
+        run: pkill -f 'buildx build' || true
+      - name: Set up a second builder
+        if: steps.build.outcome != 'success'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build and push image without the cache
         if: steps.build.outcome != 'success'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
