@@ -12,10 +12,33 @@
 # gets ".age" appended.
 #
 # Environment: AGE_RECIPIENT, BACKUP_DEST, RCLONE_CONFIG_R2_*, PING_URL
-# (optional), as for backup.sh; EXPECTED_SHA256, when set, must match what
-# arrived, so a copy cut short on its way is not uploaded.
+# (optional; pinged on success, its /fail address on failure), as for
+# backup.sh; EXPECTED_SHA256, when set, must match what arrived, so a copy
+# cut short on its way is not uploaded.
 set -eu
 set -o pipefail
+
+# The dead man's switch hears how the run ended (phase 2, E4): a plain ping
+# on success, /fail on any other exit, so "ran and failed" and "never ran"
+# are different alerts. Nothing about the failure is sent; the reason is in
+# this log. A ping that cannot be sent leaves the run's own result as it is.
+report() {
+  status=$?
+  trap - EXIT
+  if [ -n "${PING_URL:-}" ]; then
+    if [ "$status" -eq 0 ]; then
+      wget -q -T 10 -O /dev/null "$PING_URL" && echo "pinged the dead man's switch" ||
+        echo "could not ping the dead man's switch" >&2
+    else
+      wget -q -T 10 -O /dev/null "$PING_URL/fail" &&
+        echo "reported the failure to the dead man's switch" >&2 ||
+        echo "could not report the failure to the dead man's switch" >&2
+    fi
+  fi
+  exit "$status"
+}
+trap report EXIT
+
 : "${AGE_RECIPIENT:?}" "${BACKUP_DEST:?}"
 [ $# -eq 2 ] || { echo "usage: upload <file|-> <object name>" >&2; exit 2; }
 in=$1
@@ -53,8 +76,3 @@ if [ "$remote" != "$size" ]; then
   exit 1
 fi
 echo "uploaded $BACKUP_DEST/$name"
-
-if [ -n "${PING_URL:-}" ]; then
-  wget -q -T 10 -O /dev/null "$PING_URL" && echo "pinged the dead man's switch" ||
-    echo "could not ping the dead man's switch" >&2
-fi
