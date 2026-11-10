@@ -191,7 +191,7 @@ jobs:
         # (finding #105). Past 6 minutes (the slowest build of 30 runs took
         # 138 s) the step is stopped and the next one builds without the
         # cache.
-        timeout-minutes: 6
+        timeout-minutes: 1
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -485,7 +485,7 @@ jobs:
         id: build
         # Bounded as in the docker job, so a slow cache does not hold up the
         # deploy (finding #105).
-        timeout-minutes: 6
+        timeout-minutes: 1
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
