@@ -832,10 +832,23 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### F3. Kök adres (isteğe bağlı)
 
-- [ ] **Ne:** `api.gamemesh.app/` bugün 404; CV'deki link bu yüzden `/health`. İsteğe bağlı:
+- [x] **Ne:** `api.gamemesh.app/` bugün 404; CV'deki link bu yüzden `/health`. İsteğe bağlı:
   kökte küçük bir karşılama cevabı (ad, durum, sürüm, repo ve durum sayfası linki) ya da
   `status.gamemesh.app`'e yönlendirme; Ingress'e `/` için `Exact` path (admission policy aynı
   host'a izin veriyor).
+
+> **Kararlar (2026-11-10; "404 dönmesin", seçim uygulayana bırakıldı):**
+>
+> | # | Konu | Karar | Neden |
+> |---|---|---|---|
+> | 1 | Karşılama mı, yönlendirme mi | Kökte küçük bir JSON cevabı (servis dizini) | Bir API'nin kökünde beklenen bu; `curl` ile gelen de tarayıcıyla gelen de anlamlı bir cevap alır. Yönlendirme API'yi başka bir host'a bağlardı |
+> | 2 | İçerik | Ad, sürüm, `/health`, `/api/v1`, API dokümanı, repo, durum sayfası | `/health`'in verdiğinden fazla iç bilgi yok |
+> | 3 | Durum sayfası linki | `STATUS_PAGE_URL`'den, sadece prod overlay'inde; boşsa alan çıkmıyor | Yerel kurulumda durum sayfası yok |
+> | 4 | Ingress | `/` için `Exact` | `Prefix` bütün yolları, `/metrics`, `/livez`, `/readyz` dahil, dışarı açardı |
+>
+> **Yerelde (k3d, Traefik üzerinden):** `/` 404 → 200 (sorgu dizgisiyle de); `/metrics`,
+> `/livez`, `/readyz`, `/healthz`, `/nope`, `/index.html`, `/api` 404 kaldı; başka host'la `/`,
+> `POST /` ve `HEAD /` 404; `/health` ve leaderboard 200. Prod sonucu deploy'dan sonra.
 
 ## Bölüm H — Tarihli bakım (Faz 1'den)
 
