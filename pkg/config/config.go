@@ -93,6 +93,10 @@ type Config struct {
 
 	ServiceVersion string
 
+	// StatusPageURL is the public status page the gateway's root answer
+	// links to; empty leaves the link out (there is none on a local stack).
+	StatusPageURL string
+
 	OTelEnabled      bool
 	OTelServiceName  string
 	OTelEndpoint     string
@@ -187,6 +191,7 @@ func Load(serviceName string) *Config {
 		AutoMigrate: getEnvBool("AUTO_MIGRATE", true),
 
 		ServiceVersion: getEnv("SERVICE_VERSION", version),
+		StatusPageURL:  getEnv("STATUS_PAGE_URL", ""),
 
 		// Distributed tracing. Defaults target a local OTel Collector
 		// (docker-compose) and always-sample so every dev request is visible.

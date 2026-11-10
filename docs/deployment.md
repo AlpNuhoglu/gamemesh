@@ -59,7 +59,7 @@ curl -H 'Host: gamemesh.localhost' http://127.0.0.1:18080/api/v1/leaderboard/top
 # WebSocket: ws://127.0.0.1:18080/ws?token=... with Host gamemesh.localhost
 ```
 
-Only `/health`, `/api` and `/ws` are routed. For the rest, port-forward:
+Only `/` (exactly), `/health`, `/api` and `/ws` are routed. For the rest, port-forward:
 
 ```bash
 kubectl -n monitoring port-forward svc/prometheus 9090:9090 &

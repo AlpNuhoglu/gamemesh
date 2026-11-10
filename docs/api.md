@@ -4,6 +4,28 @@ Base URL: `http://localhost:8080` (gateway). All bodies are JSON.
 Protected endpoints require `Authorization: Bearer <token>`.
 Errors use a uniform envelope: `{"error": "<message>"}`.
 
+## The gateway's own answers
+
+### GET /
+What the host is, for someone who opens the bare address:
+```json
+{
+  "name": "GameMesh API",
+  "version": "<commit>",
+  "health": "/health",
+  "api": "/api/v1",
+  "documentation": "https://github.com/AlpNuhoglu/gamemesh/blob/main/docs/api.md",
+  "source": "https://github.com/AlpNuhoglu/gamemesh",
+  "status_page": "https://status.gamemesh.app"
+}
+```
+`status_page` is there only where `STATUS_PAGE_URL` is set (production).
+
+### GET /health
+`200 { "status": "ok", "version": "<commit>" }`: the gateway serves, and
+which commit it runs. Nothing about its dependencies; see "Operational
+endpoints" for those.
+
 ## Auth
 
 ### POST /api/v1/auth/register
