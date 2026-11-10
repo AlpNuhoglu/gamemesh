@@ -191,7 +191,7 @@ jobs:
         # (finding #105). Past 6 minutes (the slowest build of 30 runs took
         # 138 s) the step is stopped and the next one builds without the
         # cache.
-        timeout-minutes: 1
+        timeout-minutes: 6
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -225,7 +225,8 @@ jobs:
       # In a builder of its own: the stopped step's build keeps running in
       # the first one, and a second build there joins it and waits for the
       # same download (seen with a 1-minute limit: every step came back
-      # CACHED, the compile "DONE 66.4s" 14 s into the step).
+      # CACHED, the compile "DONE 66.4s" 14 s into the step). In its own
+      # builder the modules step ran, 10 s, and the step took 58-73 s.
       - name: Stop the first build
         if: steps.build.outcome != 'success'
         run: pkill -f 'buildx build' || true
@@ -495,7 +496,7 @@ jobs:
         id: build
         # Bounded as in the docker job, so a slow cache does not hold up the
         # deploy (finding #105).
-        timeout-minutes: 1
+        timeout-minutes: 6
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
