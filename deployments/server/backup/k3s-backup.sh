@@ -24,6 +24,11 @@
 #   RCLONE_CONFIG_R2_ENDPOINT  https://<account id>.r2.cloudflarestorage.com
 #   AGE_RECIPIENT          the admin's age public key (age1...)
 #   PING_URL               optional: the dead man's switch (phase 2, F2)
+#
+# The pod pings PING_URL when the upload succeeds and its /fail address when
+# it does not. A failure here on the host, before or around the pod (the
+# copy does not pass its checks), is reported to /fail by this script, which
+# reads the address from the same Secret and never prints it (phase 2, E4).
 set -euo pipefail
 
 db=${K3S_DB:-/var/lib/rancher/k3s/server/db/state.db}
@@ -35,9 +40,25 @@ name="k3s-$stamp.db.gz"
 pod="k3s-backup-$(date +%s)"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
+report_failure() {
+  local url
+  url=$(k3s kubectl -n gamemesh get secret gamemesh-k3s-backup \
+          -o jsonpath='{.data.PING_URL}' 2>/dev/null | base64 -d 2>/dev/null) || url=
+  if [ -z "$url" ]; then
+    echo "no PING_URL to report the failure to" >&2
+  elif curl -fsS -m 10 --retry 2 -o /dev/null "$url/fail" 2>/dev/null; then
+    echo "reported the failure to the dead man's switch" >&2
+  else
+    echo "could not report the failure to the dead man's switch" >&2
+  fi
+}
+
+# The script's own exit status stays what it was.
 cleanup() {
+  local status=$?
   rm -f "$snap" "$snap.gz"
   k3s kubectl -n gamemesh delete pod "$pod" --ignore-not-found --wait=false >/dev/null 2>&1
+  [ "$status" -eq 0 ] || report_failure
   return 0
 }
 trap cleanup EXIT

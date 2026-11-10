@@ -8,7 +8,7 @@
 #                          an R2 token for this bucket only (Object Read & Write)
 #   RCLONE_CONFIG_R2_ENDPOINT  https://<account id>.r2.cloudflarestorage.com
 #   AGE_RECIPIENT          the admin's age public key (age1...)
-#   PING_URL               optional: the dead man's switch (phase 2, F2)
+#   PING_URL               optional: the dead man's switch (phase 2, F2; /fail on failure, E4)
 # The database's own credentials come from gamemesh-secrets.
 apiVersion: batch/v1
 kind: CronJob

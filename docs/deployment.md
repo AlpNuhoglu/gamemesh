@@ -475,7 +475,7 @@ Once, before the first deploy that carries the CronJob:
    unset R2_ID R2_KEY R2_EP AGE_PUB
    ```
    (`read "VAR?prompt"` is zsh; in bash, `read -p "prompt" VAR`.) The dead man's
-   switch's URL comes later as `PING_URL` (phase 2, F2).
+   switch's URL is added afterwards as `PING_URL` ("The dead man's switch").
 4. CI's RBAC (`ci-deployer.yaml`) must allow CronJobs before that deploy
    ("Cluster-level manifests"); otherwise the apply is refused and the deploy
    rolls back.
@@ -611,6 +611,66 @@ unset AGEKEY
 ```
 
 It prints `ok` and `1`. Restoring it is the next section.
+
+#### The dead man's switch
+
+A backup that stops running makes no noise by itself. Each backup therefore
+reports to a check on Healthchecks.io (the ops account), and the check sends
+an e-mail to `ops@gamemesh.app` when the report is bad or missing:
+
+| Check | Expects | Reported by |
+|---|---|---|
+| `postgres-backup` | cron `15 2 * * *` UTC, grace 30 minutes | the CronJob's pod |
+| `k3s-backup` | cron `30 2 * * *` UTC, grace 30 minutes | the upload pod; on failure also the server's script |
+| `cert-check` | simple: once a day, grace 12 hours | the `cert-check` workflow |
+
+`cert-check` is not on a cron schedule because GitHub starts this
+repository's scheduled workflows 7 to 8.5 hours late (measured; its 06:00
+run starts around 14:00 UTC).
+
+Each check has its own ping URL. The URL is a secret: whoever knows it can
+report a success that never happened. It is in no file of this repository
+and is not pasted into a terminal's history or a chat. For the two backups
+it is the `PING_URL` key of their Secrets, given on standard input:
+
+```bash
+read -rs "PING?postgres-backup ping URL: "; echo
+printf '{"stringData":{"PING_URL":"%s"}}' "$PING" |
+  kprod -n gamemesh patch secret gamemesh-backup --type merge --patch-file /dev/stdin; unset PING
+```
+
+and the same with `k3s-backup`'s URL for `gamemesh-k3s-backup`. For the
+workflow it is the repository secret `HC_PING_CERT`.
+
+What a run reports:
+
+- **Success:** a plain ping. The job's log ends with `pinged the dead man's
+  switch`.
+- **Failure:** the URL with `/fail`, and `reported the failure to the dead
+  man's switch` in the log. The e-mail says "received a failure signal".
+  Nothing about the failure is sent; the reason is in the log (below). The
+  Postgres job tries three times, so a failure that a later try repairs
+  gives a DOWN and then an UP e-mail.
+- **Nothing:** a run that never started (node down, CronJob suspended,
+  timer disabled) or was killed (a dump stuck past the job's 15 minutes is
+  killed without a report). The e-mail says the ping "did not arrive on
+  time" and comes when the grace has passed.
+
+A ping that cannot be sent does not change a run's result: the backup is in
+the bucket, and the check goes down for the missing ping.
+
+When an e-mail comes, read the run's log first:
+
+```bash
+kprod -n gamemesh get cronjob,jobs                 # was there a job last night, and how did it end?
+kprod -n gamemesh logs job/<the job's name>
+# Server, for the k3s backup
+systemctl list-timers --no-pager gamemesh-k3s-backup.timer
+sudo journalctl -u gamemesh-k3s-backup.service -n 30 -o cat --no-pager
+```
+
+After the cause is fixed, run the backup by hand (the commands above); its
+ping turns the check green again.
 
 #### Restoring after losing the server
 
