@@ -564,7 +564,8 @@ Once, on top of the Postgres backup's setup:
      --from-literal=AGE_RECIPIENT="$AGE_PUB"
    unset R2_ID R2_KEY R2_EP AGE_PUB
    ```
-4. **The server:** sqlite3 from Ubuntu (main), the script and the units:
+4. **The server:** sqlite3 from Ubuntu (main), the script and the units (the
+   script reports a failure with `curl`, which Ubuntu Server already has):
    ```bash
    # Admin machine, in the repository's directory (the paths are relative to it)
    scp deployments/server/backup/{k3s-backup.sh,gamemesh-k3s-backup.service,gamemesh-k3s-backup.timer} gamemesh:
@@ -671,6 +672,38 @@ sudo journalctl -u gamemesh-k3s-backup.service -n 30 -o cat --no-pager
 
 After the cause is fixed, run the backup by hand (the commands above); its
 ping turns the check green again.
+
+**Trying the alert** (done on 2026-11-10; the e-mail came within ten
+seconds of the failing run). Neither test touches the CronJob, the
+timer or the data. For Postgres, a copy of the CronJob's job with a database
+host that does not exist and a single try, then a normal run:
+
+```bash
+kprod -n gamemesh create job --from=cronjob/postgres-backup k3-fail --dry-run=client -o json \
+  | jq '.spec.backoffLimit=0 | (.spec.template.spec.containers[0].env[] | select(.name=="PGHOST")).value="no-such-host"' \
+  | kprod -n gamemesh create -f -
+kprod -n gamemesh logs job/k3-fail      # ... reported the failure to the dead man's switch
+# after the DOWN e-mail ("received a failure signal"):
+kprod -n gamemesh create job --from=cronjob/postgres-backup k3-ok      # UP e-mail
+kprod -n gamemesh delete job k3-fail
+```
+
+For the k3s backup, the service itself with a datastore path that does not
+exist, given by a drop-in under `/run` (gone at the next boot, but remove
+it: while it is there every backup fails):
+
+```bash
+# Server
+sudo mkdir -p /run/systemd/system/gamemesh-k3s-backup.service.d
+printf '[Service]\nEnvironment=K3S_DB=/nonexistent\n' | sudo tee /run/systemd/system/gamemesh-k3s-backup.service.d/k3-test.conf >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl start gamemesh-k3s-backup.service; echo "exit $?"          # exit 1
+sudo journalctl -u gamemesh-k3s-backup.service -n 6 -o cat --no-pager     # ... reported the failure ...
+# after the DOWN e-mail:
+sudo rm -r /run/systemd/system/gamemesh-k3s-backup.service.d && sudo systemctl daemon-reload
+systemctl show -p Environment gamemesh-k3s-backup.service                 # Environment= (empty)
+sudo systemctl start gamemesh-k3s-backup.service; echo "exit $?"          # exit 0, UP e-mail
+```
 
 #### Restoring after losing the server
 
