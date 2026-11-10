@@ -464,7 +464,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### G9. Runbook ve README roadmap
 
-- [ ] **Ne:**
+- [x] **Ne:**
   - `docs/deployment.md`: "Restoring from backup", "Monitoring access", "Status page",
     "When an outside alert fires" (F1, F2).
   - README: "Roadmap" bölümü (danışman: koda değil): Alertmanager ve alarm kuralları (Faz 3),
@@ -477,6 +477,20 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 > henüz yapılmamış yedek ve dış izleme "devam ediyor" olarak). `docs/deployment.md`'de "Monitoring" ve
 > "Status page" bölümleri G4–G6'da yazıldı; "Restoring from backup" ve "When an outside alert fires"
 > E ve F'yle birlikte gelecek, kutu onlarla işaretlenecek.
+
+> **Sonuç (2026-11-10): K9 bitti.** Runbook'un yeni bölümleri ve dayandıkları tatbikat:
+>
+> | Bölüm (`docs/deployment.md`) | Nasıl denendi |
+> |---|---|
+> | "Backups", "The cluster's own state" | E2, E3: kurulum ve elle koşular; K1 |
+> | "Restoring after losing the server" | E5: boş VM'de geri yükleme (K2, K4); runbook'a giren düzeltmeler orada |
+> | "The dead man's switch", "Trying the alert" | E4: iki yedek prod'da bilerek bozuldu (K3) |
+> | "When an outside alert fires" | F1: gateway 0 replika (K5); teşhis komutları (`curl`, `kprod get`, `gh run view`) prod'da çalıştırıldı. `cert-check`'in "ping gecikti" kolundaki `gh workflow enable` denenmedi (workflow hiç kapanmadı) |
+> | "Monitoring", "Status page" | G4–G6 |
+>
+> README: "Highlights"a yedekler (geri yükleme 38 dk) ve dış uyarılar (13 sn; bozuk yedek < 10 sn)
+> eklendi; "Roadmap"teki "devam ediyor" paragrafı kalktı, yerine yapılmayan kaldı: telefon
+> bildirimi ve nöbet, 3 dakikadan sık yoklama.
 
 ## Bölüm E — Veri dayanıklılığı
 
@@ -629,8 +643,47 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### E4. Yedek izleme
 
-- [ ] **Ne:** Başarılı her yedek bir dead man's switch'e (F2) ping atar; ping gelmezse uyarı.
+- [x] **Ne:** Başarılı her yedek bir dead man's switch'e (F2) ping atar; ping gelmezse uyarı.
 - **Bitti sayılır:** Job bilerek bozuldu; uyarı geldi, süresi ölçüldü (K3).
+
+> **Kararlar (2026-11-10):**
+>
+> | # | Konu | Karar | Neden |
+> |---|---|---|---|
+> | 1 | Hata ping'i | `backup.sh` ve `upload.sh` sıfırdan farklı bir kodla biterse `/fail` (bir `EXIT` trap'i) | "Çalıştı ve bozuldu" ile "hiç çalışmadı" ayrı uyarılar; Healthchecks'teki takvim ayarından bağımsız ikinci yol (#104 o ayarın yanlış olabildiğini gösterdi) |
+> | 2 | İçerik | Hiçbir şey gönderilmiyor | Log satırlarında uç nokta ya da bağlantı bilgisi olabilir; sebep job'un log'unda |
+> | 3 | Ping bozulursa | Koşunun sonucu değişmez | Başarılı bir yedek ping yüzünden başarısız sayılmaz; hata kodu da kaybolmaz |
+> | 4 | k3s'in sunucu tarafı | Sunucudaki script de `/fail` gönderir; URL'yi pod'un Secret'ından okur, basmaz | Kopyanın bütünlük kontrolü pod'dan önce, sunucuda; root o Secret'ı zaten okuyabiliyor |
+> | 5 | `/start` | Eklenmedi | Yeni bir şey yakalamıyor |
+> | 6 | Tekrar denemeler | Her başarısız deneme `/fail` atar, sonraki başarı check'i yeşile çevirir | Pod kaçıncı deneme olduğunu bilmiyor |
+> | 7 | K3 | Prod'da, CronJob'a dokunmadan: yanlış `PGHOST`'la tek denemelik bir job; k3s'te geçici bir drop-in'le var olmayan `K3S_DB`; sonra normal koşular | Veriye ve gece takvimine dokunmuyor |
+> | 8 | "Hiç çalışmadı" yolu | Kanıtı #104'teki olay: `cert-check` koşmadı, pay dolduğu anda (08:00:00 UTC) uyarı geldi. Bir yedek bilerek atlatılmadı | Aynı servis, aynı check türü; atlatmak o geceyi yedeksiz bırakır |
+>
+> **Sonuç (2026-11-10): K3 kanıtlandı (PR #125; prod'da `3260c2c`).**
+>
+> - **Yerelde** (ping'leri kaydeden bir dinleyiciye karşı, gerçek imajla): başarılı yedek ve yükleme
+>   tek düz ping; yanlış adres, parola, alıcı, hedef, sağlama, 1 kB'ın altında döküm `/fail`,
+>   çıkış kodu aynı (1; eksik değişken ve yanlış kullanımda 2). Dinleyici kapalıyken başarılı
+>   koşu 0, başarısız koşu 1. Sunucu script'i, k3s taklit edilerek (`ubuntu:24.04`): eksik
+>   veritabanı, bootstrap'sız kopya, başarısız pod, beklenmeyen imaj `/fail`; URL hiçbir çıktıda yok.
+> - **Postgres (prod):** `k3-fail` job'u 19:57:05 UTC; log: `could not translate host name
+>   "no-such-host"`, 19:57:07,9'da `reported the failure to the dead man's switch`, job `Failed`.
+>   "DOWN | postgres-backup" e-postası 22:57'de (Türkiye saati; ileti kimliğine göre 19:57:09),
+>   gövdesinde "received a failure signal". Düzeltme: `k3-ok` 19:58:35, yedek yüklendi, ping
+>   19:58:38,5; "UP" e-postası 22:58'de.
+> - **k3s (prod, systemd'nin kısıtlamaları altında):** geçici bir drop-in'le
+>   `K3S_DB=/nonexistent`: `exit 1`, `unable to open database`, `reported the failure…`
+>   (20:02:02); "DOWN | k3s-backup" 23:02'de (kimliğe göre 20:02:02). Drop-in kaldırıldı
+>   (`Environment=` boş), normal koşu `exit 0`, 4.611.993 bayt yüklendi, ping; "UP" 23:03'te
+>   (20:03:06).
+> - **Süre:** Postgres'te job'un oluşturulmasından e-postanın teslimine 8 sn (oluşturulması
+>   4 sn, teslimi 4 sn); k3s'te e-posta komutun bittiği saniyede oluşturuldu, 3 sn'de teslim
+>   edildi. Önceki yolda uyarı 30 dakikalık pay dolunca gelirdi.
+> - **Yakalanmayan (ölçüldü, yerelde):** veritabanında asılı kalıp süre sınırıyla öldürülen bir
+>   döküm `/fail` atmıyor (container'ın ilk süreci `SIGTERM`'i yok sayıyor, çıkış 137); o durum
+>   "ping gelmedi" yolunda kalıyor.
+> - **Runbook:** "The dead man's switch": check'ler, URL'lerin yeri, üç sonucun görünüşü,
+>   e-posta gelince bakılacak yer ve bu testin komutları ("Trying the alert").
 
 ### E5. Geri yükleme tatbikatı
 
@@ -768,14 +821,14 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### F2. Dead man's switch
 
-- [ ] **Ne:** Yedek job'larının (E2, E3) "çalıştım" ping'i için bir servis (ör.
+- [x] **Ne:** Yedek job'larının (E2, E3) "çalıştım" ping'i için bir servis (ör.
   healthchecks.io); beklenen aralıkta ping gelmezse F1'deki kanala uyarı.
 - **Bitti sayılır:** E4.
 
 > **Durum (2026-11-10):** kararlar F1'in tablosunda (4–6). İki kontrol kuruldu, `PING_URL`
 > iki Secret'a eklendi. Zamanlanmış ilk gece ikisi de ping attı: Postgres job'u 02:15:00–02:15:07
 > UTC (`pinged the dead man's switch`), k3s nesnesi R2'de 02:30:05; panelde ikisi de yeşil.
-> Hata durumundaki `/fail` ve K3 testi E4'te.
+> Hata durumundaki `/fail` ve K3 testi E4'te: kanıtlandı, F2 kapandı.
 
 ### F3. Kök adres (isteğe bağlı)
 
@@ -828,3 +881,4 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 102 | `multipass exec` stdin'den verilen veriyi ~2 MB'ta sessizce kesiyor, exit 0 | E5 | Ölçüldü (4,5 MB rastgele veri 5/5 2.162.688 bayt; ssh 3/3 tam) | E5 (ssh; runbook: aktarımdan sonra kontrol) |
 | 103 | Yanlış token'la başarısız bir k3s açılışı datastore kopyasını değiştiriyor | E5 | Ölçüldü (sha256 `9778fd60…` → `d89dcb6c…`, 11,5 MB `-wal`, `tls/`/`cred/`/`etc/`) | E5 (runbook: yeni kopyayla yeniden dene) |
 | 104 | GitHub bu repoda zamanlanmış workflow'ları saatlerce geç başlatıyor; saatine bağlı bir dead man's switch sahte alarm verir | F1 (ilk zamanlanmış `cert-check`) | Ölçüldü (CI'ın `17 3 * * *` koşusu 2026-11-04…10 arasında 10:19–11:40 UTC'de başladı: 7–8,5 saat; `cert-check`'in 06:00'lık ilk koşusu 14:06:29'da; Healthchecks 08:00'de DOWN) | F1, **düzeltildi** (Healthchecks'te `cert-check`: günde bir, pay 12 saat; uyarı 36 saat ping gelmezse. Sahte alarmın bir daha gelmediği 2026-11-11'de doğrulanacak) |
+| 105 | Build sırasında cache'lenmiş katmanların Actions cache'inden indirilmesinin süre sınırı yok: `cache-from`'un `timeout=3m`'i sadece cache dizinini kapsıyor. Bir koşucuda indirme 0,2 MB/sn'ye düştü ve `docker (matchmaking)` job sınırına 12 sn kala bitti | PR #123'ün CI'ı | Ölçüldü (212 MB'lık Go modülleri katmanı 1038 sn; son 5 koşunun 45 işinde 1,6–26 sn. Aynı koşucuda Trivy cache'i 19 sn (başka işlerde 1–3 sn), Docker Hub'dan 14 MB 0,6 sn) | CI, **düzeltildi**: `docker` ve `publish`'te build adımı 6 dk'da durduruluyor (30 koşunun en yavaşı 138 sn), ardından aynı imaj **ayrı bir builder'da** cache'siz kuruluyor (modüller Go proxy'sinden). 1 dk'lık sınırla iki zorlama koşusu: ilkinde yedek adım aynı builder'da durdurulan build'e katıldı (her adım `CACHED`, `player` 1 sn; süren bir indirmeyi o da beklerdi); ayrı builder'la `go mod download` gerçekten çalıştı (10 sn), yedek adım 58–73 sn. `publish`'in yedek yolu denenmedi (sadece `main`'de çalışır). #95'in okuma tarafındaki karşılığı |
