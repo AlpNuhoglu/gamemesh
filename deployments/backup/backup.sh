@@ -11,9 +11,10 @@
 #
 # Each run writes a new object, named by the time it started; the bucket's
 # lock keeps every object undeletable and unchangeable for 30 days, and a
-# lifecycle rule removes it after 90. On success the run pings PING_URL (the
-# dead man's switch, phase 2 F2) when one is set; a run that fails, or that
-# never runs, does not, and the switch raises the alarm.
+# lifecycle rule removes it after 90. When PING_URL is set (the dead man's
+# switch, phase 2 F2), the run pings it on success and its /fail address on
+# failure; a run that never runs, or is killed, pings nothing, and the switch
+# raises the alarm when the ping is overdue.
 #
 # Environment:
 #   PGHOST PGUSER PGPASSWORD PGDATABASE  the database (libpq's own names)
@@ -23,6 +24,28 @@
 #   PING_URL                             optional
 set -eu
 set -o pipefail
+
+# The dead man's switch hears how the run ended (phase 2, E4): a plain ping
+# on success, /fail on any other exit, so "ran and failed" and "never ran"
+# are different alerts. Nothing about the failure is sent; the reason is in
+# this log. A ping that cannot be sent leaves the run's own result as it is.
+report() {
+  status=$?
+  trap - EXIT
+  if [ -n "${PING_URL:-}" ]; then
+    if [ "$status" -eq 0 ]; then
+      wget -q -T 10 -O /dev/null "$PING_URL" && echo "pinged the dead man's switch" ||
+        echo "could not ping the dead man's switch" >&2
+    else
+      wget -q -T 10 -O /dev/null "$PING_URL/fail" &&
+        echo "reported the failure to the dead man's switch" >&2 ||
+        echo "could not report the failure to the dead man's switch" >&2
+    fi
+  fi
+  exit "$status"
+}
+trap report EXIT
+
 : "${PGHOST:?}" "${PGUSER:?}" "${PGPASSWORD:?}" "${PGDATABASE:?}" "${AGE_RECIPIENT:?}" "${BACKUP_DEST:?}"
 
 stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
@@ -49,8 +72,3 @@ if [ "$remote" != "$size" ]; then
   exit 1
 fi
 echo "uploaded $BACKUP_DEST/$name"
-
-if [ -n "${PING_URL:-}" ]; then
-  wget -q -T 10 -O /dev/null "$PING_URL" && echo "pinged the dead man's switch" ||
-    echo "could not ping the dead man's switch" >&2
-fi
