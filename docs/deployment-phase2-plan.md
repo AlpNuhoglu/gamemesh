@@ -713,7 +713,7 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### F1. Dış izleme servisi ve uyarı kanalı
 
-- [ ] **Ne:** Sunucunun ve ev ağının **dışında** çalışan bir izleme: `https://api.gamemesh.app/health`
+- [x] **Ne:** Sunucunun ve ev ağının **dışında** çalışan bir izleme: `https://api.gamemesh.app/health`
   (200 ve `"status":"ok"`), bir proxy'lenen route (`/api/v1/leaderboard`), TLS sertifikasının
   kalan süresi; G6'dan sonra `status.gamemesh.app` de.
 - **Seçenekler:** UptimeRobot, Better Stack, başka yerde barındırılan Uptime Kuma, zamanlanmış bir
@@ -724,11 +724,58 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 - **Bitti sayılır:** K5: gateway bilerek 0 replikaya indirildi (onaylı); uyarının ulaşma süresi
   ölçüldü; "düzeldi" bildirimi geldi.
 
+> **Kararlar (2026-11-08; F1 ve F2 birlikte):**
+>
+> | # | Konu | Karar | Neden |
+> |---|---|---|---|
+> | 1 | Dışarıdan yoklama | Better Stack, ücretsiz plan, 3 dakika aralık | UptimeRobot'un ücretsiz aralığı 5 dk: algılama tek başına hedefi doldurur; SSL ve heartbeat'i de ücretli |
+> | 2 | Yoklananlar | `/health` (200 ve gövdede `"status":"ok"`), `/api/v1/leaderboard` (200), `status.gamemesh.app` | Uygulamanın kendi beyanı; gateway ve arkasındaki bir servis; durum sayfası |
+> | 3 | Sertifika | Better Stack'te SSL bitişi ücretli çıktı: günlük `cert-check` workflow'u (PR #122), zincir ve ad doğrulaması, eşik 21 gün | Sertifika yavaş değişir; günlük kontrol yeter |
+> | 4 | Dead man's switch | Healthchecks.io, ücretsiz plan: `postgres-backup` (02:15 UTC, pay 30 dk), `k3s-backup` (02:30 UTC, 30 dk), `cert-check` | Bu işe özel ve açık kaynak; yoklamadan ayrı sağlayıcı, biri sessizce bozulursa diğeri kalır |
+> | 5 | Ping URL'leri | Yedeklerin Secret'larında `PING_URL`, workflow için repo secret'ı `HC_PING_CERT`; repoya girmez | URL'yi bilen sahte "başarılı" ping atıp gerçek bir hatayı gizleyebilir |
+> | 6 | Hata bildirimi | Yedeklerde şimdilik sadece başarıda ping; `/fail` E4'te. `cert-check` baştan `/fail` gönderiyor | Önce en basit hali kurulup ölçüldü |
+> | 7 | Kanal | E-posta: `ops@gamemesh.app` (Cloudflare Email Routing ile bu işe ayrılmış bir posta kutusuna). GitHub'ın "run failed" e-postası kullanılmıyor | Kişisel adres hiçbir yerde yok. Karardaki mobil bildirimden vazgeçildi (kabul, 2026-11-10) |
+> | 8 | Hesaplar | Admin açtı, ikisi de `ops@` ile, ayrı TOTP 2FA; kart istenmedi | Dışarıya açık hesaplar adminin |
+> | 9 | Kanıt | K5: gateway 0 replika (onaylı). Sertifika yolu: workflow elle, büyük bir eşikle. K3: E4'te | |
+> | 10 | F3 | Şimdilik yapılmadı | İsteğe bağlı |
+>
+> **Sonuç (2026-11-10): K5 kanıtlandı; sadece e-posta ölçüldü.**
+>
+> - **Ayarlar (Better Stack):** aralık 3 dk, "Confirmation period: Immediate start", "Recovery
+>   period" 3 dk.
+> - **Kesinti:** `scale --replicas=0` 11:28:28 UTC. Mac'ten 5 sn'de bir yoklama: son `200`
+>   11:28:27, ilk `503` 11:28:33 (Traefik: `no available server`), `scale --replicas=1`
+>   11:29:03, ilk `200` 11:29:11. Kesinti ~40 sn.
+> - **Uyarı:** `/health` için e-posta 14:28, `leaderboard` için 14:29 (Türkiye saati, Gmail'in
+>   dakikası); teslim 2–3 sn. Gönderim saniyeleri ileti kimliklerindeki zaman damgasından
+>   (çıkarım; dört e-postada Gmail'in dakikasıyla uyumlu): 11:28:41 ve 11:29:09, yani kapatmadan
+>   **13 sn** ve **41 sn** sonra. Hedef ≤ 5 dk.
+> - **Düzeldi:** iki e-posta 14:32'de (11:32:51 ve 11:32:37): ilk `200`'den 3 dk 40 sn ve 3 dk
+>   26 sn sonra. Better Stack'in kaydı: sebep `Status 503`, süre 1 dk ve 25 sn; başlangıç + süre +
+>   3 dk "Recovery period" e-postaların saatini veriyor.
+> - **Negatif kontrol:** `status.gamemesh.app` baştan sona `302`; onun için incident açılmadı.
+> - **Garanti edilen ve ölçülen:** 40 sn'lik kesintiyi iki monitör de gördü; ayardaki aralık
+>   3 dk olduğu için garanti yine "3 dk + e-posta", daha kısa bir kesinti görülmeyebilir.
+> - **Sertifika yolu (2026-11-09):** workflow elle, eşik 400 gün: `/fail` 22:09:48 UTC, DOWN
+>   e-postası 22:09'da; normal eşikle 22:12:45'te başarı ping'i, UP e-postası 22:12'de.
+> - **Zamanlanmış ilk koşu (2026-11-10):** 06:00 UTC'lik koşu 14:06:29'da başladı (#104): 69 ve
+>   73 gün, `pinged: success`. Healthchecks 08:00'de (2 saatlik pay dolunca) DOWN e-postası
+>   gönderdi: sahte alarm, ama hiç çalışmayan bir koşunun yakalandığının da kanıtı. Kontrol
+>   "her gün 06:00" yerine "günde bir, pay 12 saat" yapıldı.
+> - **Kabul (2026-11-10):** kanal sadece e-posta; mobil bildirim kurulmuyor. Gece gelen bir
+>   kesinti uyarısı sabah görülür.
+> - **Açık:** runbook'ta kurulum ve uyarıya müdahale (G9).
+
 ### F2. Dead man's switch
 
 - [ ] **Ne:** Yedek job'larının (E2, E3) "çalıştım" ping'i için bir servis (ör.
   healthchecks.io); beklenen aralıkta ping gelmezse F1'deki kanala uyarı.
 - **Bitti sayılır:** E4.
+
+> **Durum (2026-11-10):** kararlar F1'in tablosunda (4–6). İki kontrol kuruldu, `PING_URL`
+> iki Secret'a eklendi. Zamanlanmış ilk gece ikisi de ping attı: Postgres job'u 02:15:00–02:15:07
+> UTC (`pinged the dead man's switch`), k3s nesnesi R2'de 02:30:05; panelde ikisi de yeşil.
+> Hata durumundaki `/fail` ve K3 testi E4'te.
 
 ### F3. Kök adres (isteğe bağlı)
 
@@ -780,3 +827,4 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 101 | Geri yüklemede oturumlar kaybolur: Redis yedeklenmiyor, her oyuncu yeniden giriş yapmalı; presence ve leaderboard boş başlar | E5 | Ölçüldü (VM'in JWT'si prod'da imzadan geçti, `token revoked`) | E5, kabul edildi (runbook: "What does not come back") |
 | 102 | `multipass exec` stdin'den verilen veriyi ~2 MB'ta sessizce kesiyor, exit 0 | E5 | Ölçüldü (4,5 MB rastgele veri 5/5 2.162.688 bayt; ssh 3/3 tam) | E5 (ssh; runbook: aktarımdan sonra kontrol) |
 | 103 | Yanlış token'la başarısız bir k3s açılışı datastore kopyasını değiştiriyor | E5 | Ölçüldü (sha256 `9778fd60…` → `d89dcb6c…`, 11,5 MB `-wal`, `tls/`/`cred/`/`etc/`) | E5 (runbook: yeni kopyayla yeniden dene) |
+| 104 | GitHub bu repoda zamanlanmış workflow'ları saatlerce geç başlatıyor; saatine bağlı bir dead man's switch sahte alarm verir | F1 (ilk zamanlanmış `cert-check`) | Ölçüldü (CI'ın `17 3 * * *` koşusu 2026-11-04…10 arasında 10:19–11:40 UTC'de başladı: 7–8,5 saat; `cert-check`'in 06:00'lık ilk koşusu 14:06:29'da; Healthchecks 08:00'de DOWN) | F1, **düzeltildi** (Healthchecks'te `cert-check`: günde bir, pay 12 saat; uyarı 36 saat ping gelmezse. Sahte alarmın bir daha gelmediği 2026-11-11'de doğrulanacak) |
