@@ -848,7 +848,13 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 >
 > **Yerelde (k3d, Traefik üzerinden):** `/` 404 → 200 (sorgu dizgisiyle de); `/metrics`,
 > `/livez`, `/readyz`, `/healthz`, `/nope`, `/index.html`, `/api` 404 kaldı; başka host'la `/`,
-> `POST /` ve `HEAD /` 404; `/health` ve leaderboard 200. Prod sonucu deploy'dan sonra.
+> `POST /` ve `HEAD /` 404; `/health` ve leaderboard 200.
+>
+> **Sonuç (2026-11-10): bitti (PR #128; prod'da `910fb73`).** Deploy boyunca üç adres 4–5 sn'de
+> bir yoklandı (105 yoklama): `/` 21:37:54 UTC'de 404'ten 200'e döndü; `/health` ve leaderboard
+> 105/105 `200`. Prod'da `/` cevabında `status_page` var; `/metrics`, `/livez`, `/readyz`,
+> `/healthz`, `/nope`, `/index.html`, `/api` 404; `http://` 301 ile HTTPS'e; Ingress'te `/ Exact`,
+> `/health Exact`, `/api Prefix`, `/ws Prefix`; `api-tls` `Ready`; durum sayfası yerinde.
 
 ## Bölüm H — Tarihli bakım (Faz 1'den)
 
