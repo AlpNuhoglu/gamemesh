@@ -629,8 +629,47 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### E4. Yedek izleme
 
-- [ ] **Ne:** Başarılı her yedek bir dead man's switch'e (F2) ping atar; ping gelmezse uyarı.
+- [x] **Ne:** Başarılı her yedek bir dead man's switch'e (F2) ping atar; ping gelmezse uyarı.
 - **Bitti sayılır:** Job bilerek bozuldu; uyarı geldi, süresi ölçüldü (K3).
+
+> **Kararlar (2026-11-10):**
+>
+> | # | Konu | Karar | Neden |
+> |---|---|---|---|
+> | 1 | Hata ping'i | `backup.sh` ve `upload.sh` sıfırdan farklı bir kodla biterse `/fail` (bir `EXIT` trap'i) | "Çalıştı ve bozuldu" ile "hiç çalışmadı" ayrı uyarılar; Healthchecks'teki takvim ayarından bağımsız ikinci yol (#104 o ayarın yanlış olabildiğini gösterdi) |
+> | 2 | İçerik | Hiçbir şey gönderilmiyor | Log satırlarında uç nokta ya da bağlantı bilgisi olabilir; sebep job'un log'unda |
+> | 3 | Ping bozulursa | Koşunun sonucu değişmez | Başarılı bir yedek ping yüzünden başarısız sayılmaz; hata kodu da kaybolmaz |
+> | 4 | k3s'in sunucu tarafı | Sunucudaki script de `/fail` gönderir; URL'yi pod'un Secret'ından okur, basmaz | Kopyanın bütünlük kontrolü pod'dan önce, sunucuda; root o Secret'ı zaten okuyabiliyor |
+> | 5 | `/start` | Eklenmedi | Yeni bir şey yakalamıyor |
+> | 6 | Tekrar denemeler | Her başarısız deneme `/fail` atar, sonraki başarı check'i yeşile çevirir | Pod kaçıncı deneme olduğunu bilmiyor |
+> | 7 | K3 | Prod'da, CronJob'a dokunmadan: yanlış `PGHOST`'la tek denemelik bir job; k3s'te geçici bir drop-in'le var olmayan `K3S_DB`; sonra normal koşular | Veriye ve gece takvimine dokunmuyor |
+> | 8 | "Hiç çalışmadı" yolu | Kanıtı #104'teki olay: `cert-check` koşmadı, pay dolduğu anda (08:00:00 UTC) uyarı geldi. Bir yedek bilerek atlatılmadı | Aynı servis, aynı check türü; atlatmak o geceyi yedeksiz bırakır |
+>
+> **Sonuç (2026-11-10): K3 kanıtlandı (PR #125; prod'da `3260c2c`).**
+>
+> - **Yerelde** (ping'leri kaydeden bir dinleyiciye karşı, gerçek imajla): başarılı yedek ve yükleme
+>   tek düz ping; yanlış adres, parola, alıcı, hedef, sağlama, 1 kB'ın altında döküm `/fail`,
+>   çıkış kodu aynı (1; eksik değişken ve yanlış kullanımda 2). Dinleyici kapalıyken başarılı
+>   koşu 0, başarısız koşu 1. Sunucu script'i, k3s taklit edilerek (`ubuntu:24.04`): eksik
+>   veritabanı, bootstrap'sız kopya, başarısız pod, beklenmeyen imaj `/fail`; URL hiçbir çıktıda yok.
+> - **Postgres (prod):** `k3-fail` job'u 19:57:05 UTC; log: `could not translate host name
+>   "no-such-host"`, 19:57:07,9'da `reported the failure to the dead man's switch`, job `Failed`.
+>   "DOWN | postgres-backup" e-postası 22:57'de (Türkiye saati; ileti kimliğine göre 19:57:09),
+>   gövdesinde "received a failure signal". Düzeltme: `k3-ok` 19:58:35, yedek yüklendi, ping
+>   19:58:38,5; "UP" e-postası 22:58'de.
+> - **k3s (prod, systemd'nin kısıtlamaları altında):** geçici bir drop-in'le
+>   `K3S_DB=/nonexistent`: `exit 1`, `unable to open database`, `reported the failure…`
+>   (20:02:02); "DOWN | k3s-backup" 23:02'de (kimliğe göre 20:02:02). Drop-in kaldırıldı
+>   (`Environment=` boş), normal koşu `exit 0`, 4.611.993 bayt yüklendi, ping; "UP" 23:03'te
+>   (20:03:06).
+> - **Süre:** Postgres'te job'un oluşturulmasından e-postanın teslimine 8 sn (oluşturulması
+>   4 sn, teslimi 4 sn); k3s'te e-posta komutun bittiği saniyede oluşturuldu, 3 sn'de teslim
+>   edildi. Önceki yolda uyarı 30 dakikalık pay dolunca gelirdi.
+> - **Yakalanmayan (ölçüldü, yerelde):** veritabanında asılı kalıp süre sınırıyla öldürülen bir
+>   döküm `/fail` atmıyor (container'ın ilk süreci `SIGTERM`'i yok sayıyor, çıkış 137); o durum
+>   "ping gelmedi" yolunda kalıyor.
+> - **Runbook:** "The dead man's switch": check'ler, URL'lerin yeri, üç sonucun görünüşü,
+>   e-posta gelince bakılacak yer ve bu testin komutları ("Trying the alert").
 
 ### E5. Geri yükleme tatbikatı
 
@@ -768,14 +807,14 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 
 ### F2. Dead man's switch
 
-- [ ] **Ne:** Yedek job'larının (E2, E3) "çalıştım" ping'i için bir servis (ör.
+- [x] **Ne:** Yedek job'larının (E2, E3) "çalıştım" ping'i için bir servis (ör.
   healthchecks.io); beklenen aralıkta ping gelmezse F1'deki kanala uyarı.
 - **Bitti sayılır:** E4.
 
 > **Durum (2026-11-10):** kararlar F1'in tablosunda (4–6). İki kontrol kuruldu, `PING_URL`
 > iki Secret'a eklendi. Zamanlanmış ilk gece ikisi de ping attı: Postgres job'u 02:15:00–02:15:07
 > UTC (`pinged the dead man's switch`), k3s nesnesi R2'de 02:30:05; panelde ikisi de yeşil.
-> Hata durumundaki `/fail` ve K3 testi E4'te.
+> Hata durumundaki `/fail` ve K3 testi E4'te: kanıtlandı, F2 kapandı.
 
 ### F3. Kök adres (isteğe bağlı)
 
