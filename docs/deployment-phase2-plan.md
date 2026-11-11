@@ -13,6 +13,26 @@ taşıyabiliyor. Faz 1 sistemi canlıya aldı (`docs/deployment-phase1-plan.md`)
 
 Faz 1'den kalan **tarihli işler** tarihlerinde yapılıyor (Bölüm H).
 
+> **Sonuç (2026-11-11): hedefe ulaşıldı.** K1–K6 ve K8–K15 ölçümle kanıtlandı; K7 Faz 3'te.
+>
+> - **Görülebilirlik:** Prometheus ve Grafana prod'da; `up{namespace="gamemesh"}` 7/7 = 1;
+>   uygulama metrikleri sınırlı label'larla ve gecikmeye göre bucket'larla; 4 panel repoda kod
+>   olarak. `https://status.gamemesh.app` girişsiz ve salt okunur; Prometheus'a ve Grafana'nın
+>   yönetimine dışarıdan erişim yok, sadece tailnet. k6 yükünde paneller k6'nın raporuyla
+>   tutarlı. 4 GB'lık sunucu yetiyor (yükün zirvesinde 2121 Mi boş, bellek request'leri %37).
+> - **Veri:** Postgres ve k3s'in kendi durumu her gece, sunucuda okunamayan bir anahtarla
+>   şifrelenip R2'ye; her nesne 30 gün silinemez. Boş bir VM'e runbook'la geri yükleme:
+>   felaketten çalışan bir login'e **38 dk**; RPO tasarımda 24 saate kadar. Oturumlar, presence
+>   ve leaderboard (Redis) geri gelmiyor (#101).
+> - **Uyarı:** Dışarıdan yoklama (Better Stack) gateway 0 replikaya indirildiğinde **13 sn**'de
+>   e-posta gönderdi; bilerek bozulan iki yedek **10 sn**'den kısa sürede (Healthchecks.io);
+>   günlük `cert-check` 21 günün altında ya da hiç koşmazsa uyarıyor. Kanal sadece e-posta
+>   (kabul).
+> - **Kök adres:** `https://api.gamemesh.app/` 404 yerine servis dizinini döndürüyor (F3).
+> - **Runbook:** geri yükleme, monitoring, durum sayfası, dead man's switch ve dış uyarıya
+>   müdahale bölümleri, her biri bir tatbikatla denendi (G9).
+> - 2026-10-22 → 2026-11-11: 37 PR (#89–#128), 16 bulgu (#90–#105).
+
 **Kaynaklar:** Bölüm G'nin kapsamı ve "dikkat edilecek üç nokta" danışmanın kriterlerinden
 (2026-10-22). E, F, H ve G'deki kapasite/runbook adımları Faz 1 kapanışında eklenen "gerçek
 kullanıcılardan önce şart olanlar"dan; kullanıcı bunların korunmasını istedi.
@@ -829,6 +849,8 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 > iki Secret'a eklendi. Zamanlanmış ilk gece ikisi de ping attı: Postgres job'u 02:15:00–02:15:07
 > UTC (`pinged the dead man's switch`), k3s nesnesi R2'de 02:30:05; panelde ikisi de yeşil.
 > Hata durumundaki `/fail` ve K3 testi E4'te: kanıtlandı, F2 kapandı.
+> 2026-11-11: yeni script'lerle ilk zamanlanmış gece; Postgres 02:15:05 UTC'de yüklendi ve ping
+> attı, k3s'inki de ping attı; üç check yeşil, yeni uyarı e-postası yok.
 
 ### F3. Kök adres (isteğe bağlı)
 
@@ -848,7 +870,13 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 >
 > **Yerelde (k3d, Traefik üzerinden):** `/` 404 → 200 (sorgu dizgisiyle de); `/metrics`,
 > `/livez`, `/readyz`, `/healthz`, `/nope`, `/index.html`, `/api` 404 kaldı; başka host'la `/`,
-> `POST /` ve `HEAD /` 404; `/health` ve leaderboard 200. Prod sonucu deploy'dan sonra.
+> `POST /` ve `HEAD /` 404; `/health` ve leaderboard 200.
+>
+> **Sonuç (2026-11-10): bitti (PR #128; prod'da `910fb73`).** Deploy boyunca üç adres 4–5 sn'de
+> bir yoklandı (105 yoklama): `/` 21:37:54 UTC'de 404'ten 200'e döndü; `/health` ve leaderboard
+> 105/105 `200`. Prod'da `/` cevabında `status_page` var; `/metrics`, `/livez`, `/readyz`,
+> `/healthz`, `/nope`, `/index.html`, `/api` 404; `http://` 301 ile HTTPS'e; Ingress'te `/ Exact`,
+> `/health Exact`, `/api Prefix`, `/ws Prefix`; `api-tls` `Ready`; durum sayfası yerinde.
 
 ## Bölüm H — Tarihli bakım (Faz 1'den)
 
@@ -894,5 +922,5 @@ Faz 1'in dizini 89'da bitti; Faz 2'nin bulguları **#90**'dan başlar.
 | 101 | Geri yüklemede oturumlar kaybolur: Redis yedeklenmiyor, her oyuncu yeniden giriş yapmalı; presence ve leaderboard boş başlar | E5 | Ölçüldü (VM'in JWT'si prod'da imzadan geçti, `token revoked`) | E5, kabul edildi (runbook: "What does not come back") |
 | 102 | `multipass exec` stdin'den verilen veriyi ~2 MB'ta sessizce kesiyor, exit 0 | E5 | Ölçüldü (4,5 MB rastgele veri 5/5 2.162.688 bayt; ssh 3/3 tam) | E5 (ssh; runbook: aktarımdan sonra kontrol) |
 | 103 | Yanlış token'la başarısız bir k3s açılışı datastore kopyasını değiştiriyor | E5 | Ölçüldü (sha256 `9778fd60…` → `d89dcb6c…`, 11,5 MB `-wal`, `tls/`/`cred/`/`etc/`) | E5 (runbook: yeni kopyayla yeniden dene) |
-| 104 | GitHub bu repoda zamanlanmış workflow'ları saatlerce geç başlatıyor; saatine bağlı bir dead man's switch sahte alarm verir | F1 (ilk zamanlanmış `cert-check`) | Ölçüldü (CI'ın `17 3 * * *` koşusu 2026-11-04…10 arasında 10:19–11:40 UTC'de başladı: 7–8,5 saat; `cert-check`'in 06:00'lık ilk koşusu 14:06:29'da; Healthchecks 08:00'de DOWN) | F1, **düzeltildi** (Healthchecks'te `cert-check`: günde bir, pay 12 saat; uyarı 36 saat ping gelmezse. Sahte alarmın bir daha gelmediği 2026-11-11'de doğrulanacak) |
+| 104 | GitHub bu repoda zamanlanmış workflow'ları saatlerce geç başlatıyor; saatine bağlı bir dead man's switch sahte alarm verir | F1 (ilk zamanlanmış `cert-check`) | Ölçüldü (CI'ın `17 3 * * *` koşusu 2026-11-04…10 arasında 10:19–11:40 UTC'de başladı: 7–8,5 saat; `cert-check`'in 06:00'lık ilk koşusu 14:06:29'da; Healthchecks 08:00'de DOWN) | F1, **düzeltildi** (Healthchecks'te `cert-check`: günde bir, pay 12 saat; uyarı 36 saat ping gelmezse. 2026-11-11: o günün 06:00'lık koşusu 10:54 UTC'de hâlâ başlamamıştı; eski ayarın uyaracağı 08:00'de e-posta gelmedi, check yeşil) |
 | 105 | Build sırasında cache'lenmiş katmanların Actions cache'inden indirilmesinin süre sınırı yok: `cache-from`'un `timeout=3m`'i sadece cache dizinini kapsıyor. Bir koşucuda indirme 0,2 MB/sn'ye düştü ve `docker (matchmaking)` job sınırına 12 sn kala bitti | PR #123'ün CI'ı | Ölçüldü (212 MB'lık Go modülleri katmanı 1038 sn; son 5 koşunun 45 işinde 1,6–26 sn. Aynı koşucuda Trivy cache'i 19 sn (başka işlerde 1–3 sn), Docker Hub'dan 14 MB 0,6 sn) | CI, **düzeltildi**: `docker` ve `publish`'te build adımı 6 dk'da durduruluyor (30 koşunun en yavaşı 138 sn), ardından aynı imaj **ayrı bir builder'da** cache'siz kuruluyor (modüller Go proxy'sinden). 1 dk'lık sınırla iki zorlama koşusu: ilkinde yedek adım aynı builder'da durdurulan build'e katıldı (her adım `CACHED`, `player` 1 sn; süren bir indirmeyi o da beklerdi); ayrı builder'la `go mod download` gerçekten çalıştı (10 sn), yedek adım 58–73 sn. `publish`'in yedek yolu denenmedi (sadece `main`'de çalışır). #95'in okuma tarafındaki karşılığı |
