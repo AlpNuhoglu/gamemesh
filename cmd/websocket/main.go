@@ -102,6 +102,12 @@ func run() int {
 		log.Fatal("failed to init event bus", zap.Error(err))
 	}
 	defer func() { _ = bus.Close() }()
+	// EXPERIMENT (exp/relay-jetstream, never merged): every relay goes through
+	// JetStream and back. Only meaningful on the NATS transport.
+	if cfg.EventBus != "nats" {
+		log.Fatal("exp/relay-jetstream needs EVENT_BUS=nats", zap.String("event_bus", cfg.EventBus))
+	}
+	hub.SetRelayBus(bus)
 	bridge := wsgateway.NewBridge(hub, bus, log)
 	workers.Go(func() {
 		if err := bridge.Run(ctx); err != nil {

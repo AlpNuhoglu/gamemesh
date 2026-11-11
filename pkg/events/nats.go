@@ -90,6 +90,15 @@ var streamFor = map[string]stream{
 		subjects: []string{TopicPresence, TopicPresence + ".>"},
 		maxAge:   15 * time.Minute, // high-churn, disposable; Redis is source of truth, not JetStream replay
 	},
+	// EXPERIMENT (exp/relay-jetstream, never merged): the relay message's own
+	// stream, so the durable streams and their consumers are not disturbed.
+	// Same storage as the others (file, set in NewNATSBus); a short max age,
+	// since nothing replays it.
+	TopicRelay: {
+		name:     "RELAY",
+		subjects: []string{TopicRelay, TopicRelay + ".>"},
+		maxAge:   time.Minute,
+	},
 }
 
 // NATSOption configures a NATSBus.

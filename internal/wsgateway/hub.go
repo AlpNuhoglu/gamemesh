@@ -15,6 +15,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
+	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
@@ -58,6 +59,12 @@ type Hub struct {
 	relayRate  rate.Limit
 	relayBurst int
 	relayM     relayMetrics
+
+	// EXPERIMENT (exp/relay-jetstream, relay_jetstream.go): when relayBus is
+	// set, relays go through JetStream; relayPending maps event ID to
+	// pendingRelay.
+	relayBus     events.Publisher
+	relayPending sync.Map
 }
 
 // NewHub constructs an empty hub. A nil notifier becomes a no-op, so existing

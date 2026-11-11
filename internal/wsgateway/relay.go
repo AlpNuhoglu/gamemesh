@@ -102,6 +102,18 @@ func (c *Client) handleRelay(msg *inboundMessage, readAt time.Time) {
 		rm.rateLimited.Inc()
 		return
 	}
+	if c.hub.relayBus != nil {
+		// EXPERIMENT (exp/relay-jetstream): through JetStream, relay_jetstream.go.
+		if !c.hub.isMember(c, msg.Room) {
+			rm.notMember.Inc()
+			return
+		}
+		if c.publishRelay(msg.Room, c.relayFrame(msg.Room, msg.Data), readAt) != nil {
+			return
+		}
+		rm.process.Observe(time.Since(readAt).Seconds())
+		return
+	}
 	if !c.hub.relayToRoom(c, msg.Room, c.relayFrame(msg.Room, msg.Data), readAt) {
 		rm.notMember.Inc()
 		return

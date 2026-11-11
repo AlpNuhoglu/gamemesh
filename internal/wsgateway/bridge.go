@@ -35,10 +35,10 @@ func NewBridge(hub *Hub, sub events.Subscriber, log *zap.Logger) *Bridge {
 func (b *Bridge) Run(ctx context.Context) error {
 	if ack, ok := b.sub.(events.AckSubscriber); ok {
 		b.log.Info("event bridge started", zap.String("mode", "ack"))
-		return ack.SubscribeAck(ctx, b.dispatch, events.TopicMatchmaking, events.TopicLeaderboard, events.TopicPlayer)
+		return ack.SubscribeAck(ctx, b.dispatch, b.topics()...)
 	}
 
-	ch, err := b.sub.Subscribe(ctx, events.TopicMatchmaking, events.TopicLeaderboard, events.TopicPlayer)
+	ch, err := b.sub.Subscribe(ctx, b.topics()...)
 	if err != nil {
 		return err
 	}
@@ -56,6 +56,17 @@ func (b *Bridge) Run(ctx context.Context) error {
 	}
 }
 
+// topics are the topics the bridge consumes. EXPERIMENT (exp/relay-jetstream):
+// with a relay bus set, also the relay's own topic, which gets its own
+// consumer and worker pool (startConsumers is per topic).
+func (b *Bridge) topics() []string {
+	t := []string{events.TopicMatchmaking, events.TopicLeaderboard, events.TopicPlayer}
+	if b.hub.relayBus != nil {
+		t = append(t, events.TopicRelay)
+	}
+	return t
+}
+
 // dispatch fans one event out to WebSocket clients. It returns an error only
 // for transient/retryable failures so an AckSubscriber redelivers; poison
 // inputs (malformed payloads) are dropped with a nil error so they are ACK'd
@@ -69,6 +80,8 @@ func (b *Bridge) dispatch(ctx context.Context, e events.Event) error {
 	defer span.End()
 
 	switch e.Type {
+	case events.TypeRelay: // EXPERIMENT (exp/relay-jetstream)
+		return b.hub.deliverRelay(e)
 	case events.TypeMatchFound:
 		var p events.MatchFoundPayload
 		if err := json.Unmarshal(e.Payload, &p); err != nil {

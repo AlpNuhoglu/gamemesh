@@ -35,6 +35,10 @@ const (
 	TypePresenceOnline       = "PresenceOnline"
 	TypePresenceOffline      = "PresenceOffline"
 	TypePresenceStateChanged = "PresenceStateChanged"
+
+	// EXPERIMENT (branch exp/relay-jetstream, never merged): the WebSocket
+	// relay message routed through JetStream to measure what that route costs.
+	TypeRelay = "Relay"
 )
 
 // Topics (channels) events are published on.
@@ -46,7 +50,19 @@ const (
 	// TopicPresence carries player presence transitions (online/offline/state
 	// changes). High-churn and short-lived — see the PRESENCE stream's MaxAge.
 	TopicPresence = "events.presence"
+	// EXPERIMENT (exp/relay-jetstream): TopicRelay carries the WebSocket relay
+	// message for the JetStream latency experiment. See the RELAY stream.
+	TopicRelay = "events.relay"
 )
+
+// RelayPayload is the EXPERIMENT (exp/relay-jetstream) relay event's payload:
+// the room and the outbound frame, already built by the sender's connection.
+// Frame is a string so the frame's bytes survive the JSON envelope unchanged
+// (a json.RawMessage would be compacted and re-escaped).
+type RelayPayload struct {
+	Room  string `json:"room"`
+	Frame string `json:"frame"`
+}
 
 // Event is the wire format for all inter-service messages.
 type Event struct {
