@@ -15,7 +15,7 @@
 //
 // Usage:
 //
-//	go run ./cmd/latencybench -pairs 10 -metrics http://localhost:8084/metrics \
+//	go run ./scripts/latencybench -pairs 10 -metrics http://localhost:8084/metrics \
 //	    -cleanup-dsn 'postgres://gamemesh:gamemesh-dev-password@localhost:5432/gamemesh?sslmode=disable'
 package main
 

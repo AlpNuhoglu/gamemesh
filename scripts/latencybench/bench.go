@@ -579,6 +579,6 @@ func (b *bench) loudLeftovers() {
 			dsn = `'postgres://gamemesh:gamemesh-dev-password@localhost:5432/gamemesh?sslmode=disable'`
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n%s\n!!! %d bench account(s) of run %s are still in Postgres (e-mail bench_%s_*@%s). Delete them with:\n!!!   go run ./cmd/latencybench -cleanup-only -cleanup-dsn %s\n%s\n",
+	fmt.Fprintf(os.Stderr, "\n%s\n!!! %d bench account(s) of run %s are still in Postgres (e-mail bench_%s_*@%s). Delete them with:\n!!!   go run ./scripts/latencybench -cleanup-only -cleanup-dsn %s\n%s\n",
 		strings.Repeat("!", 78), n, b.runID, b.runID, emailDomain, dsn, strings.Repeat("!", 78))
 }

@@ -15,7 +15,7 @@ fans it out from its in-memory hub to the room's other members as
 (`internal/wsgateway/relay.go`). The message does not touch NATS JetStream,
 Redis or the outbox.
 
-`cmd/latencybench` creates 2N players, pairs them through matchmaking, and in
+`scripts/latencybench` creates 2N players, pairs them through matchmaking, and in
 each pair sends 550 messages of 120 bytes, one every 50 ms, from one player to
 the other. The first 50 are warm-up and discarded.
 
@@ -128,7 +128,7 @@ API and the durable path, never through `relay`.
 ## Running it
 
 ```sh
-go run ./cmd/latencybench -pairs 10 \
+go run ./scripts/latencybench -pairs 10 \
   -metrics http://localhost:8084/metrics -out run.json \
   -cleanup-dsn 'postgres://gamemesh:gamemesh-dev-password@localhost:5432/gamemesh?sslmode=disable'
 ```
