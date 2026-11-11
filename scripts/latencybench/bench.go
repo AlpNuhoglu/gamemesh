@@ -556,12 +556,14 @@ func (b *bench) doCleanup() {
 			jtis = append(jtis, p.jti)
 		}
 	}
-	res, err := deleteBenchAccounts(context.Background(), b.cfg.cleanupDSN, runPattern(b.runID), jtis)
+	res, err := deleteBenchAccounts(context.Background(), cleanupOptions{
+		DSN: b.cfg.cleanupDSN, Pattern: runPattern(b.runID), Limit: b.cfg.cleanupLimit, DryRun: b.cfg.cleanupDry, JTIs: jtis,
+	})
 	if err != nil {
-		res = cleanupResult{Pattern: runPattern(b.runID), Error: err.Error()}
+		res = cleanupResult{Pattern: runPattern(b.runID), Limit: b.cfg.cleanupLimit, DryRun: b.cfg.cleanupDry, Error: err.Error()}
 		log.Printf("cleanup FAILED, nothing deleted: %v", err)
 	} else {
-		log.Printf("cleanup deleted: %s", res)
+		log.Printf("cleanup: %s", res)
 	}
 	b.cleanup = &res
 }
@@ -569,7 +571,7 @@ func (b *bench) doCleanup() {
 // loudLeftovers prints the last line when accounts may still be in Postgres.
 func (b *bench) loudLeftovers() {
 	n := b.registeredCount()
-	if n == 0 || (b.cleanup != nil && b.cleanup.Error == "") {
+	if n == 0 || (b.cleanup != nil && b.cleanup.Error == "" && !b.cleanup.DryRun && b.cleanup.Remaining == 0) {
 		return
 	}
 	dsn := `"$POSTGRES_DSN"`
@@ -579,6 +581,6 @@ func (b *bench) loudLeftovers() {
 			dsn = `'postgres://gamemesh:gamemesh-dev-password@localhost:5432/gamemesh?sslmode=disable'`
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n%s\n!!! %d bench account(s) of run %s are still in Postgres (e-mail bench_%s_*@%s). Delete them with:\n!!!   go run ./scripts/latencybench -cleanup-only -cleanup-dsn %s\n%s\n",
-		strings.Repeat("!", 78), n, b.runID, b.runID, emailDomain, dsn, strings.Repeat("!", 78))
+	fmt.Fprintf(os.Stderr, "\n%s\n!!! %d bench account(s) of run %s are still in Postgres (e-mail bench_%s_*@%s, username bench%s*). Count them with -cleanup-dry-run, delete them with:\n!!!   go run ./scripts/latencybench -cleanup-only -cleanup-dsn %s   (-cleanup-limit N caps the batch, default 200; run again if some remain)\n%s\n",
+		strings.Repeat("!", 78), n, b.runID, b.runID, emailDomain, b.runID, dsn, strings.Repeat("!", 78))
 }

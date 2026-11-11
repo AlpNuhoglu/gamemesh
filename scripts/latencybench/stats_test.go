@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"math"
 	"strings"
 	"testing"
@@ -192,8 +193,21 @@ func TestRunPatternIsStrict(t *testing.T) {
 	if got := runPattern("ab12cd"); got != `bench\_ab12cd\_%@latencybench.invalid` {
 		t.Errorf("runPattern = %q", got)
 	}
-	if allBenchPattern != `bench\_%@latencybench.invalid` {
+	if allBenchPattern != `%@latencybench.invalid` {
 		t.Errorf("allBenchPattern = %q", allBenchPattern)
+	}
+}
+
+func TestBenchPredicateHasBothConditions(t *testing.T) {
+	if want := `email LIKE $1 ESCAPE '\' AND username LIKE 'bench%'`; benchPredicate != want {
+		t.Errorf("benchPredicate = %q, want %q", benchPredicate, want)
+	}
+	got := describePredicate(allBenchPattern)
+	if want := `email LIKE %@latencybench.invalid AND username LIKE 'bench%'`; got != want {
+		t.Errorf("describePredicate = %q, want %q", got, want)
+	}
+	if _, err := deleteBenchAccounts(context.Background(), cleanupOptions{Limit: 0}); err == nil {
+		t.Error("limit 0 must be rejected before any connection is made")
 	}
 }
 
