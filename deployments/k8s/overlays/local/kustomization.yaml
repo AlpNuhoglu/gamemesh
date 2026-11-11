@@ -3,6 +3,13 @@
 # replicas exercise the event fan-out). Monitoring is deployments/k8s/monitoring,
 # applied after this by make k8s-apply, as in production.
 #
+# KNOWN BROKEN here: the in-game relay (action "relay") is delivered from one
+# replica's in-memory hub only. With the two websocket replicas this overlay
+# runs, two players of a room who land on different replicas do not receive
+# each other's relay messages, so about half the pairs see none. Backend
+# events (MatchFound, LeaderboardUpdated) are unaffected. To exercise the
+# relay on k3d, scale websocket to 1; see docs/latency.md, "Not done".
+#
 #   kubectl apply -k deployments/k8s/overlays/local
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

@@ -58,6 +58,12 @@ replicas:
     count: 1
   - name: leaderboard
     count: 1
+  # websocket must stay at 1, and not only for the reason above: the in-game
+  # relay (action "relay", internal/wsgateway/relay.go) fans out from one
+  # replica's in-memory hub and does not cross replicas. With two, players of
+  # the same room who land on different replicas never receive each other's
+  # messages. Raise this only after adding a cross-replica ephemeral fan-out
+  # (docs/latency.md, "Not done").
   - name: websocket
     count: 1
   - name: outbox-relay

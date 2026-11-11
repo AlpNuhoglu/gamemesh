@@ -66,6 +66,12 @@ type Config struct {
 	RateLimitRPS   float64
 	RateLimitBurst int
 
+	// WebSocket room relay limits: a token bucket per connection on the relay
+	// action only, refilled at WSRelayRate messages per second up to
+	// WSRelayBurst. Messages over the limit are dropped and counted.
+	WSRelayRate  float64
+	WSRelayBurst int
+
 	// TrustedProxies lists the proxies (IPs or CIDRs) whose X-Forwarded-For /
 	// X-Real-IP headers are believed when resolving the client IP that rate
 	// limiting and access logs key on. Empty (the default) trusts no proxy, so
@@ -174,6 +180,9 @@ func Load(serviceName string) *Config {
 
 		RateLimitRPS:   getEnvFloat("RATE_LIMIT_RPS", 50),
 		RateLimitBurst: getEnvInt("RATE_LIMIT_BURST", 100),
+
+		WSRelayRate:  getEnvFloat("WS_RELAY_RATE", 60),
+		WSRelayBurst: getEnvInt("WS_RELAY_BURST", 120),
 
 		TrustedProxies: splitCSV(getEnv("TRUSTED_PROXIES", "")),
 

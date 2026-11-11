@@ -1,6 +1,7 @@
 // The WebSocket gateway holds client connections, manages room
-// subscriptions and pushes backend events (MatchFound, LeaderboardUpdated)
-// to clients in real time.
+// subscriptions, pushes backend events (MatchFound, LeaderboardUpdated) to
+// clients in real time, and relays ephemeral game traffic between the members
+// of a room in memory.
 package main
 
 import (
@@ -74,6 +75,7 @@ func run() int {
 	// fail softly and presence self-heals from later heartbeats / TTL.
 	notifier := presence.NewHTTPNotifier(cfg.PresenceServiceURL, cfg.PresenceHeartbeatInterval)
 	hub := wsgateway.NewHub(log, m, notifier)
+	hub.SetRelayLimit(cfg.WSRelayRate, cfg.WSRelayBurst)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
 	// Sessions are checked straight against Redis, uncached: once per
 	// connection at the handshake and every sessionSweepInterval afterwards.

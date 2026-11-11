@@ -28,9 +28,9 @@ func drain(c *Client) []Message {
 	var msgs []Message
 	for {
 		select {
-		case raw := <-c.send:
+		case out := <-c.send:
 			var m Message
-			_ = json.Unmarshal(raw, &m)
+			_ = json.Unmarshal(out.msg, &m)
 			msgs = append(msgs, m)
 		default:
 			return msgs

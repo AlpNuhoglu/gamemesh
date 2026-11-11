@@ -1,5 +1,7 @@
-// Package wsgateway maintains WebSocket connections, room subscriptions and
-// fan-out of backend events (MatchFound, LeaderboardUpdated) to clients.
+// Package wsgateway maintains WebSocket connections, room subscriptions,
+// fan-out of backend events (MatchFound, LeaderboardUpdated) to clients, and
+// an in-memory relay of ephemeral game traffic between the members of a room
+// (relay.go), which never goes through the event bus.
 package wsgateway
 
 import (
@@ -10,14 +12,22 @@ import (
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 )
 
 // Message is the wire format between the WS gateway and clients.
-// Client → server: {"action": "join"|"leave", "room": "<id>"}
-// Server → client: {"type": "...", "room": "...", "data": {...}}
+//
+//	Client → server: {"action": "join"|"leave", "room": "<id>"}
+//	                 {"action": "relay", "room": "<id>", "data": <any JSON value>}
+//	Server → client: {"type": "...", "room": "...", "data": {...}}
+//	                 {"type": "Relay", "room": "<id>", "from": "<player id>", "data": <as sent>}
+//
+// A relay goes to the room's other members only, and type and from are set
+// by the server. Its frame is built in relay.go rather than from Message, so
+// data is passed through byte-for-byte.
 type Message struct {
 	Type string          `json:"type,omitempty"`
 	Room string          `json:"room,omitempty"`
@@ -42,6 +52,12 @@ type Hub struct {
 	// interface and never nil (NoopNotifier when no Presence Service is wired),
 	// so the gateway stays decoupled from presence internals and runs standalone.
 	presence presence.Notifier
+
+	// Room relay (relay.go): the per-connection token bucket new connections
+	// get, and the relay instruments. Read-only once connections are served.
+	relayRate  rate.Limit
+	relayBurst int
+	relayM     relayMetrics
 }
 
 // NewHub constructs an empty hub. A nil notifier becomes a no-op, so existing
@@ -57,6 +73,10 @@ func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier) *Hu
 		log:      log,
 		m:        m,
 		presence: notifier,
+
+		relayRate:  defaultRelayRate,
+		relayBurst: defaultRelayBurst,
+		relayM:     newRelayMetrics(m),
 	}
 }
 
