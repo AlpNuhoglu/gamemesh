@@ -29,6 +29,12 @@ import (
 )
 
 const (
+	// relayType is the type of every relayed frame. It is the one ephemeral
+	// message type and must never be the name of a durable event in
+	// pkg/events (boundary_test.go checks), so a client can tell a relayed
+	// message from a backend event and cannot pass one off as the other.
+	relayType = "Relay"
+
 	// maxRelayData bounds the data value of one relay message. The
 	// connection's read limit (maxMsgSize) stays the outer bound.
 	maxRelayData = 1024
@@ -112,7 +118,7 @@ func (c *Client) relayFrame(room string, data []byte) []byte {
 	if c.relay.prefix == nil || room != c.relay.room {
 		r, _ := json.Marshal(room)
 		from, _ := json.Marshal(c.playerID)
-		p := append([]byte(`{"type":"Relay","room":`), r...)
+		p := append([]byte(`{"type":"`+relayType+`","room":`), r...)
 		p = append(p, `,"from":`...)
 		p = append(p, from...)
 		c.relay.room, c.relay.prefix = room, append(p, `,"data":`...)
