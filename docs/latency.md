@@ -121,13 +121,12 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 | Item | What was tried | 50 pairs p50 | Against control | Outcome |
 |---|---|---|---|---|
 | Control | Nothing | 0.290 ms (0.275–0.296) | | |
-| B1 | Boundary tests; no runtime change | not re-measured | 0 ms | Tests kept |
+| B1 | Boundary tests; no runtime change | 0.290 ms (the control is this commit) | 0 ms | Tests kept |
 | B2 | Explicit `SetNoDelay(true)` | 0.293 ms (0.286–0.297) | +0.003 ms, inside the noise | Reverted; test kept |
 | B3 | Nothing: compression is not negotiated | | | Test kept |
 | B4 | Nothing: no batching on the path | | | |
 | B5 | Nothing in production; measured the local gateway hop | 0.333 ms (0.329–0.339) through the gateway | +0.043 ms for the hop | Production already direct |
 | B6 | Nothing: no wait in the write path | | | |
-<!-- summary rows -->
 
 ### Control
 
@@ -277,6 +276,19 @@ API and the durable path, never through `relay`.
   replicas, Redis Pub/Sub or core NATS (not JetStream): each replica publishes
   a relay message once and delivers what it receives to its own room members.
   It adds a hop for cross-replica pairs and was left out of this work.
+- **Who may join a room.** `join` accepts any room ID from any authenticated
+  client, and a member can read and send that room's relay messages. Room IDs
+  are random UUIDs handed out in `MatchFound`, so they are hard to guess, but
+  nothing checks them. Matchmaking already keeps each room's two players in
+  Redis (`room:{id}`); `join` could check against that.
+- **Deleting an account.** There is no endpoint for it, which is why the bench
+  cleans up through the database and leaves its accounts behind in production.
+- **The slow tail.** The 3–8 ms maximum at every load was recorded, not traced.
+- **`WS_RELAY_RATE=0`.** It is accepted and rejects every relay message; the
+  setting is not validated.
+- **Lock and allocations.** The relay fan-out shares the hub's lock with joins
+  and disconnects, and the read side allocates per message. The server's whole
+  share is 0.02 ms at 50 pairs, so neither was touched.
 
 ## Running it
 
