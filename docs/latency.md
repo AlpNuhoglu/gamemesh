@@ -123,6 +123,7 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 | Control | Nothing | 0.290 ms (0.275–0.296) | | |
 | B1 | Boundary tests; no runtime change | not re-measured | 0 ms | Tests kept |
 | B2 | Explicit `SetNoDelay(true)` | 0.293 ms (0.286–0.297) | +0.003 ms, inside the noise | Reverted; test kept |
+| B3 | Nothing: compression is not negotiated | | | Test kept |
 <!-- summary rows -->
 
 ### Control
@@ -206,6 +207,15 @@ No difference, so the call was not committed. What is kept is the check
 (`nodelay_test.go`), which fails if the option is ever off; it was seen to fail
 with `SetNoDelay(false)`. Not checked: the sockets of Traefik, which sits in
 front of the service in production.
+
+### B3. Compression: already off (no change)
+
+The upgrader never sets `EnableCompression`, and gorilla negotiates
+`permessage-deflate` only when it is set. Checked on the wire: a client that
+offers the extension gets a handshake without `Sec-WebSocket-Extensions`
+(`compression_test.go`, seen to fail with compression enabled). Writing
+`EnableCompression: false` would produce the same binary, so there was nothing
+to measure.
 
 ## Message classes
 
