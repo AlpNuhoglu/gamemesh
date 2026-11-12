@@ -58,3 +58,21 @@ func TestHandlerExposesInstruments(t *testing.T) {
 	}
 	assert.Contains(t, body, `service="svc-test"`)
 }
+
+func TestWSRelayInstruments(t *testing.T) {
+	m := New("svc-relay")
+	m.WSRelayDuration.WithLabelValues("total").Observe(0.00003)
+	m.WSRelayDroppedTotal.Inc()
+	m.WSRelayRejectedTotal.WithLabelValues("rate_limited").Inc()
+
+	w := httptest.NewRecorder()
+	m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := w.Body.String()
+
+	// 14 bounds (5µs to 100ms) plus +Inf.
+	assert.Equal(t, 15, strings.Count(body, "gamemesh_ws_relay_duration_seconds_bucket{"))
+	assert.Contains(t, body, `service="svc-relay",stage="total",le="2.5e-05"} 0`)
+	assert.Contains(t, body, `service="svc-relay",stage="total",le="5e-05"} 1`)
+	assert.Contains(t, body, `gamemesh_ws_relay_dropped_total{service="svc-relay"} 1`)
+	assert.Contains(t, body, `gamemesh_ws_relay_rejected_total{reason="rate_limited",service="svc-relay"} 1`)
+}

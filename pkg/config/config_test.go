@@ -27,6 +27,8 @@ func TestLoadDefaults(t *testing.T) {
 	// 0 means "let go-redis size the pool" (10*GOMAXPROCS) — the default must
 	// not silently change the client's own behaviour.
 	assert.Equal(t, 0, cfg.RedisPoolSize)
+	assert.Equal(t, float64(60), cfg.WSRelayRate)
+	assert.Equal(t, 120, cfg.WSRelayBurst)
 }
 
 // TestRedisPoolSizeOptIn pins that the pool is only overridden when explicitly
@@ -57,6 +59,8 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("JWT_EXPIRY", "1h")
 	t.Setenv("RATE_LIMIT_RPS", "12.5")
 	t.Setenv("RATE_LIMIT_BURST", "7")
+	t.Setenv("WS_RELAY_RATE", "30.5")
+	t.Setenv("WS_RELAY_BURST", "45")
 	t.Setenv("AUTO_MIGRATE", "false")
 	t.Setenv("ALLOWED_ORIGINS", "https://a.example.com, https://b.example.com")
 	t.Setenv("TRUSTED_PROXIES", "10.42.0.0/16, 192.0.2.10")
@@ -67,6 +71,8 @@ func TestEnvOverrides(t *testing.T) {
 	assert.Equal(t, time.Hour, cfg.JWTExpiry)
 	assert.Equal(t, 12.5, cfg.RateLimitRPS)
 	assert.Equal(t, 7, cfg.RateLimitBurst)
+	assert.Equal(t, 30.5, cfg.WSRelayRate)
+	assert.Equal(t, 45, cfg.WSRelayBurst)
 	assert.False(t, cfg.AutoMigrate)
 	assert.Equal(t, []string{"https://a.example.com", "https://b.example.com"}, cfg.AllowedOrigins)
 	assert.Equal(t, []string{"10.42.0.0/16", "192.0.2.10"}, cfg.TrustedProxies)

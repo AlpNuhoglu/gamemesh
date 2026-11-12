@@ -25,6 +25,13 @@ var httpLatencyBuckets = []float64{
 	.1, .15, .2, .25, .3, .5, 1, 2.5, 5,
 }
 
+// wsRelayBuckets cover server-internal relay stages, which take microseconds
+// rather than the milliseconds an HTTP request does: 5µs up to 100ms.
+var wsRelayBuckets = []float64{
+	.000005, .00001, .000025, .00005, .0001, .00025, .0005,
+	.001, .0025, .005, .01, .025, .05, .1,
+}
+
 // Metrics bundles every instrument a service may use. Gauges/counters that a
 // given service never touches simply stay at zero and cost nothing.
 type Metrics struct {
@@ -38,6 +45,15 @@ type Metrics struct {
 	MatchmakingQueueSize prometheus.Gauge
 	MatchesCreated       prometheus.Counter
 	LeaderboardUpdates   prometheus.Counter
+
+	// WebSocket room relay instruments (ephemeral client-to-client traffic).
+	// RelayDuration is labelled by stage: process (read to fan-out enqueued),
+	// queue (wait in the recipient's send buffer), write (the frame write) and
+	// total (sender's read to recipient's write). Rejected is labelled by
+	// reason: not_member, too_large, rate_limited, invalid.
+	WSRelayDuration      *prometheus.HistogramVec
+	WSRelayDroppedTotal  prometheus.Counter
+	WSRelayRejectedTotal *prometheus.CounterVec
 
 	// Event-transport instruments. Shared by every transport (RedisBus,
 	// NATSBus) so dashboards work regardless of EVENT_BUS. Labelled by topic so
@@ -115,6 +131,22 @@ func New(service string) *Metrics {
 			Help:        "Total leaderboard score updates.",
 			ConstLabels: constLabels,
 		}),
+		WSRelayDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "gamemesh_ws_relay_duration_seconds",
+			Help:        "Server-side latency of WebSocket room relay messages, by stage.",
+			ConstLabels: constLabels,
+			Buckets:     wsRelayBuckets,
+		}, []string{"stage"}),
+		WSRelayDroppedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_ws_relay_dropped_total",
+			Help:        "Total relay messages shed because a recipient's send buffer was full.",
+			ConstLabels: constLabels,
+		}),
+		WSRelayRejectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_ws_relay_rejected_total",
+			Help:        "Total inbound relay messages rejected, by reason.",
+			ConstLabels: constLabels,
+		}, []string{"reason"}),
 		EventsPublishedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "gamemesh_events_published_total",
 			Help:        "Total events published to the event bus.",
@@ -187,6 +219,7 @@ func New(service string) *Metrics {
 	reg.MustRegister(
 		m.RequestsTotal, m.ErrorsTotal, m.RequestDuration,
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
+		m.WSRelayDuration, m.WSRelayDroppedTotal, m.WSRelayRejectedTotal,
 		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
 		m.PresenceOnlinePlayers, m.PresenceStateTransitionsTotal, m.PresenceHeartbeatTotal, m.PresenceInvalidTransitions,
 		m.OutboxEventsPending, m.OutboxEventsPublishedTotal, m.OutboxPublishFailuresTotal,

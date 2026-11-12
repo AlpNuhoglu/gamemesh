@@ -1,5 +1,8 @@
-# Multiple WS replicas are safe: every replica subscribes to all events via
-# Redis Pub/Sub, so a client connected to any replica receives every event.
+# Multiple WS replicas are safe for backend events: every replica subscribes
+# to all of them on the event bus, so a client connected to any replica
+# receives every event. They are NOT safe for the in-game relay (action
+# "relay"), which fans out from one replica's in-memory hub and does not cross
+# replicas; production pins websocket to 1 for that reason (overlays/prod).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

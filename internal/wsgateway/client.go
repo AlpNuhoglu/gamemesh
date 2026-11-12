@@ -6,6 +6,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -24,10 +25,21 @@ type Client struct {
 	jti      string    // session the connection was opened with
 	expires  time.Time // JWT expiry; the connection must not outlive it
 	conn     *websocket.Conn
-	send     chan []byte
+	send     chan outbound
 	hub      *Hub
 	rooms    map[string]struct{}
 	log      *zap.Logger
+	relay    relayState // see relay.go
+}
+
+// outbound is one message queued for the writer. A relay frame also carries
+// when it was read from the sender and when it was queued, so the writer can
+// time it; for every other message both are zero and it is written as before.
+// msg may be shared by many recipients and must not be modified.
+type outbound struct {
+	msg      []byte
+	readAt   time.Time
+	queuedAt time.Time
 }
 
 func newClient(playerID, jti string, expires time.Time, conn *websocket.Conn, hub *Hub, log *zap.Logger) *Client {
@@ -36,10 +48,11 @@ func newClient(playerID, jti string, expires time.Time, conn *websocket.Conn, hu
 		jti:      jti,
 		expires:  expires,
 		conn:     conn,
-		send:     make(chan []byte, sendBuffer),
+		send:     make(chan outbound, sendBuffer),
 		hub:      hub,
 		rooms:    make(map[string]struct{}),
 		log:      log,
+		relay:    relayState{limiter: rate.NewLimiter(hub.relayRate, hub.relayBurst)},
 	}
 }
 
@@ -56,15 +69,16 @@ func (c *Client) closeWith(code int, reason string) {
 // must not block broadcasts to everyone else (backpressure by shedding).
 func (c *Client) trySend(msg []byte) {
 	select {
-	case c.send <- msg:
+	case c.send <- outbound{msg: msg}:
 	default:
 		c.log.Warn("dropping message to slow client", zap.String("player_id", c.playerID))
 	}
 }
 
 type inboundMessage struct {
-	Action string `json:"action"`
-	Room   string `json:"room"`
+	Action string          `json:"action"`
+	Room   string          `json:"room"`
+	Data   json.RawMessage `json:"data"` // relay only
 }
 
 func (c *Client) readPump() {
@@ -86,8 +100,16 @@ func (c *Client) readPump() {
 			}
 			return
 		}
+		readAt := time.Now() // start of the relay timing
 		var msg inboundMessage
-		if err := json.Unmarshal(raw, &msg); err != nil || msg.Room == "" {
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+		if msg.Action == "relay" {
+			c.handleRelay(&msg, readAt)
+			continue
+		}
+		if msg.Room == "" {
 			continue
 		}
 		switch msg.Action {
@@ -107,13 +129,19 @@ func (c *Client) writePump() {
 	}()
 	for {
 		select {
-		case msg, ok := <-c.send:
+		case out, ok := <-c.send:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			var err error
+			if out.readAt.IsZero() {
+				err = c.conn.WriteMessage(websocket.TextMessage, out.msg)
+			} else {
+				err = c.writeRelay(out)
+			}
+			if err != nil {
 				return
 			}
 		case <-ticker.C:
