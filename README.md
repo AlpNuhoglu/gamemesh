@@ -45,6 +45,7 @@ not come up.
 - [Presence](#presence)
 - [Observability](#observability)
 - [Testing & load testing](#testing--load-testing)
+- [In-game latency](#in-game-latency)
 - [Configuration](#configuration)
 - [Repository layout](#repository-layout)
 - [Roadmap](#roadmap)
@@ -441,6 +442,53 @@ Full write-up: [docs/postmortem-throughput-ceiling.md](docs/postmortem-throughpu
 
 </details>
 
+## In-game latency
+
+**Measured where the latency is; did not reduce it.** One player's message
+reaches the other in about 40 ms in production. The server holds it for
+0.02–0.13 ms; the rest is network. Six candidate improvements were examined
+and none gave a measurable gain: five were already in place, and the one that
+needed a code change stayed inside the noise and was reverted.
+
+Game messages travel client → WebSocket hub → clients, in memory
+(`{"action":"relay"}`), and never through JetStream or the outbox.
+[`scripts/latencybench`](scripts/latencybench) pairs players through
+matchmaking and times 500 messages per pair on the monotonic clock.
+
+| Where | Pairs | p50 | p95 | p99 | Ping round trip p50 |
+|---|---|---|---|---|---|
+| **Production**, `api.gamemesh.app` from a home connection | 1 | 39.9 ms | 41.7 ms | 42.8 ms | 40.0 ms |
+| | 10 | 41.7 ms | 45.0 ms | 48.0 ms | 41.6 ms |
+| Local, bench and server on one machine | 1 | 1.07 ms | 1.58 ms | 1.95 ms | 0.80 ms |
+| | 50 | 0.29 ms | 0.43 ms | 0.59 ms | 0.32 ms |
+
+Before and after, locally. No server change is in the code between the two
+columns; where they differ, it is the session (the Docker VM was restarted in
+between), which is why every change was compared with a control from its own
+session.
+
+| Pairs | | Baseline | After | Inside the server (mean) |
+|---|---|---|---|---|
+| 1 | p50 / p95 / p99 | 1.30 / 2.15 / 2.82 ms | 1.07 / 1.58 / 1.95 ms | 0.13 → 0.11 ms |
+| 50 | p50 / p95 / p99 | 0.28 / 0.39 / 0.60 ms | 0.29 / 0.43 / 0.59 ms | 0.022 → 0.024 ms |
+
+| Examined | Finding (50 pairs, noise 0.02 ms at p50) |
+|---|---|
+| Game traffic on JetStream or the outbox | None was; the boundary is now pinned by source tests |
+| Nagle's algorithm | Already off, read from the socket. An explicit call measured 0.293 ms against 0.290 ms: reverted |
+| Compression | Already not negotiated; a test keeps it so |
+| Batching | None on this path: a frame waits 0.006 ms to be written |
+| Extra hop | None in production. The local gateway hop costs 0.04 ms |
+| Write path | No wait: 0.013 ms per write |
+
+**EXPERIMENT, not a result.** A throwaway build that sends the same message
+through JetStream and back measured +0.09 ms p50 at 50 pairs and +1.67 ms at
+one pair, with the server holding the message 6–10 times longer. The relay
+never took that route, so nothing was gained by avoiding it.
+
+The relay does not cross websocket replicas, which is why production runs one.
+Method, every run and what was left out: [docs/latency.md](docs/latency.md).
+
 ## Configuration
 
 Everything is environment-driven with working development defaults — see
@@ -520,6 +568,7 @@ The deployment plans keep the full lists, with what each item is waiting for:
 - [API reference](docs/api.md)
 - [Messaging](docs/messaging.md) · [Transactional outbox](docs/outbox.md) · [Presence](docs/presence.md)
 - [Observability](docs/observability.md)
+- [In-game latency](docs/latency.md) — what was measured, how, and what each change did
 - [**Deployment & production runbook**](docs/deployment.md) — rebuild, deploy, roll back, rotate secrets, troubleshoot
 - [Troubleshooting](docs/troubleshooting.md)
 - [Throughput post-mortem](docs/postmortem-throughput-ceiling.md)
