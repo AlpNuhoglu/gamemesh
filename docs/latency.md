@@ -31,6 +31,33 @@ the other. The first 50 are warm-up and discarded.
 Client and server clocks are never subtracted from each other. "Outside the
 server" below is end-to-end minus the server's `total`.
 
+## Production
+
+The number to quote. Measured 2026-11-12 on commit `1554985`, from a laptop on
+a home connection to `wss://api.gamemesh.app`: TLS, Traefik, then
+one websocket replica on the single-node k3s cluster (2 vCPU, 4 GB). One run
+per row, 550 messages per pair, the first 50 discarded.
+
+| Pairs | Samples | Lost | p50 ms | p95 ms | p99 ms | max ms | Ping RTT p50 | Ping RTT p95 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 500 | 0 | 39.867 | 41.705 | 42.826 | 47.110 | 39.963 ms | 41.685 ms |
+| 10 | 5 000 | 0 | 41.691 | 44.995 | 47.987 | 138.034 | 41.564 ms | 44.126 ms |
+
+- **It is all network.** End-to-end p50 and the ping round trip differ by
+  0.10 ms and 0.13 ms, in opposite directions. The server's share cannot be
+  seen from outside; measured locally it is 0.02–0.13 ms per message, under
+  half a percent of these 40 ms.
+- **The 40 ms is this client's path, twice.** A message goes sender → server →
+  receiver, and both ends were the same laptop. Two real players each bring
+  their own path to the server.
+- The two rows were measured ten hours apart (01:14 and 11:42 UTC): the first
+  attempt at ten pairs was lost when the laptop went to sleep mid-run. They
+  should not be read as "ten pairs is 1.8 ms slower than one".
+- The server's stage histogram was not scraped by the bench: `/metrics` is not
+  public. 50 pairs were not run against production.
+- The bench ran without `-cleanup-dsn`. 42 bench accounts remain in production
+  (2, 20 from the lost run, 20), recognisable by `bench…@latencybench.invalid`.
+
 ## Baseline
 
 Measured 2026-11-11 on commit `2b233e8`, before any latency change.
@@ -40,8 +67,8 @@ macOS 27.0.1, Docker Desktop 29.9.2 (Linux VM, 14 CPUs, 8 GB). The server is
 the `docker compose` stack, one websocket container; the bench runs natively on
 macOS and reaches it at `ws://localhost:8084`, so every message crosses Docker
 Desktop's port forwarding twice. There is no real network here: these numbers
-describe the server and the local plumbing, not what a player sees. Production
-numbers (`api.gamemesh.app`) will be added separately and are the ones to quote.
+describe the server and the local plumbing, not what a player sees; for that,
+see [Production](#production).
 
 ### End to end, direct to the websocket service
 
