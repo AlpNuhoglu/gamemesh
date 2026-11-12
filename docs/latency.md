@@ -122,6 +122,7 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 |---|---|---|---|---|
 | Control | Nothing | 0.290 ms (0.275–0.296) | | |
 | B1 | Boundary tests; no runtime change | not re-measured | 0 ms | Tests kept |
+| B2 | Explicit `SetNoDelay(true)` | 0.293 ms (0.286–0.297) | +0.003 ms, inside the noise | Reverted; test kept |
 <!-- summary rows -->
 
 ### Control
@@ -185,6 +186,26 @@ message.
   idle stream. A slow or unreachable NATS would hold every relay for up to the
   5 s publish timeout, where the direct path does not depend on it at all.
 - The outbox route (a Postgres insert, then the relay's poll) was not measured.
+
+### B2. Nagle: already off, explicit call reverted (0 ms)
+
+Checked first, on the socket: `TCP_NODELAY`, read with `getsockopt` from the
+server's side of a real upgraded connection, is on. On macOS and on Linux, in
+the Go 1.26.11 image the service is built from. Go sets it on every TCP socket
+it creates.
+
+Then measured anyway, with an explicit `SetNoDelay(true)` after the upgrade:
+
+| | p50 ms | p95 ms | p99 ms | Server total (mean) |
+|---|---|---|---|---|
+| Control, before | 0.290 (0.277–0.293) | 0.426 | 0.590 | 0.024 ms |
+| Explicit `SetNoDelay(true)` | 0.293 (0.286–0.297) | 0.408 | 0.559 | 0.023 ms |
+| Control, after | 0.290 (0.275–0.296) | 0.389 | 0.544 | 0.022 ms |
+
+No difference, so the call was not committed. What is kept is the check
+(`nodelay_test.go`), which fails if the option is ever off; it was seen to fail
+with `SetNoDelay(false)`. Not checked: the sockets of Traefik, which sits in
+front of the service in production.
 
 ## Message classes
 
