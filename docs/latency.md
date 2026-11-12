@@ -125,6 +125,7 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 | B2 | Explicit `SetNoDelay(true)` | 0.293 ms (0.286–0.297) | +0.003 ms, inside the noise | Reverted; test kept |
 | B3 | Nothing: compression is not negotiated | | | Test kept |
 | B4 | Nothing: no batching on the path | | | |
+| B5 | Nothing in production; measured the local gateway hop | 0.333 ms (0.329–0.339) through the gateway | +0.043 ms for the hop | Production already direct |
 <!-- summary rows -->
 
 ### Control
@@ -226,6 +227,20 @@ goes from the fan-out into the receiver's send buffer and is written by the
 next wake-up of its writer. The `queue` stage shows it: 0.006 ms mean and
 0.022 ms p99 at 50 pairs. A batch window, even the 16 ms one, would appear
 there.
+
+### B5. Extra hop: production has none; the gateway hop costs 0.04 ms (no change)
+
+In production the ingress routes `/ws` straight to the websocket service. The
+gateway's `/ws` proxy is reachable only locally, and going through it costs:
+
+| 50 pairs | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|
+| Direct (control) | 0.290 (0.277–0.293) | 0.426 | 0.590 |
+| Through the gateway | 0.333 (0.329–0.339) | 0.489 | 0.664 |
+
++0.043 ms at p50, outside the noise. The route was left in place: it is not on
+the production path, and local clients that care connect to `:8084`, as the
+bench and the k6 script already do.
 
 ## Message classes
 
