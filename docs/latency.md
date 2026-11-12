@@ -121,6 +121,7 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 | Item | What was tried | 50 pairs p50 | Against control | Outcome |
 |---|---|---|---|---|
 | Control | Nothing | 0.290 ms (0.275–0.296) | | |
+| B1 | Boundary tests; no runtime change | not re-measured | 0 ms | Tests kept |
 <!-- summary rows -->
 
 ### Control
@@ -137,6 +138,53 @@ in brackets.
 
 The six 50-pair control runs span 0.275–0.296 ms at p50 and 0.369–0.428 ms at
 p95. That is the noise floor: 0.02 ms at p50.
+
+### B1. Keep game traffic off the durable path: 0 ms, boundary pinned
+
+No game message ever went through JetStream or the outbox. The relay was built
+hub-direct, so there was nothing to move and nothing gained. What B1 leaves is
+the boundary as four checks on the source
+(`internal/wsgateway/boundary_test.go`):
+
+- `relay.go` imports neither the event bus, the outbox nor a transport;
+- only `bridge.go`, the consumer, imports the event bus;
+- the WebSocket service contains no `Publish` call, so nothing a client sends
+  can be put on the bus;
+- the relay's frame type is not the name of a durable event.
+
+Run unchanged against the experiment below, three of the four failed. The
+first passed, because the experiment put its publish in a new file and that
+check reads only `relay.go`; the second and third are the ones that catch a
+reroute.
+
+#### EXPERIMENT: the same message through JetStream
+
+This is not a before and after. The relay never took this route, and nothing
+was made faster by not taking it. It is a one-off measurement of what the
+durable route would cost for the same message, on branch `exp/relay-jetstream`
+(`04064a2`), which is not merged.
+
+In that build an accepted relay message is published to a JetStream stream of
+its own the way backend events are (synchronous publish, waiting for the
+JetStream ack; file storage), consumed back by the websocket service's own
+bridge consumer and its worker pool, and only then queued for the room.
+
+| Pairs | Direct p50 | JetStream p50 | Difference | Direct p99 | JetStream p99 | Server total, direct | Server total, JetStream |
+|---|---|---|---|---|---|---|---|
+| 1 | 1.071 ms | 2.737 ms (1.795–2.824) | +1.666 ms | 1.949 ms | 4.627 ms | 0.108 ms | 1.074 ms |
+| 10 | 0.473 ms | 0.812 ms (0.708–0.816) | +0.339 ms | 1.275 ms | 2.861 ms | 0.053 ms | 0.365 ms |
+| 50 | 0.290 ms | 0.382 ms (0.375–0.388) | +0.092 ms | 0.590 ms | 0.873 ms | 0.024 ms | 0.144 ms |
+
+Three runs per row, same session as the control; no run lost or reordered a
+message.
+
+- The server holds the message six to ten times longer. Most of it is the
+  publish: the sender's read loop waits 0.12–0.83 ms for the ack before it can
+  read the next message.
+- This is JetStream at its best: NATS on the same host, one stream replica, an
+  idle stream. A slow or unreachable NATS would hold every relay for up to the
+  5 s publish timeout, where the direct path does not depend on it at all.
+- The outbox route (a Postgres insert, then the relay's poll) was not measured.
 
 ## Message classes
 
