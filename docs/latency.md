@@ -101,6 +101,42 @@ websocket service.
 - **Noise floor.** At one pair the three runs' p50 spans 0.33 ms; at 50 pairs,
   0.02 ms. A change must move a number by more than its row's span to count.
   The 50-pair row is the one that can resolve small differences.
+- **The tail.** The slowest message of a run takes 2.7–7.6 ms at every load,
+  which at 50 pairs is about ten times p99. The likely cause is a garbage
+  collection pause or a scheduling delay, in the server, the bench process or
+  the Docker VM. It was recorded, not investigated.
+
+## Changes
+
+Measured 2026-11-12 on the same machine, after Docker Desktop had been
+restarted. The restart alone moved the numbers (one pair: p50 1.071 ms against
+the baseline's 1.295 ms, on the same code), so every change is compared with a
+control taken in the same session, never with the baseline table. Each change
+gets three runs at 50 pairs and counts only if it moves p50 outside the
+control's range.
+
+No change to the server made the relay faster, and none is in the code. The
+server's share was 0.02 ms of 0.29 ms to begin with.
+
+| Item | What was tried | 50 pairs p50 | Against control | Outcome |
+|---|---|---|---|---|
+| Control | Nothing | 0.290 ms (0.275–0.296) | | |
+<!-- summary rows -->
+
+### Control
+
+Commit `afbff13`, direct to the websocket service. Median of three runs, range
+in brackets.
+
+| Pairs | p50 ms | p95 ms | p99 ms | Server total (mean) |
+|---|---|---|---|---|
+| 1 | 1.071 (0.987–1.186) | 1.578 (1.461–1.596) | 1.949 (1.800–2.004) | 0.108 ms |
+| 10 | 0.473 (0.461–0.485) | 0.903 (0.882–0.969) | 1.275 (1.183–1.285) | 0.053 ms |
+| 50 | 0.290 (0.277–0.293) | 0.426 (0.402–0.428) | 0.590 (0.573–0.628) | 0.024 ms |
+| 50, repeated after B2 | 0.290 (0.275–0.296) | 0.389 (0.369–0.400) | 0.544 (0.541–0.601) | 0.022 ms |
+
+The six 50-pair control runs span 0.275–0.296 ms at p50 and 0.369–0.428 ms at
+p95. That is the noise floor: 0.02 ms at p50.
 
 ## Message classes
 
@@ -137,10 +173,20 @@ go run ./scripts/latencybench -pairs 10 \
 
 Bench accounts are `bench<run><n>` with the address
 `bench_<run>_<n>@latencybench.invalid` (usernames must be alphanumeric, so the
-address carries the marker; `.invalid` is a reserved TLD). A run logs its
-players out and, with `-cleanup-dsn`, deletes them and their outbox rows from
-Postgres. `-cleanup-only` deletes every bench account, for a run that crashed.
-There is no account-deletion endpoint, which is why cleanup needs the database.
+address carries the marker; `.invalid` is a reserved TLD). Every run leaves the
+matchmaking queue and logs its players out.
+
+There is no account-deletion endpoint, so removing the rows needs the
+database, and only happens when `-cleanup-dsn` is given (it has no default). A
+player is deleted only if both hold: the address matches
+`%@latencybench.invalid` and the username starts with `bench`. The tool counts
+the matching players and prints the number first (`-cleanup-dry-run` stops
+there), deletes at most `-cleanup-limit` players (200) with their outbox rows,
+and reports what it deleted and what remains. `-cleanup-only` does just this,
+for a run that crashed.
+
+Against production the tool is run without `-cleanup-dsn`: the bench accounts
+stay, recognisable by the same two marks.
 
 What a run leaves outside Postgres expires on its own: the matchmaking room in
 Redis (1 h), and the `PlayerRegistered`, `SessionRevoked` and `MatchFound`
