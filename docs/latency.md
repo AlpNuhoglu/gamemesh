@@ -126,6 +126,7 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 | B3 | Nothing: compression is not negotiated | | | Test kept |
 | B4 | Nothing: no batching on the path | | | |
 | B5 | Nothing in production; measured the local gateway hop | 0.333 ms (0.329–0.339) through the gateway | +0.043 ms for the hop | Production already direct |
+| B6 | Nothing: no wait in the write path | | | |
 <!-- summary rows -->
 
 ### Control
@@ -241,6 +242,18 @@ gateway's `/ws` proxy is reachable only locally, and going through it costs:
 +0.043 ms at p50, outside the noise. The route was left in place: it is not on
 the production path, and local clients that care connect to `:8084`, as the
 bench and the k6 script already do.
+
+### B6. Write path: no wait found (no change)
+
+The writer's only ticker is the 54 s ping. Each message is one `WriteMessage`,
+which writes one frame to the socket at once; a relay frame is under 300 bytes
+and the write buffer is 1024. Measured at 50 pairs: `write` 0.013 ms mean and
+0.035 ms p99, `queue` 0.006 ms. End-to-end p50 (0.290 ms) is no more than the
+ping round trip (0.32 ms), so nothing waits after the write either.
+
+Seen and left alone, since the whole server share is 0.024 ms: the fan-out
+takes the hub's read lock, which joins and disconnects hold for writing; and
+the read side allocates for every message.
 
 ## Message classes
 
