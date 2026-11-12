@@ -124,6 +124,7 @@ server's share was 0.02 ms of 0.29 ms to begin with.
 | B1 | Boundary tests; no runtime change | not re-measured | 0 ms | Tests kept |
 | B2 | Explicit `SetNoDelay(true)` | 0.293 ms (0.286–0.297) | +0.003 ms, inside the noise | Reverted; test kept |
 | B3 | Nothing: compression is not negotiated | | | Test kept |
+| B4 | Nothing: no batching on the path | | | |
 <!-- summary rows -->
 
 ### Control
@@ -216,6 +217,15 @@ offers the extension gets a handshake without `Sec-WebSocket-Extensions`
 (`compression_test.go`, seen to fail with compression enabled). Writing
 `EnableCompression: false` would produce the same binary, so there was nothing
 to measure.
+
+### B4. Batching: none on this path (no change)
+
+The batching in this codebase is in the outbox relay's poll, the matchmaking
+tick and the presence heartbeat. The WebSocket path has none: a relay frame
+goes from the fan-out into the receiver's send buffer and is written by the
+next wake-up of its writer. The `queue` stage shows it: 0.006 ms mean and
+0.022 ms p99 at 50 pairs. A batch window, even the 16 ms one, would appear
+there.
 
 ## Message classes
 
