@@ -263,6 +263,234 @@
           "instant": false
         }
       ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Relay time in server (mean, by stage)",
+      "description": "Mean time a relayed message spends in the WebSocket server, per stage, over the last minute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gamemesh-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gamemesh-prometheus"
+          },
+          "expr": "sum by (stage) (rate(gamemesh_ws_relay_duration_seconds_sum{service=\"websocket\"}[1m])) / sum by (stage) (rate(gamemesh_ws_relay_duration_seconds_count{service=\"websocket\"}[1m]))",
+          "legendFormat": "{{stage}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Relay time in server (p99, by stage)",
+      "description": "99 % of relayed messages spend less than this in the WebSocket server, per stage. From the histogram's buckets (histogram_quantile), over the last minute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gamemesh-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gamemesh-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (stage, le) (rate(gamemesh_ws_relay_duration_seconds_bucket{service=\"websocket\"}[1m])))",
+          "legendFormat": "{{stage}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Relay messages dropped (slow receiver)",
+      "description": "Messages per second dropped because the receiving connection was too slow, over the last minute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gamemesh-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gamemesh-prometheus"
+          },
+          "expr": "sum(rate(gamemesh_ws_relay_dropped_total{service=\"websocket\"}[1m]))",
+          "legendFormat": "dropped",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Relay messages rejected (by reason)",
+      "description": "Messages per second the WebSocket server refused to relay, by reason, over the last minute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gamemesh-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gamemesh-prometheus"
+          },
+          "expr": "sum by (reason) (rate(gamemesh_ws_relay_rejected_total{service=\"websocket\"}[1m]))",
+          "legendFormat": "{{reason}}",
+          "range": true,
+          "instant": false
+        }
+      ]
     }
   ]
 }
