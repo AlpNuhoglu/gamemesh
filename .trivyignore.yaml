@@ -9,182 +9,182 @@ vulnerabilities:
   - id: CVE-2025-61726
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2025-61729
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2025-68121
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-25679
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-27145
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-32280
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-32281
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-32283
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-33811
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-33814
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-33818
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-39820
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-39821
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-39822
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-39836
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-42499
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-42504
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-56853
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-56858
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-56859
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-56860
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-56862
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-78667
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-78669
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-97031
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
   - id: CVE-2026-111943
     paths: ["usr/local/bin/gosu"]
     statement: >-
-      postgres:16.15-alpine ships gosu built with go1.24.6. Its entrypoint only
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
@@ -233,217 +233,6 @@ vulnerabilities:
       govulncheck -mode=binary lists the module only. Expires after the next
       minor release, due about 2026-12-16.
     expired_at: 2026-12-16
-  # postgres:16.15-alpine (2026-11-11): Alpine 3.24 has the fixed packages,
-  # the official image not yet. Version-scoped, so the fixed packages are not
-  # covered; on the next digest these hide nothing and can go.
-  - id: CVE-2026-107364
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112315
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112316
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112317
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112318
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112319
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112320
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112321
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112322
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-112323
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-118380
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-119079
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-40355
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-40356
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-71199
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-71200
-    purls: ["pkg:apk/alpine/krb5-libs@1.22.2-r1"]
-    statement: >-
-      postgres:16.15-alpine has krb5-libs 1.22.2-r1 (fixed in 1.22.3-r0, in
-      Alpine 3.24's repository but not yet in the official image, also not in
-      its digest re-pushed on 2026-11-11). Most of these are in the KDC and
-      kadmind, which the image does not contain; the server binary links
-      libgssapi_krb5, and GSSAPI is not configured. Postgres is a ClusterIP
-      Service, reachable only from inside the cluster. Scoped to this package
-      version: the fixed one is not covered. Reasoned from the image's files,
-      not exercised.
-    expired_at: 2026-11-25
-  - id: CVE-2026-87636
-    purls: ["pkg:apk/alpine/libxslt@1.1.43-r3"]
-    statement: >-
-      postgres:16.15-alpine has libxslt 1.1.43-r3 (fixed in 1.1.43-r4, not
-      yet in the official image). Its only user in the image is pgxml.so, the
-      xml2 extension, which is not installed in the database. Scoped to this
-      package version.
-    expired_at: 2026-11-25
-  - id: CVE-2026-9947
-    purls: ["pkg:apk/alpine/libxslt@1.1.43-r3"]
-    statement: >-
-      postgres:16.15-alpine has libxslt 1.1.43-r3 (fixed in 1.1.43-r4, not
-      yet in the official image). Its only user in the image is pgxml.so, the
-      xml2 extension, which is not installed in the database. Scoped to this
-      package version.
-    expired_at: 2026-11-25
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.
 misconfigurations:
