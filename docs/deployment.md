@@ -266,6 +266,39 @@ In its first seconds `secrets-encrypt status` can answer `secret-encrypt error
 ID ...` (the server log says `runtime core not ready`); asked again half a
 minute later it reports the status.
 
+#### Image garbage collection
+
+Every deploy pulls eight new images, and the kubelet's defaults remove unused
+ones only when the disk is 85 % full. Three weeks and about a hundred deploys
+after the first one, images were 17.7 GiB of the 27.6 GiB in use, 45 % of the
+61.7 GiB disk (2026-11-13; Prometheus's data was 74 MiB and the pods' logs
+20 MiB). `deployments/server/k3s/kubelet.conf.d/10-image-gc.conf` changes
+that: an image unused for a week is removed whatever the disk's state, and if
+the disk still reaches 60 % the kubelet collects down to 50 %. The age limit
+is the one that keeps the disk empty; thresholds alone would hold it between
+50 and 60 %. Rollbacks are unaffected: the previous release is a week old at
+most in normal use, and an older one pulls its images again.
+
+The kubelet reads the file at start, so it takes a restart of k3s (pods keep
+running; the API is away for some seconds). The age limit has no command-line
+flag, which is why this is a kubelet configuration drop-in and not a
+`kubelet-arg` in `config.yaml`. Tried on k3d with k3s 1.35.5: the three values
+are picked up and the file survives the restart.
+
+```bash
+# Admin machine, in the repo
+scp deployments/server/k3s/kubelet.conf.d/10-image-gc.conf gamemesh:
+# Server, as alp
+sudo install -D -m 644 10-image-gc.conf /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+sudo systemctl restart k3s
+# Admin machine: 60, 50 and 168h0m0s
+kprod get --raw /api/v1/nodes/gamemesh-prod-1/proxy/configz |
+  jq '.kubeletconfig | {imageGCHighThresholdPercent, imageGCLowThresholdPercent, imageMaximumGCAge}'
+```
+
+The kubelet forgets when an image was last used when it restarts, so the
+first removals come a week after the restart, not at once.
+
 The admin kubeconfig (cluster-admin) is kept in its own file on the admin's
 machine, never merged into `~/.kube/config` and never given to CI, so a plain
 `kubectl` always talks to the local cluster:
