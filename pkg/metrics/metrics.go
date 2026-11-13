@@ -46,6 +46,10 @@ type Metrics struct {
 	MatchesCreated       prometheus.Counter
 	LeaderboardUpdates   prometheus.Counter
 
+	// MatchmakingRoomDeniedTotal counts GET /rooms/:id requests refused
+	// because the caller is not one of the room's players.
+	MatchmakingRoomDeniedTotal prometheus.Counter
+
 	// WebSocket room relay instruments (ephemeral client-to-client traffic).
 	// RelayDuration is labelled by stage: process (read to fan-out enqueued),
 	// queue (wait in the recipient's send buffer), write (the frame write) and
@@ -134,6 +138,11 @@ func New(service string) *Metrics {
 		LeaderboardUpdates: prometheus.NewCounter(prometheus.CounterOpts{
 			Name:        "gamemesh_leaderboard_updates_total",
 			Help:        "Total leaderboard score updates.",
+			ConstLabels: constLabels,
+		}),
+		MatchmakingRoomDeniedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_matchmaking_room_denied_total",
+			Help:        "Total room lookups refused because the caller is not a player of the room.",
 			ConstLabels: constLabels,
 		}),
 		WSRelayDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -229,6 +238,7 @@ func New(service string) *Metrics {
 	reg.MustRegister(
 		m.RequestsTotal, m.ErrorsTotal, m.RequestDuration,
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
+		m.MatchmakingRoomDeniedTotal,
 		m.WSRelayDuration, m.WSRelayDroppedTotal, m.WSRelayRejectedTotal, m.WSJoinRejectedTotal,
 		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
 		m.PresenceOnlinePlayers, m.PresenceStateTransitionsTotal, m.PresenceHeartbeatTotal, m.PresenceInvalidTransitions,

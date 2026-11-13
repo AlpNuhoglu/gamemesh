@@ -87,7 +87,14 @@ func (h *Handler) status(c *gin.Context) {
 	httpx.OK(c, gin.H{"queued": queued, "queue_size": size})
 }
 
+// getRoom returns a room to its own players only. Anyone else gets the same
+// 404 as for a room that does not exist, so the answer does not tell a
+// stranger whether a room ID is live; the refusal is counted.
 func (h *Handler) getRoom(c *gin.Context) {
+	playerID, ok := callerID(c)
+	if !ok {
+		return
+	}
 	room, err := h.svc.GetRoom(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, ErrRoomNotFound) {
@@ -95,6 +102,11 @@ func (h *Handler) getRoom(c *gin.Context) {
 			return
 		}
 		httpx.Error(c, http.StatusInternalServerError, "failed to fetch room")
+		return
+	}
+	if !room.HasPlayer(playerID) {
+		h.svc.m.MatchmakingRoomDeniedTotal.Inc()
+		httpx.Error(c, http.StatusNotFound, ErrRoomNotFound.Error())
 		return
 	}
 	httpx.OK(c, room)
