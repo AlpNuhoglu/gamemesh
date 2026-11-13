@@ -322,8 +322,12 @@ func (h *Hub) rejectJoin(c *Client, room string, reason prometheus.Counter) {
 	c.trySend(marshal(Message{Type: joinRejectedType, Room: room}))
 }
 
+// leave removes c from room and tells the room's remaining members. A leave
+// for a room c is not in does nothing: otherwise anyone who knew a room's ID
+// could make its members see a PlayerLeft without ever having joined.
 func (h *Hub) leave(c *Client, room string) {
 	h.mu.Lock()
+	_, wasMember := h.rooms[room][c]
 	delete(c.rooms, room)
 	if members, ok := h.rooms[room]; ok {
 		delete(members, c)
@@ -333,6 +337,9 @@ func (h *Hub) leave(c *Client, room string) {
 	}
 	h.mu.Unlock()
 
+	if !wasMember {
+		return
+	}
 	h.BroadcastToRoom(room, marshal(Message{Type: "PlayerLeft", Room: room, Data: playerData(c.playerID)}))
 }
 

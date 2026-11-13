@@ -280,6 +280,34 @@ func TestJoinRejectsNonParticipantInHub(t *testing.T) {
 	assert.Equal(t, float64(1), joinRejected(hub, "not_participant"))
 }
 
+// TestLeaveByNonMemberTellsNobody: a player who never got into a room cannot
+// make its members see a PlayerLeft by sending a leave for it.
+func TestLeaveByNonMemberTellsNobody(t *testing.T) {
+	hub := newTestHub()
+	alice := newHubClient(hub, "alice")
+	mallory := newHubClient(hub, "mallory")
+	hub.register(alice)
+	hub.register(mallory)
+	require.True(t, hub.join(alice, "room-1"))
+	drainFrames(alice)
+
+	hub.leave(mallory, "room-1")
+
+	assert.Empty(t, drainFrames(alice), "a non-member's leave reached the room")
+	assert.Equal(t, []string{"alice"}, membersOf(hub, "room-1"))
+
+	// A member's own leave is still announced to those who stay.
+	roomsOf(hub).add("room-1", "bob")
+	bob := newHubClient(hub, "bob")
+	hub.register(bob)
+	require.True(t, hub.join(bob, "room-1"))
+	drainFrames(alice)
+	hub.leave(bob, "room-1")
+	frames := drainFrames(alice)
+	require.Len(t, frames, 1)
+	assert.Contains(t, frames[0], `"type":"PlayerLeft"`)
+}
+
 // TestJoinFailsClosedWhenLookupFails: if the room record cannot be read,
 // even a listed participant is rejected rather than let in unchecked.
 func TestJoinFailsClosedWhenLookupFails(t *testing.T) {
