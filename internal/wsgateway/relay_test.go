@@ -39,7 +39,20 @@ func drainFrames(c *Client) []string {
 }
 
 func rejected(hub *Hub, reason string) float64 {
-	return counter(hub, `gamemesh_ws_relay_rejected_total{reason="`+reason+`",service="ws-hub-test"}`)
+	return byReason(hub, "gamemesh_ws_relay_rejected_total", reason)
+}
+
+// byReason returns the value of the hub's metric series for reason, whatever
+// the hub's service label, or -1 if there is none.
+func byReason(hub *Hub, metric, reason string) float64 {
+	prefix := metric + `{reason="` + reason + `",`
+	for _, line := range strings.Split(scrape(hub), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			f, _ := strconv.ParseFloat(line[strings.LastIndexByte(line, ' ')+1:], 64)
+			return f
+		}
+	}
+	return -1
 }
 
 // counter scrapes the hub's metrics and returns the value of one series.
@@ -174,9 +187,10 @@ func TestRelaySlowReceiverDropIsCounted(t *testing.T) {
 // timed once.
 func TestRelayOverWebSocket(t *testing.T) {
 	srv, tokens, hub := newWSServer(t)
-	alice := uuid.New()
+	alice, bob := uuid.New(), uuid.New()
+	roomsOf(hub).add("room-1", alice.String(), bob.String())
 	conns := make([]*websocket.Conn, 0, 2)
-	for _, id := range []uuid.UUID{alice, uuid.New()} {
+	for _, id := range []uuid.UUID{alice, bob} {
 		token, _, err := tokens.Generate(id, "player")
 		require.NoError(t, err)
 		conn := dialToken(t, srv, token)

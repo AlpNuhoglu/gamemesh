@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
 	"github.com/alpnuhoglu/gamemesh/internal/wsgateway"
@@ -74,7 +75,10 @@ func run() int {
 	// gateway and the Presence Service; if the Presence Service is down, calls
 	// fail softly and presence self-heals from later heartbeats / TTL.
 	notifier := presence.NewHTTPNotifier(cfg.PresenceServiceURL, cfg.PresenceHeartbeatInterval)
-	hub := wsgateway.NewHub(log, m, notifier)
+	// A join is accepted only for a player matchmaking put in that room; the
+	// room record is read straight from Redis on every join.
+	rooms := roomParticipants{store: matchmaking.NewRoomStore(rdb, cfg.RoomTTL)}
+	hub := wsgateway.NewHub(log, m, notifier, rooms)
 	hub.SetRelayLimit(cfg.WSRelayRate, cfg.WSRelayBurst)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
 	// Sessions are checked straight against Redis, uncached: once per
@@ -110,7 +114,8 @@ func run() int {
 	})
 
 	// Delivering events is this service's job, so the bus is a readiness
-	// dependency, and so is Redis, which every handshake's session check needs.
+	// dependency, and so is Redis, which every handshake's session check and
+	// every join's room check needs.
 	// Presence is another application service and never is.
 	engine := server.NewEngine(cfg, log, m,
 		server.WithReadiness(cfg.EventBus, bus.Ping),

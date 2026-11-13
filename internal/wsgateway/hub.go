@@ -7,10 +7,12 @@ package wsgateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
@@ -24,6 +26,13 @@ import (
 //	                 {"action": "relay", "room": "<id>", "data": <any JSON value>}
 //	Server → client: {"type": "...", "room": "...", "data": {...}}
 //	                 {"type": "Relay", "room": "<id>", "from": "<player id>", "data": <as sent>}
+//	                 {"type": "JoinRejected", "room": "<id>"}
+//
+// A join is accepted only if matchmaking's record of the room exists and
+// lists the connection's player (see RoomChecker); the room is then told
+// PlayerJoined. Otherwise the sender alone gets JoinRejected, with no reason,
+// so a stranger cannot learn whether a room exists, and its memberships are
+// unchanged. Joins draw from the same token bucket as relays.
 //
 // A relay goes to the room's other members only, and type and from are set
 // by the server. Its frame is built in relay.go rather than from Message, so
@@ -53,6 +62,10 @@ type Hub struct {
 	// so the gateway stays decoupled from presence internals and runs standalone.
 	presence presence.Notifier
 
+	// participants decides who may join a room (see join). Never nil.
+	participants RoomChecker
+	joinM        joinMetrics
+
 	// Room relay (relay.go): the per-connection token bucket new connections
 	// get, and the relay instruments. Read-only once connections are served.
 	relayRate  rate.Limit
@@ -60,11 +73,59 @@ type Hub struct {
 	relayM     relayMetrics
 }
 
+// ErrRoomNotFound is what a RoomChecker returns for a room that does not
+// exist, or no longer does.
+var ErrRoomNotFound = errors.New("room not found")
+
+// RoomChecker answers whether a player may join a room. In the service it
+// reads matchmaking's room record (cmd/websocket); it is an interface so this
+// package depends on neither Redis nor matchmaking.
+type RoomChecker interface {
+	// IsParticipant reports whether playerID is one of the room's players,
+	// or returns ErrRoomNotFound if there is no such room.
+	IsParticipant(ctx context.Context, room, playerID string) (bool, error)
+}
+
+// noRoomChecker is what a hub built without a RoomChecker gets: every join
+// fails as if the lookup were down, so leaving the checker out closes rooms
+// rather than opening them.
+type noRoomChecker struct{}
+
+func (noRoomChecker) IsParticipant(context.Context, string, string) (bool, error) {
+	return false, errors.New("no room checker configured")
+}
+
+// roomCheckTimeout bounds the room lookup of one join. It runs on the
+// connection's read loop, so a stalled Redis holds that connection's inbound
+// messages for at most this long, and the join is then rejected.
+const roomCheckTimeout = 2 * time.Second
+
+// joinMetrics holds the rejection counters resolved once, which also makes
+// every reason's series exist from the start.
+type joinMetrics struct {
+	notParticipant, roomNotFound, unavailable, rateLimited prometheus.Counter
+}
+
+func newJoinMetrics(m *metrics.Metrics) joinMetrics {
+	reason := m.WSJoinRejectedTotal.WithLabelValues
+	return joinMetrics{
+		notParticipant: reason("not_participant"),
+		roomNotFound:   reason("room_not_found"),
+		unavailable:    reason("unavailable"),
+		rateLimited:    reason("rate_limited"),
+	}
+}
+
 // NewHub constructs an empty hub. A nil notifier becomes a no-op, so existing
 // callers (and tests) that do not care about presence keep working unchanged.
-func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier) *Hub {
+// A nil rooms checker is not a way to switch the join check off: every join
+// is then rejected as "unavailable".
+func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier, rooms RoomChecker) *Hub {
 	if notifier == nil {
 		notifier = presence.NoopNotifier{}
+	}
+	if rooms == nil {
+		rooms = noRoomChecker{}
 	}
 	return &Hub{
 		clients:  make(map[*Client]struct{}),
@@ -73,6 +134,9 @@ func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier) *Hu
 		log:      log,
 		m:        m,
 		presence: notifier,
+
+		participants: rooms,
+		joinM:        newJoinMetrics(m),
 
 		relayRate:  defaultRelayRate,
 		relayBurst: defaultRelayBurst,
@@ -180,7 +244,27 @@ func (h *Hub) count() int {
 	return len(h.clients)
 }
 
-func (h *Hub) join(c *Client, room string) {
+// handleJoin processes one inbound join that ReadMessage returned at readAt.
+// A join costs a room lookup on this read loop, so it draws a token from the
+// same bucket as relay messages and is rejected when the bucket is empty.
+func (c *Client) handleJoin(room string, readAt time.Time) {
+	if !c.relay.limiter.AllowN(readAt, 1) {
+		c.hub.rejectJoin(c, room, c.hub.joinM.rateLimited)
+		return
+	}
+	c.hub.join(c, room)
+}
+
+// join adds c to room and tells the room, if c's player is one of the room's
+// participants; otherwise it rejects the join. It reports whether c joined.
+// The lookup runs before the hub lock is taken, so a slow lookup holds up
+// only this connection.
+func (h *Hub) join(c *Client, room string) bool {
+	if reason := h.checkJoin(c.playerID, room); reason != nil {
+		h.rejectJoin(c, room, reason)
+		return false
+	}
+
 	h.mu.Lock()
 	if h.rooms[room] == nil {
 		h.rooms[room] = make(map[*Client]struct{})
@@ -190,6 +274,34 @@ func (h *Hub) join(c *Client, room string) {
 	h.mu.Unlock()
 
 	h.BroadcastToRoom(room, marshal(Message{Type: "PlayerJoined", Room: room, Data: playerData(c.playerID)}))
+	return true
+}
+
+// checkJoin asks the RoomChecker whether playerID may join room, and returns
+// nil if it may, or the counter of the reason it may not. Failing to get an
+// answer in time is a rejection.
+func (h *Hub) checkJoin(playerID, room string) prometheus.Counter {
+	ctx, cancel := context.WithTimeout(context.Background(), roomCheckTimeout)
+	defer cancel()
+	ok, err := h.participants.IsParticipant(ctx, room, playerID)
+	switch {
+	case errors.Is(err, ErrRoomNotFound):
+		return h.joinM.roomNotFound
+	case err != nil:
+		h.log.Warn("room membership check failed", zap.String("player_id", playerID), zap.Error(err))
+		return h.joinM.unavailable
+	case !ok:
+		return h.joinM.notParticipant
+	}
+	return nil
+}
+
+// rejectJoin counts a rejected join and tells the sender alone, without a
+// reason. Only c's readPump calls it, and only readPump unregisters c, so c's
+// send channel is still open.
+func (h *Hub) rejectJoin(c *Client, room string, reason prometheus.Counter) {
+	reason.Inc()
+	c.trySend(marshal(Message{Type: joinRejectedType, Room: room}))
 }
 
 func (h *Hub) leave(c *Client, room string) {

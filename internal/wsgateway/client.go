@@ -114,7 +114,7 @@ func (c *Client) readPump() {
 		}
 		switch msg.Action {
 		case "join":
-			c.hub.join(c, msg.Room)
+			c.handleJoin(msg.Room, readAt)
 		case "leave":
 			c.hub.leave(c, msg.Room)
 		}

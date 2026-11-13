@@ -55,6 +55,11 @@ type Metrics struct {
 	WSRelayDroppedTotal  prometheus.Counter
 	WSRelayRejectedTotal *prometheus.CounterVec
 
+	// WSJoinRejectedTotal counts room joins the WebSocket service refused, by
+	// reason: not_participant, room_not_found, unavailable (the room lookup
+	// failed or timed out), rate_limited. Never labelled by room or player.
+	WSJoinRejectedTotal *prometheus.CounterVec
+
 	// Event-transport instruments. Shared by every transport (RedisBus,
 	// NATSBus) so dashboards work regardless of EVENT_BUS. Labelled by topic so
 	// matchmaking and leaderboard traffic can be split; result distinguishes
@@ -147,6 +152,11 @@ func New(service string) *Metrics {
 			Help:        "Total inbound relay messages rejected, by reason.",
 			ConstLabels: constLabels,
 		}, []string{"reason"}),
+		WSJoinRejectedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_ws_join_rejected_total",
+			Help:        "Total WebSocket room joins rejected, by reason.",
+			ConstLabels: constLabels,
+		}, []string{"reason"}),
 		EventsPublishedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "gamemesh_events_published_total",
 			Help:        "Total events published to the event bus.",
@@ -219,7 +229,7 @@ func New(service string) *Metrics {
 	reg.MustRegister(
 		m.RequestsTotal, m.ErrorsTotal, m.RequestDuration,
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
-		m.WSRelayDuration, m.WSRelayDroppedTotal, m.WSRelayRejectedTotal,
+		m.WSRelayDuration, m.WSRelayDroppedTotal, m.WSRelayRejectedTotal, m.WSJoinRejectedTotal,
 		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
 		m.PresenceOnlinePlayers, m.PresenceStateTransitionsTotal, m.PresenceHeartbeatTotal, m.PresenceInvalidTransitions,
 		m.OutboxEventsPending, m.OutboxEventsPublishedTotal, m.OutboxPublishFailuresTotal,

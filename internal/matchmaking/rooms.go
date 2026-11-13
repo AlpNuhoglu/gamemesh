@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,6 +21,11 @@ type Room struct {
 	Ranks     map[string]int `json:"ranks"`
 	Status    string         `json:"status"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+// HasPlayer reports whether playerID is one of the room's players.
+func (r *Room) HasPlayer(playerID string) bool {
+	return slices.Contains(r.Players, playerID)
 }
 
 // RoomStore caches rooms in Redis.
