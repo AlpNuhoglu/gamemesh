@@ -50,8 +50,13 @@ prepare() {
   sed -i "s/newTag: set-by-deploy/newTag: ${sha}/" "$f"
   kubectl kustomize "$tree/deployments/k8s/overlays/prod" > "$WORK/render-$sha.yaml" || return 1
   if grep -q 'set-by-deploy' "$WORK/render-$sha.yaml"; then echo "a placeholder is left" >&2; return 1; fi
-  m=$(grep -cE "image: ghcr.io/alpnuhoglu/gamemesh-[a-z-]+:${sha}$" "$WORK/render-$sha.yaml" || true)
-  if [ "$m" -ne "$n" ]; then echo "expected $n images at ${sha}, found $m" >&2; return 1; fi
+  # Distinct images, not lines: one image can run in more than one workload
+  # (two CronJobs share the backup image), and it has one placeholder. Lines
+  # would also match in an older overlay, where each image appears once, but
+  # distinct references are what a placeholder stands for, in every commit.
+  m=$( (grep -oE "image: ghcr.io/alpnuhoglu/gamemesh-[a-z-]+:${sha}$" "$WORK/render-$sha.yaml" || true) | sort -u | wc -l)
+  m=$((m)) # wc pads the number with spaces on macOS
+  if [ "$m" -ne "$n" ]; then echo "expected $n distinct images at ${sha}, found $m" >&2; return 1; fi
   echo "$tree/deployments/k8s/overlays/prod"
 }
 
