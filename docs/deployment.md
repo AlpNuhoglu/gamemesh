@@ -413,7 +413,8 @@ thing by hand, for when CI cannot run.
 
 Prometheus and Grafana run in the `monitoring` namespace
 (`deployments/k8s/monitoring`). Prometheus scrapes the services' pods in `gamemesh` every 15 s and keeps 7 days, at
-most 2 GB, on a 3 Gi volume. It is never exposed: its Service is ClusterIP and
+most 2 GB, on a 3 Gi volume. Once a minute it also reads the node's disk
+usage from the kubelet, keeping only those series ("Disk"). It is never exposed: its Service is ClusterIP and
 the namespace's admission policy refuses any other Service type and any
 Ingress. Grafana has one data source (Prometheus) and the status dashboard
 (`grafana/dashboards/status.json`), both provisioned from the repository and
@@ -423,6 +424,21 @@ exposed; only the status page is ("Status page"). CI deploys both after the
 app; they need the namespace, Prometheus's ServiceAccount and Role in
 `gamemesh` ("Cluster-level manifests") and the `grafana-admin` Secret
 ("Production secrets") first.
+
+**Two files to keep in step by hand.** CI applies Prometheus's configuration
+(`monitoring/prometheus.yml`) but may not write RBAC, so what Prometheus is
+allowed to read (`cluster/prometheus-rbac.yaml`) reaches the server only when
+the admin copies it ("Cluster-level manifests"). A scrape job that needs a new
+right therefore stays without targets, logging `... is forbidden`, until that
+file is copied again; nothing else is affected, and it starts working without
+a restart. The `node-disk` job needs the ClusterRole `prometheus-node-metrics`
+from that file:
+
+```bash
+scp deployments/k8s/cluster/prometheus-rbac.yaml gamemesh:/tmp/
+ssh gamemesh 'sudo install -m 600 /tmp/prometheus-rbac.yaml /var/lib/rancher/k3s/server/manifests/prometheus-rbac.yaml'
+kprod get clusterrolebinding prometheus-node-metrics    # k3s applies the directory within seconds
+```
 
 To reach them, from the admin's machine:
 
@@ -434,6 +450,40 @@ curl -s 127.0.0.1:9090/api/v1/query --data-urlencode 'query=count by (app) (up{n
 kprod -n monitoring port-forward svc/grafana 3000:3000       # then http://127.0.0.1:3000, user admin
 kprod -n monitoring get secret grafana-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy
 ```
+
+### Disk
+
+Everything the cluster writes is on one partition of the node: images, logs
+and every volume. The volumes' sizes (1 Gi, 3 Gi) are requests, not limits:
+`local-path` volumes are directories on that partition, so one that grows
+takes the room of all the others.
+
+Two things watch it. Every hour the `disk-check` CronJob
+(`deployments/k8s/overlays/prod/disk-check.yaml`) reads the usage and reports
+to two checks at Healthchecks.io: `disk-warning` fails at 70 %, `disk-critical`
+at 85 %, and either e-mails `ops@gamemesh.app`; a run that does not happen is
+noticed there too ("The dead man's switch"). And Prometheus keeps the figure
+(job `node-disk`, from the kubelet), shown on the status dashboard's "Node
+disk used" panel with lines at the same two levels. The panel tells nobody;
+the checks do.
+
+The CronJob needs the two ping URLs, given on standard input like the
+backups':
+
+```bash
+read -rs "WARN?disk-warning ping URL: "; echo; read -rs "CRIT?disk-critical ping URL: "; echo
+printf '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"gamemesh-disk-check","namespace":"gamemesh"},"stringData":{"DISK_WARN_PING_URL":"%s","DISK_CRIT_PING_URL":"%s"}}' "$WARN" "$CRIT" |
+  kprod apply -f -; unset WARN CRIT
+kprod -n gamemesh create job --from=cronjob/disk-check disk-check-now   # then its log, and both checks turn green
+```
+
+Without the Secret the job fails every hour and its log says which URL is
+missing; nothing else is affected.
+
+When a check fails: `kprod get --raw /api/v1/nodes/gamemesh-prod-1/proxy/stats/summary | jq '.node.fs, .node.runtime.imageFs'`
+shows the disk and the images' share. Images are the usual cause ("Image
+garbage collection"); `sudo k3s crictl rmi --prune` on the server removes the
+unused ones at once.
 
 ### Status page
 
@@ -657,6 +707,8 @@ an e-mail to `ops@gamemesh.app` when the report is bad or missing:
 | `postgres-backup` | cron `15 2 * * *` UTC, grace 30 minutes | the CronJob's pod |
 | `k3s-backup` | cron `30 2 * * *` UTC, grace 30 minutes | the upload pod; on failure also the server's script |
 | `cert-check` | simple: once a day, grace 12 hours | the `cert-check` workflow |
+| `disk-warning` | cron `5 * * * *` UTC, grace 30 minutes | the `disk-check` CronJob's pod: fails at 70 % |
+| `disk-critical` | cron `5 * * * *` UTC, grace 30 minutes | the same pod: fails at 85 % |
 
 `cert-check` is not on a cron schedule because GitHub starts this
 repository's scheduled workflows 7 to 8.5 hours late (measured; its 06:00

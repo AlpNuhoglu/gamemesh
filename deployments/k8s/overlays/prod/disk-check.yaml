@@ -13,9 +13,10 @@
 #   DISK_CRIT_PING_URL     the ping URL of the 85 % check
 # Without them the job fails and says which one is missing.
 #
-# The figure is the node's because everything lives on one partition (the
-# local-path volumes included). It stops being true if a volume moves to its
-# own disk: df would then show the container's overlay and not that disk.
+# The figure is the node's because everything the cluster writes lives on one
+# partition: images, logs and the local-path volumes (the only other one is a
+# 1 GiB /boot). It stops being true if a volume moves to its own disk: df
+# would then show the container's overlay and not that disk.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -57,8 +58,8 @@ spec:
               args:
                 - |
                   set -eu
-                  # The container's root is an overlay on the node's disk, and the node has one
-                  # partition, so this is the node's usage.
+                  # The container's root is an overlay on the node's disk, on the one
+                  # partition the cluster writes to, so this is the node's usage.
                   used=$(df -P / | awk 'NR==2 { sub("%", "", $5); print $5 }')
                   case "$used" in ''|*[!0-9]*) echo "could not read disk usage: '$used'" >&2; exit 1 ;; esac
                   echo "node disk: ${used}% used (warn at ${DISK_WARN_PERCENT}%, critical at ${DISK_CRIT_PERCENT}%)"
