@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/time/rate"
 )
 
 // sendRelay feeds one raw client message through the relay path, as readPump
@@ -150,8 +151,8 @@ func TestRelayRejectsOversizeAndInvalid(t *testing.T) {
 	assert.Equal(t, float64(3), rejected(hub, "invalid"))
 }
 
-// TestRelayRateLimitPerConnection: beyond the burst a connection's relays
-// are rejected, while another connection keeps its own budget.
+// TestRelayRateLimitPerConnection: beyond the burst a player's relays are
+// rejected, while another player keeps their own budget.
 func TestRelayRateLimitPerConnection(t *testing.T) {
 	hub := newTestHub()
 	hub.SetRelayLimit(0.001, 3) // effectively no refill during the test
@@ -165,6 +166,69 @@ func TestRelayRateLimitPerConnection(t *testing.T) {
 	assert.Len(t, drainFrames(c[1]), 3)
 	assert.Len(t, drainFrames(c[0]), 1, "bob's relay is not limited by alice's bucket")
 	assert.Equal(t, float64(2), rejected(hub, "rate_limited"))
+}
+
+// TestRelayRateLimitSharedByPlayerConnections: a player's two connections
+// together get one connection's allowance. The burst is consumed across
+// both, and once it is spent the next relay is rejected whichever of the two
+// sends it.
+func TestRelayRateLimitSharedByPlayerConnections(t *testing.T) {
+	hub := newTestHub()
+	hub.SetRelayLimit(0.001, 3) // effectively no refill during the test
+	c := relayRoom(hub, "alice", "alice", "bob")
+	tab1, tab2, bob := c[0], c[1], c[2]
+	require.Same(t, tab1.relay.limiter, tab2.relay.limiter)
+
+	sendRelay(t, tab1, `{"action":"relay","room":"room-1","data":1}`)
+	sendRelay(t, tab2, `{"action":"relay","room":"room-1","data":2}`)
+	sendRelay(t, tab1, `{"action":"relay","room":"room-1","data":3}`)
+	require.Len(t, drainFrames(bob), 3, "the shared burst")
+	require.Zero(t, rejected(hub, "rate_limited"))
+
+	sendRelay(t, tab2, `{"action":"relay","room":"room-1","data":4}`)
+	assert.Equal(t, float64(1), rejected(hub, "rate_limited"), "over the shared burst, from the second connection")
+	sendRelay(t, tab1, `{"action":"relay","room":"room-1","data":5}`)
+	assert.Equal(t, float64(2), rejected(hub, "rate_limited"), "over the shared burst, from the first connection")
+	assert.Empty(t, drainFrames(bob))
+
+	sendRelay(t, bob, `{"action":"relay","room":"room-1","data":6}`)
+	assert.Equal(t, []string{
+		`{"type":"Relay","room":"room-1","from":"alice","data":2}`, // tab2's only accepted relay
+		`{"type":"Relay","room":"room-1","from":"bob","data":6}`,
+	}, drainFrames(tab1), "bob's own bucket is untouched")
+}
+
+// bucket returns the hub's relay bucket for playerID, or nil if it has none.
+func bucket(hub *Hub, playerID string) *rate.Limiter {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return hub.buckets[playerID]
+}
+
+// TestRelayBucketLivesWithThePlayer: the bucket stays while any of the
+// player's connections is open and goes with the last one; a player who
+// connects again gets a new one.
+func TestRelayBucketLivesWithThePlayer(t *testing.T) {
+	hub := newTestHub()
+	tab1 := newHubClient(hub, "alice")
+	tab2 := newHubClient(hub, "alice")
+	hub.register(tab1)
+	hub.register(tab2)
+	first := bucket(hub, "alice")
+	require.NotNil(t, first)
+
+	hub.unregister(tab1)
+	assert.Same(t, first, bucket(hub, "alice"), "still there after one of two connections closed")
+	assert.Same(t, first, tab2.relay.limiter)
+
+	hub.unregister(tab2)
+	assert.Nil(t, bucket(hub, "alice"), "gone with the last connection")
+	assert.Empty(t, hub.buckets)
+
+	again := newHubClient(hub, "alice")
+	hub.register(again)
+	assert.NotSame(t, first, bucket(hub, "alice"), "a reconnect starts a fresh bucket")
+	assert.Same(t, bucket(hub, "alice"), again.relay.limiter)
 }
 
 // TestRelaySlowReceiverDropIsCounted: a receiver whose buffer is full sheds

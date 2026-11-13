@@ -32,7 +32,8 @@ import (
 // lists the connection's player (see RoomChecker); the room is then told
 // PlayerJoined. Otherwise the sender alone gets JoinRejected, with no reason,
 // so a stranger cannot learn whether a room exists, and its memberships are
-// unchanged. Joins draw from the same token bucket as relays.
+// unchanged. Joins draw from the same token bucket as relays, one bucket per
+// player shared by all of the player's connections.
 //
 // A relay goes to the room's other members only, and type and from are set
 // by the server. Its frame is built in relay.go rather than from Message, so
@@ -54,6 +55,19 @@ type Hub struct {
 	byPlayer map[string]map[*Client]struct{}
 	rooms    map[string]map[*Client]struct{}
 
+	// buckets holds each connected player's relay token bucket, which all of
+	// the player's connections on this replica share (relays and joins draw
+	// from it), so a second connection does not double the allowance. A
+	// bucket is created with the player's first connection and deleted with
+	// their last, in register and unregister under mu, so none outlives its
+	// player and there is nothing idle to sweep. The consequence is that a
+	// player who drops every connection and reconnects starts with a full
+	// bucket; the per-IP limit at the gateway and the session sweep still
+	// apply. Each replica has its own buckets. Connections hold a pointer to
+	// theirs, so the hot path takes no lock: rate.Limiter is safe for
+	// concurrent use.
+	buckets map[string]*rate.Limiter
+
 	log *zap.Logger
 	m   *metrics.Metrics
 
@@ -66,7 +80,7 @@ type Hub struct {
 	participants RoomChecker
 	joinM        joinMetrics
 
-	// Room relay (relay.go): the per-connection token bucket new connections
+	// Room relay (relay.go): the token bucket settings new player buckets
 	// get, and the relay instruments. Read-only once connections are served.
 	relayRate  rate.Limit
 	relayBurst int
@@ -131,6 +145,7 @@ func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier, roo
 		clients:  make(map[*Client]struct{}),
 		byPlayer: make(map[string]map[*Client]struct{}),
 		rooms:    make(map[string]map[*Client]struct{}),
+		buckets:  make(map[string]*rate.Limiter),
 		log:      log,
 		m:        m,
 		presence: notifier,
@@ -149,8 +164,10 @@ func (h *Hub) register(c *Client) {
 	h.clients[c] = struct{}{}
 	if h.byPlayer[c.playerID] == nil {
 		h.byPlayer[c.playerID] = make(map[*Client]struct{})
+		h.buckets[c.playerID] = rate.NewLimiter(h.relayRate, h.relayBurst)
 	}
 	h.byPlayer[c.playerID][c] = struct{}{}
+	c.relay.limiter = h.buckets[c.playerID]
 	h.m.WSConnections.Set(float64(len(h.clients)))
 	h.mu.Unlock()
 
@@ -168,6 +185,7 @@ func (h *Hub) unregister(c *Client) {
 		delete(h.byPlayer[c.playerID], c)
 		if len(h.byPlayer[c.playerID]) == 0 {
 			delete(h.byPlayer, c.playerID)
+			delete(h.buckets, c.playerID)
 		}
 		for room := range c.rooms {
 			delete(h.rooms[room], c)
@@ -246,7 +264,7 @@ func (h *Hub) count() int {
 
 // handleJoin processes one inbound join that ReadMessage returned at readAt.
 // A join costs a room lookup on this read loop, so it draws a token from the
-// same bucket as relay messages and is rejected when the bucket is empty.
+// player's relay bucket and is rejected when the bucket is empty.
 func (c *Client) handleJoin(room string, readAt time.Time) {
 	if !c.relay.limiter.AllowN(readAt, 1) {
 		c.hub.rejectJoin(c, room, c.hub.joinM.rateLimited)
