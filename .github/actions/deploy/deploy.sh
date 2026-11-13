@@ -12,13 +12,22 @@
 # whenever the requested commit is not what runs at the end.
 #
 # Needs: kubectl configured for the cluster (.github/actions/prod-cluster),
-# git with the repository checked out in the working directory, curl, jq.
+# git with the repository checked out in the working directory, curl, jq,
+# python3, and SMOKE_PASSWORD in the environment (the smoke account's).
 set -euo pipefail
 
 # The images CI publishes for each commit (the services, and the backup job's
 # since phase 2 E2).
 SERVICES=(gateway player matchmaking leaderboard websocket outbox-relay presence backup)
 API=https://api.gamemesh.app
+# The WebSocket check (ws_smoke.py, beside this script) logs in as a fixed
+# account that the owner creates by hand, once (docs/deployment.md). It never
+# registers one: sign-up is not the smoke test's to check, and a broken
+# sign-up must not fail a deploy. Its password is the production
+# environment's secret SMOKE_PASSWORD; neither it nor the token is printed.
+export SMOKE_API=$API SMOKE_WS=wss://api.gamemesh.app SMOKE_USER=benchsmoke
+export SMOKE_PASSWORD=${SMOKE_PASSWORD:-}
+WS_SMOKE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ws_smoke.py"
 WORK=${RUNNER_TEMP:-$(mktemp -d)}/deploy
 mkdir -p "$WORK"
 
@@ -33,6 +42,23 @@ images_exist() {
     if [ "$code" != 200 ]; then echo "missing image gamemesh-${s}:${sha} (HTTP ${code})"; missing=1; fi
   done
   return "$missing"
+}
+
+# The smoke account must work before the cluster is touched: without it the
+# WebSocket check fails every deploy, and every deploy is rolled back. Only a
+# refused login (401: the API answers that for a missing account and for a
+# wrong password alike) stops here. Anything else (5xx, a timeout) can be
+# production already unhealthy, which is when a deploy is wanted: a warning.
+smoke_account_ok() {
+  local rc=0
+  if ! command -v python3 >/dev/null; then echo "::error::python3 is needed for the WebSocket check"; return 1; fi
+  python3 "$WS_SMOKE" login || rc=$?
+  case $rc in
+    0) return 0 ;;
+    3) echo "::error::smoke account missing or wrong password: create benchsmoke by hand and set SMOKE_PASSWORD (docs/deployment.md)"; return 1 ;;
+    2) echo "::error::the WebSocket check is not configured (see above)"; return 1 ;;
+    *) echo "::warning::could not log in as ${SMOKE_USER} before the deploy (see above); deploying anyway"; return 0 ;;
+  esac
 }
 
 # A commit's own deployments/k8s, with the overlay pointed at its images.
@@ -62,16 +88,35 @@ prepare() {
 
 # Ready pods are not yet users reaching the commit: Traefik, TLS and DNS sit
 # in between. /health must report the commit, and a proxied route (gateway,
-# leaderboard, Redis) must answer, from outside, within two minutes.
+# leaderboard, Redis) must answer, from outside, within two minutes. Then
+# the WebSocket check (smoke_ws).
 smoke() {
   local sha=$1 v code
   for _ in $(seq 1 24); do
     v=$(curl -fsS --max-time 10 "$API/health" | jq -r .version 2>/dev/null || true)
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$API/api/v1/leaderboard" || true)
     if [ "$v" = "$sha" ] && [ "$code" = 200 ]; then
-      echo "$API serves ${sha}; /api/v1/leaderboard answers 200"; return 0
+      echo "$API serves ${sha}; /api/v1/leaderboard answers 200"
+      if smoke_ws; then return 0; fi
+      return 1
     fi
     echo "serving ${v:-nothing}, /api/v1/leaderboard ${code:-no answer}; waiting"; sleep 5
+  done
+  return 1
+}
+
+# /ws carries the game, and the HTTP checks never reach it: a release that
+# breaks the upgrade or the read loop would pass them. ws_smoke.py logs in,
+# opens /ws, joins a new room, needs an answer for that room within 5 s,
+# closes and logs out; what counts as an answer is decided (and explained)
+# there. Retried like the HTTP checks, since Traefik may still be switching
+# backends. A try that fails fast takes well under a second; one that runs
+# into every timeout, about a minute.
+smoke_ws() {
+  local i
+  for i in 1 2 3 4 5; do
+    if python3 "$WS_SMOKE" check; then return 0; fi
+    if [ "$i" -lt 5 ]; then echo "WebSocket check failed (try $i of 5); waiting"; sleep 5; fi
   done
   return 1
 }
@@ -125,9 +170,13 @@ main() {
   curl -fsS --max-time 10 "$API/health" || echo "health check failed before the deploy"
   echo
 
+  if [ -z "$SMOKE_PASSWORD" ]; then
+    echo "::error::SMOKE_PASSWORD is not set: the production environment needs the benchsmoke account's password (docs/deployment.md); nothing was changed"; exit 1
+  fi
   if ! images_exist "$SHA"; then
     echo "::error::images for ${SHA} are not published; nothing was changed"; exit 1
   fi
+  if ! smoke_account_ok; then exit 1; fi
 
   if deploy "$SHA"; then
     echo "deployed ${SHA}"

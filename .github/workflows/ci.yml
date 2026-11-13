@@ -581,9 +581,11 @@ jobs:
 
       # Checks the images exist, applies after a server-side dry run, waits
       # for every workload and for https://api.gamemesh.app to serve this
-      # commit; if any of that fails, redeploys the commit that ran before
-      # (with its own manifests) and fails the job. See deploy.sh.
+      # commit and answer a join on /ws (as benchsmoke, SMOKE_PASSWORD); if
+      # any of that fails, redeploys the commit that ran before (with its own
+      # manifests) and fails the job. See deploy.sh.
       - name: Deploy this commit
         uses: ./.github/actions/deploy
         with:
           sha: ${{ github.sha }}
+          smoke-password: ${{ secrets.SMOKE_PASSWORD }}
