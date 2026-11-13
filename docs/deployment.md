@@ -400,7 +400,8 @@ job in `.github/workflows/ci.yml` (environment `production`, one at a time,
 never cancelled halfway) points the prod overlay at the commit's images,
 applies it after a server-side dry run, waits for every Deployment and
 StatefulSet, and waits for `https://api.gamemesh.app/health` to report the
-commit. Then it applies the same commit's monitoring and waits for it; if
+commit and for a join on `/ws` to be answered ("The smoke test's account").
+Then it applies the same commit's monitoring and waits for it; if
 that fails the job is red, but the app is not rolled back. Measured on the
 first one: merge to live in 6 min 46 s (CI about
 4 min, publish 1.5 min, deploy 38 s), 3494 of 3494 public requests answered
@@ -408,6 +409,47 @@ first one: merge to live in 6 min 46 s (CI about
 
 The job logs the image that ran before it. The procedure below is the same
 thing by hand, for when CI cannot run.
+
+#### The smoke test's account
+
+`/ws` carries the game, and the HTTP checks never reach it. After them the
+smoke test (`.github/actions/deploy/ws_smoke.py`) logs in, opens `/ws` with
+the token, sends a `join` for a room that does not exist, needs the answer
+within 5 s, closes and logs out; five tries, 5 s apart. A release that breaks
+the upgrade, the token or session check, or the read or write loop of the
+WebSocket service is rolled back like any other failed deploy.
+
+It logs in as a fixed account, `benchsmoke`, which exists for nothing else and
+which the admin creates once, by hand. The deploy never registers it: sign-up
+is not the smoke test's to check, and a broken sign-up must not fail a deploy.
+Its password is the `production` environment's secret `SMOKE_PASSWORD`: 8 to
+72 characters, printable ASCII, no space at either end.
+
+```bash
+read -rs "PW?benchsmoke password: "; echo
+jq -n --arg p "$PW" '{username:"benchsmoke", email:"bench_smoke@latencybench.invalid", password:$p}' |
+  curl -sS -X POST https://api.gamemesh.app/api/v1/auth/register -H 'Content-Type: application/json' -d @- | jq .username
+printf '%s' "$PW" | gh secret set SMOKE_PASSWORD --env production; unset PW
+```
+
+Both are checked before the cluster is touched. With the secret empty, or the
+login refused, the deploy stops with `smoke account missing or wrong password`
+and changes nothing. (The API answers 401 for a missing account and for a
+wrong password alike.) If the login fails any other way, production may
+already be down, which is when a deploy is wanted: a warning, and it goes on.
+
+**Either answer to the join passes, and that must stay so.** Releases with the
+room membership check answer a stranger's join with `JoinRejected`; releases
+before it accepted any join and broadcast `PlayerJoined`. A rollback runs this
+same script against the previous commit, so a check that required
+`JoinRejected` would report a working rollback to an older release as failed.
+
+What it does not prove: that the room lookup in Redis works. A lookup that
+fails is answered with the same `JoinRejected`, on purpose without a reason;
+`gamemesh_ws_join_rejected_total{reason="unavailable"}` is where that shows.
+A change to the login answer, to `?token=` or to the `join` action has to
+change this check in the same pull request, and stay compatible with the
+release before it.
 
 ### Monitoring
 
@@ -1034,8 +1076,9 @@ reports again.
 ### Rolling back
 
 - **Automatic.** When a deploy does not come up (rollout stuck for 5 minutes,
-  or the smoke test fails: `/health` must report the commit and
-  `/api/v1/leaderboard` must answer 200), the job redeploys the commit that ran
+  or the smoke test fails: `/health` must report the commit,
+  `/api/v1/leaderboard` must answer 200 and a join on `/ws` must be answered),
+  the job redeploys the commit that ran
   before, with that commit's own manifests and images, and ends red. Its log
   says `rolled back: <previous> runs again`. Tested with a deliberately broken
   release: the old gateway pod kept serving and never restarted.
