@@ -35,3 +35,26 @@ scrape_configs:
         target_label: namespace
       - source_labels: [__meta_kubernetes_pod_label_app]
         target_label: app
+  # The node's disk (phase 3 prep, G4): nothing watched it, and images had
+  # filled 45 % of it. The kubelet's cAdvisor endpoint reports every container
+  # of the node, some 3,700 series; only the node's own filesystems are kept
+  # (the root cgroup, id="/", on a real block device), about four series, so
+  # watching the disk does not fill it. Once a minute is plenty for a disk.
+  #
+  # Needs the ClusterRole in deployments/k8s/cluster/prometheus-rbac.yaml
+  # (nodes, nodes/metrics), which CI does not apply: without it this target
+  # is down and nothing else changes.
+  - job_name: node-disk
+    scrape_interval: 60s
+    scheme: https
+    metrics_path: /metrics/cadvisor
+    kubernetes_sd_configs:
+      - role: node
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    metric_relabel_configs:
+      - source_labels: [__name__, id, device]
+        action: keep
+        regex: container_fs_(usage|limit)_bytes;/;/dev/(vd|sd|xvd|nvme|mmcblk).*

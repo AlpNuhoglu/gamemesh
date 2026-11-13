@@ -491,6 +491,85 @@
           "instant": false
         }
       ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Node disk used",
+      "description": "Share of the node's fullest disk partition in use. Images, volumes and logs share it. Lines at 70 % (warning) and 85 % (critical), the levels the hourly disk check alarms on.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gamemesh-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "decimals": 2,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gamemesh-prometheus"
+          },
+          "expr": "max(100 * container_fs_usage_bytes{job=\"node-disk\"} / container_fs_limit_bytes{job=\"node-disk\"})",
+          "legendFormat": "used",
+          "range": true,
+          "instant": false
+        }
+      ]
     }
   ]
 }
