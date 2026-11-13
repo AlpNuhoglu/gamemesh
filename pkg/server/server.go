@@ -84,6 +84,13 @@ func NewEngine(cfg *config.Config, log *zap.Logger, m *metrics.Metrics, opts ...
 		log.Fatal("invalid TRUSTED_PROXIES",
 			zap.Strings("trusted_proxies", cfg.TrustedProxies), zap.Error(err))
 	}
+	// One allow-list for CORS here and for the WebSocket upgrade; an entry
+	// that does not parse stops the service rather than match nothing.
+	origins, err := middleware.ParseOrigins(cfg.AllowedOrigins)
+	if err != nil {
+		log.Fatal("invalid ALLOWED_ORIGINS",
+			zap.Strings("allowed_origins", cfg.AllowedOrigins), zap.Error(err))
+	}
 	r.Use(
 		gin.Recovery(),
 		middleware.RequestID(),
@@ -98,7 +105,7 @@ func NewEngine(cfg *config.Config, log *zap.Logger, m *metrics.Metrics, opts ...
 		})),
 		middleware.Logger(log, cfg.LogSlowRequestThreshold),
 		middleware.Metrics(m),
-		middleware.CORS(cfg.AllowedOrigins),
+		middleware.CORS(origins),
 	)
 	livez := healthHandler(cfg.ServiceName, h.liveness)
 	r.GET("/livez", livez)

@@ -21,6 +21,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
+	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 )
 
 // fakeSessions is an in-memory SessionChecker: every session exists unless
@@ -66,10 +67,17 @@ func newWSServer(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub) {
 
 func newWSServerWithSessions(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub, *fakeSessions) {
 	t.Helper()
+	return newWSServerWithOrigins(t, "*")
+}
+
+func newWSServerWithOrigins(t *testing.T, allowedOrigins ...string) (*httptest.Server, *auth.TokenManager, *Hub, *fakeSessions) {
+	t.Helper()
 	tokens := auth.NewTokenManager("ws-test-secret", time.Hour, "gamemesh")
 	hub := NewHub(zap.NewNop(), metrics.New("ws-handler-test"), nil, newFakeRooms())
 	sessions := &fakeSessions{revoked: map[string]bool{}}
-	handler := NewHandler(hub, tokens, sessions, []string{"*"}, zap.NewNop())
+	origins, err := middleware.ParseOrigins(allowedOrigins)
+	require.NoError(t, err)
+	handler := NewHandler(hub, tokens, sessions, origins, zap.NewNop())
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -385,4 +393,34 @@ func TestJoinRejectsNonParticipant(t *testing.T) {
 	var netErr interface{ Timeout() bool }
 	require.ErrorAs(t, err, &netErr)
 	assert.True(t, netErr.Timeout())
+}
+
+// TestUpgradeChecksOrigin: with the production allow-list, a browser from a
+// disallowed origin is refused with 403, while allowed origins, a local
+// development origin and a client that sends no Origin at all (the bench
+// tool, k6) connect.
+func TestUpgradeChecksOrigin(t *testing.T) {
+	srv, tokens, _, _ := newWSServerWithOrigins(t,
+		"https://gamemesh.app", "https://*.gamemesh.app", "http://localhost:*", "http://127.0.0.1:*")
+	token, _, err := tokens.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	url := wsURL(srv.URL) + "/ws?token=" + token
+
+	for _, origin := range []string{"https://evil.example", "https://evilgamemesh.app", "null"} {
+		_, resp, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": {origin}})
+		require.Error(t, err, origin)
+		require.NotNil(t, resp, origin)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, origin)
+	}
+
+	for _, origin := range []string{"https://gamemesh.app", "https://play.gamemesh.app", "http://localhost:5173", ""} {
+		var header http.Header
+		if origin != "" {
+			header = http.Header{"Origin": {origin}}
+		}
+		conn, resp, err := websocket.DefaultDialer.Dial(url, header)
+		require.NoError(t, err, "origin %q", origin)
+		assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+		_ = conn.Close()
+	}
 }

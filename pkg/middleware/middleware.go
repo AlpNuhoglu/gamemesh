@@ -197,22 +197,23 @@ func Metrics(m *metrics.Metrics) gin.HandlerFunc {
 	}
 }
 
-// CORS applies a configurable allow-list of origins.
-func CORS(allowedOrigins []string) gin.HandlerFunc {
-	allowAll := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
-	allowed := make(map[string]struct{}, len(allowedOrigins))
-	for _, o := range allowedOrigins {
-		allowed[o] = struct{}{}
-	}
+// CORS applies the ALLOWED_ORIGINS allow-list (see OriginMatcher, which the
+// WebSocket upgrade shares). An allowed origin is echoed back; any other gets
+// no Access-Control-Allow-Origin, so the browser withholds the response.
+func CORS(origins *OriginMatcher) gin.HandlerFunc {
+	allowAll := origins.AllowsAny()
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
 			if allowAll {
 				c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-			} else if _, ok := allowed[origin]; ok {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			} else {
+				// The answer depends on Origin whether or not it is allowed.
 				c.Writer.Header().Set("Vary", "Origin")
+				if origins.Allowed(origin) {
+					c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				}
 			}
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			c.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")

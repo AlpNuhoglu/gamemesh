@@ -21,6 +21,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/logger"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
+	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 	"github.com/alpnuhoglu/gamemesh/pkg/server"
 	"github.com/alpnuhoglu/gamemesh/pkg/tracing"
 )
@@ -84,7 +85,13 @@ func run() int {
 	// Sessions are checked straight against Redis, uncached: once per
 	// connection at the handshake and every sessionSweepInterval afterwards.
 	sessions := player.NewSessionStore(rdb)
-	handler := wsgateway.NewHandler(hub, tokens, sessions, cfg.AllowedOrigins, log)
+	// The same allow-list server.NewEngine applies to CORS; an entry that does
+	// not parse stops the service.
+	origins, err := middleware.ParseOrigins(cfg.AllowedOrigins)
+	if err != nil {
+		log.Fatal("invalid ALLOWED_ORIGINS", zap.Strings("allowed_origins", cfg.AllowedOrigins), zap.Error(err))
+	}
+	handler := wsgateway.NewHandler(hub, tokens, sessions, origins, log)
 
 	ctx, stop := server.ShutdownContext()
 	defer stop()
