@@ -94,6 +94,21 @@ patches:
         value:
           name: STATUS_PAGE_URL
           value: https://status.gamemesh.app
+  # DELIBERATELY BROKEN (rollback drill G5a, 2026-11-14; reverted right after).
+  # The websocket service gets its own token issuer, so it refuses every
+  # token the player service issues: /ws answers 401 instead of upgrading.
+  # Its pod still becomes Ready and the HTTP checks still pass, so only the
+  # smoke test's WebSocket check can notice, and the deploy has to roll back
+  # because of it. env wins over envFrom's JWT_ISSUER.
+  - target:
+      kind: Deployment
+      name: websocket
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: JWT_ISSUER
+          value: g5a-deliberately-broken
   # The public API name (C1). Its DNS record is an A record only, without
   # the Cloudflare proxy: the cluster is IPv4-only (finding #81), and a proxy
   # would end TLS at Cloudflare and hide the client's address from the
