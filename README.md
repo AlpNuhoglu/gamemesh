@@ -437,11 +437,11 @@ Details: [docs/presence.md](docs/presence.md)
 
 In production, Prometheus and Grafana run in their own namespace, never
 exposed; tracing (the Collector and Jaeger) runs in compose and locally only.
-Four of Grafana's panels are public at
-[status.gamemesh.app](https://status.gamemesh.app), here under a k6 load from
-outside (30 requests/s and 20 WebSocket connections; the latency spike at the
-start is k6's 40 bcrypt-bound register and login calls, the load's own p95 is
-2.5 ms server-side):
+Nine of Grafana's panels are public at
+[status.gamemesh.app](https://status.gamemesh.app). The first four, under a k6
+load from outside (30 requests/s and 20 WebSocket connections; the latency
+spike at the start is k6's 40 bcrypt-bound register and login calls, the
+load's own p95 is 2.5 ms server-side):
 
 ![The status page under load](docs/images/status-page-under-load.png)
 
