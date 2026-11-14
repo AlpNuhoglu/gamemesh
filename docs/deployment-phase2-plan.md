@@ -884,9 +884,9 @@ Alertmanager kapalı kalır (kube-prometheus-stack seçilirse `alertmanager.enab
 |---|---|---|
 | ~~2026-11-04~~ | ~~`nats-server` CVE-2026-111943 kaydı bitiyor~~ — **yapıldı 2026-11-06** (PR #110: NATS 2.15.2, kayıt silindi) | #88 |
 | ~~2026-11-18~~ | ~~Redis imajındaki OpenSSL CVE-2026-84782 kaydı bitiyor~~ — **yapıldı 2026-11-06** (PR #110: yeni Redis digest'i temiz, kayıt silindi) | — |
-| 2026-11-24 | Grafana 12.4.14'ün kayıtları bitiyor: tempo ×2, go-jose CVE-2026-116587, x/net CVE-2026-78661. Yeni 12.4 yaması (Dependabot) gelirse tara, düzelenleri sil | #94 |
+| 2026-11-24 | Grafana'nın iki tempo kaydı bitiyor (CVE-2026-21728, CVE-2026-28377); 12.4.15'te de duruyorlar. go-jose CVE-2026-116587 ve x/net CVE-2026-78661 kayıtları **2026-11-14'te silindi** (12.4.15 taramasında yoklar). Yeni 12.4 yaması gelirse tara, düzelenleri sil | #94 |
 | ~~2026-11-25~~ | ~~`postgres:16.15-alpine`'ın `krb5-libs` (16) ve `libxslt` (2) kayıtları bitiyor (2026-11-11'de eklendi; paketin sürümüne bağlı). Resmi imajın düzeltilmiş paketlerle yeni digest'i gelirse ona geç, kayıtları sil~~ — **yapıldı 2026-11-13** (Postgres 16.16: yeni imajda krb5-libs 1.22.3-r0 ve libxslt 1.1.43-r4 var, 18 kayıt silindi) | — |
-| 2026-12-16 | Prometheus'un x/net CVE-2026-78661 kaydı bitiyor (3.16.0'da da var); bir sonraki sürümü tara | #94 |
+| 2026-12-16 | Prometheus'un x/net CVE-2026-78661 kaydı bitiyor (3.16.0'a 2026-11-14'te geçildi, bulgu onda da var); bir sonraki sürümü tara | #94 |
 | 2026-12-20 | `api-tls`'in ilk otomatik yenilemesi (admission policy altında): `kubectl -n gamemesh get certificate` ile doğrula; F1'deki sertifika kontrolü de görmeli | #85, #87 |
 | 2027-01-18 | gosu Go CVE kayıtları bitiyor | — |
 | 2027-04-21 | KSV-0056 kaydı bitiyor | #87 |
