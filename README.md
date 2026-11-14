@@ -466,11 +466,21 @@ calls are bcrypt-bound, about 200 ms each, and counting them put matchmaking's
 p95 anywhere between 86 and 190 ms from run to run (the "112 ms" this table
 used to show):
 
-| Scenario | Iterations | Req/s | p95 | Errors |
-|---|---|---|---|---|
-| matchmaking | 6,500 | 194 | 27–31 ms *(two runs)* | 0.00–0.13 % |
-| leaderboard | 332,138 | 2,838 | 18 ms | 0.01 % |
-| websocket | 989 sessions (avg 43 s) | — | 129 ms *(connect)* | 0.00 % |
+| Scenario | What a virtual user does | Iterations | Req/s | p95 | Errors |
+|---|---|---|---|---|---|
+| matchmaking | `POST /api/v1/queue`, polls `GET /api/v1/queue/status` until matched, `DELETE /api/v1/queue` if not | 6,500 | 194 | 27–31 ms *(two runs)* | 0.00–0.13 % |
+| leaderboard | `POST /api/v1/score`; every tenth iteration also `GET /api/v1/leaderboard/top/10` | 332,138 | 2,838 | 18 ms | 0.01 % |
+| websocket | Opens `/ws`, joins a room, holds the connection 30–60 s, leaves | 989 sessions (avg 43 s) | — | 129 ms *(connect)* | 0.00 % |
+
+All three are HTTP or connection figures through the gateway. None of them is
+the time a game message takes between two players; that is
+[In-game latency](#in-game-latency), measured separately.
+
+The websocket row is from before a join was checked against matchmaking's
+rooms (2026-11-14). The script joins rooms it makes up (`load-room-N`), which
+are now refused, so a run today still measures connecting and holding a
+session but no longer any fan-out inside a room. It has not been re-run or
+rewritten.
 
 The few errors are connections reset between k6 and Docker Desktop's port
 forwarding, before the gateway. Before the gateway reused its upstream
