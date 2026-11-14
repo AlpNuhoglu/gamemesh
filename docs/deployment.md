@@ -1094,8 +1094,24 @@ reports again.
   `/api/v1/leaderboard` must answer 200 and a join on `/ws` must be answered),
   the job redeploys the commit that ran
   before, with that commit's own manifests and images, and ends red. Its log
-  says `rolled back: <previous> runs again`. Tested with a deliberately broken
-  release: the old gateway pod kept serving and never restarted.
+  says `rolled back: <previous> runs again`. Tested twice with a deliberately
+  broken release:
+  - **A release that never becomes ready** (#83): the rollout hit its deadline,
+    the old gateway pod kept serving and never restarted.
+  - **A release that looks healthy and is not** (#135, 2026-11-14): every pod
+    ready, `/health` and the leaderboard answering, and `/ws` refusing every
+    login with 401, because the production overlay gave the websocket service
+    another token issuer. Only the join on `/ws` can see that. It failed five
+    times in 28 s (`upgrade at wss://api.gamemesh.app: HTTP/1.1 401
+    Unauthorized instead of 101`), and the previous commit was back 34 s after
+    the fifth. In UTC: merged 18:04:23, deploy started 18:11:46, broken
+    release rolled out 18:12:31, HTTP checks passed 18:12:33, first failed
+    join 18:12:35, deploy failed 18:13:04, rollback rolled out 18:13:33, join
+    answered again 18:13:38. `/ws` refused logins for about a minute;
+    `/health`, asked every 20 s from outside, answered each time. Here the
+    broken pods were ready and took the traffic, so unlike the first drill
+    all seven services' pods were replaced twice, and with them every open
+    WebSocket connection was closed twice.
 - **By hand.** `Actions -> deploy -> Run workflow` (branch `main`) with the full
   SHA of the commit to run. It must be on `main`; its images were published by
   that commit's CI run. Commits from `7b36b40` (#76) on can be deployed this
