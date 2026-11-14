@@ -478,7 +478,8 @@ from that file:
 
 ```bash
 scp deployments/k8s/cluster/prometheus-rbac.yaml gamemesh:/tmp/
-ssh gamemesh 'sudo install -m 600 /tmp/prometheus-rbac.yaml /var/lib/rancher/k3s/server/manifests/prometheus-rbac.yaml'
+# -t: sudo on the server asks for alp's password and needs a terminal for it
+ssh -t gamemesh 'sudo install -m 600 /tmp/prometheus-rbac.yaml /var/lib/rancher/k3s/server/manifests/prometheus-rbac.yaml && rm /tmp/prometheus-rbac.yaml'
 kprod get clusterrolebinding prometheus-node-metrics    # k3s applies the directory within seconds
 ```
 
