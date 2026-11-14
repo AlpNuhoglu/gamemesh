@@ -42,7 +42,9 @@ discarded.
 
 The 40 ms belongs to that pair of places. A TCP connect from the same laptop to
 the same data centre took 42–46 ms when the server was chosen (2026-10-20,
-`docs/deployment-phase1-plan.md`): one round trip, the same distance.
+`docs/deployment-phase1-plan.md`): one round trip, the same distance. A third
+run two days later was slower, on the network side
+([below](#a-third-run-two-days-later)).
 
 | Pairs | Samples | Lost | p50 ms | p95 ms | p99 ms | max ms | Ping RTT p50 | Ping RTT p95 |
 |---|---|---|---|---|---|---|---|---|
@@ -66,28 +68,58 @@ the same data centre took 42–46 ms when the server was chosen (2026-10-20,
 - The bench ran without `-cleanup-dsn`. 42 bench accounts remain in production
   (2, 20 from the lost run, 20), recognisable by `bench…@latencybench.invalid`.
 
+### A third run, two days later
+
+Made on 2026-11-14 at 19:29 UTC (22:29 in İstanbul, a Saturday) on commit
+`ce16c44`, from the same laptop: one pair, to put traffic on the status page's
+relay panels for the picture in the README. It was not meant as a measurement.
+It is recorded because it does not look like the first two.
+
+| Pairs | Samples | Lost | p50 ms | p95 ms | p99 ms | max ms | Ping RTT p50 | Ping RTT p95 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 500 | 0 | 73.134 | 117.193 | 391.195 | 541.095 | 65.837 ms | 130.462 ms |
+
+- **The network round trip was longer and less even.** The ping on the run's
+  own two sockets came back in 66 ms at p50 and 130 ms at p95, against 40 ms
+  and 42 ms two days earlier. It is 40 pings, so a coarse figure.
+- **The server was not the difference.** It held each message for 0.20 ms on
+  average and none for as long as 5 ms (below): 0.28 % of the 73 ms, and
+  nothing near the 541 ms maximum.
+- Why the path was slower that evening was not looked into: the hour, the
+  connection and the laptop itself were not told apart.
+- **So 40 ms is what this path gave twice, not a floor it holds.** The client's
+  connection is part of the number.
+- Two more bench accounts stay in production: 44 in all.
+
 ### Inside the server, in production
 
 `/metrics` is not public, so the bench could not scrape the stage histogram
 the way it does locally. These are the same counters read afterwards from
 production's Prometheus, as the difference across each run's window
-(01:13:45–01:15:00 and 11:42:15–11:43:30 UTC). The counts in each window are
-exactly the run's messages, warm-up included (550 and 5 500).
+(01:13:45–01:15:00 and 11:42:15–11:43:30 UTC on 2026-11-12, 19:29:30–19:31:30
+UTC on 2026-11-14). The counts in each window are exactly the run's messages,
+warm-up included (550, 5 500 and 550).
 
 | Pairs | Messages | process mean | queue mean | write mean | total mean | total ~p95 | total ~p99 | Slower than 2.5 ms | Shed | Rejected |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | 550 | 0.065 ms | 0.036 ms | 0.068 ms | 0.148 ms | 0.249 ms | 0.480 ms | 0 | 0 | 0 |
 | 10 | 5 500 | 0.050 ms | 0.027 ms | 0.056 ms | 0.116 ms | 0.243 ms | 0.428 ms | 0 | 0 | 0 |
+| 1, third run | 550 | 0.089 ms | 0.060 ms | 0.086 ms | 0.203 ms | 0.458 ms | 1.375 ms | 1 | 0 | 0 |
 
 Means are exact (Δsum/Δcount); p95 and p99 are interpolated within histogram
 buckets, as in the local tables.
 
-- **0.37 % and 0.28 % of the end-to-end p50** (0.148 of 39.867 ms, 0.116 of
-  41.691 ms).
+- **0.37 %, 0.28 % and 0.28 % of the end-to-end p50** (0.148 of 39.867 ms,
+  0.116 of 41.691 ms, 0.203 of 73.134 ms).
 - **More than locally at the same loads** (0.11–0.13 ms at one pair and
   0.05–0.06 ms at ten, on a 14-core laptop against two vCPUs here). Why was
   not looked into. Across everything measured, local and production, the
-  server's mean share is 0.02–0.15 ms.
+  server's mean share is 0.02–0.20 ms.
+- **The third run is the slowest of the three inside the server,** and the one
+  with a message over 2.5 ms (one of 550, under 5 ms). The websocket pod had
+  started three minutes before it (19:26:54 UTC, the deploy of `ce16c44`) and
+  these were the first messages it relayed. Whether that is the reason was not
+  looked into.
 
 ## Baseline
 

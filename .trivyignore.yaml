@@ -188,11 +188,12 @@ vulnerabilities:
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
-  # Grafana 12.4.14 (phase 2, G5; finding #94): its 12.4.13 exceptions for
-  # Go's x509, kin-openapi and brotli went with the upgrade (fixed there);
-  # these remain. 12.4 is 12.x's last minor, supported until 2027-05-24; 13.3.0
-  # has 39 findings, mostly in bundled plugins. Short expiry: Grafana publishes
-  # a patch release about every two weeks, and Dependabot proposes it.
+  # Grafana 12.4.15 (phase 2, G5; finding #94): 12.4.14's exceptions for
+  # go-jose (CVE-2026-116587) and x/net (CVE-2026-78661) went with the upgrade
+  # (the scan of 12.4.15 no longer reports them); the two Tempo ones remain.
+  # 12.4 is 12.x's last minor, supported until 2027-05-24; 13.3.0 had 39
+  # findings, mostly in bundled plugins. Short expiry: Grafana publishes a
+  # patch release about every two weeks, and Dependabot proposes it.
   - id: CVE-2026-21728
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
@@ -206,32 +207,17 @@ vulnerabilities:
       Tempo's status config endpoint, compiled into Grafana for its Tempo data
       source. There is none, and Grafana serves no Tempo endpoint.
     expired_at: 2026-11-24
-  - id: CVE-2026-116587
-    paths: ["usr/share/grafana/bin/grafana"]
-    statement: >-
-      go-jose 4.1.4 (fixed in 4.1.6) parses RSA values from a JWK without
-      bounds. Grafana reads JWKs for JWT and OAuth logins, both off here
-      (deployments/k8s/monitoring/grafana/grafana.ini), and opens no outbound
-      connection to fetch a key set; the status page routes only the shared
-      dashboard's paths. Reasoned from configuration, not exercised.
-    expired_at: 2026-11-24
-  - id: CVE-2026-78661
-    paths: ["usr/share/grafana/bin/grafana"]
-    statement: >-
-      golang.org/x/net 0.60.0 (fixed in 0.62.0; GO-2026-6860): quadratic time
-      coalescing text nodes in x/net/html. Grafana compiles the package in,
-      but not the vulnerable functions: govulncheck -mode=binary lists it at
-      package level only, not among the symbols present. No newer 12.4 yet.
-    expired_at: 2026-11-24
-  # Prometheus 3.15.1 (phase 2, G4). 3.16.0 has the same finding (x/net
-  # 0.61.0), so upgrading does not clear it.
+  # Prometheus 3.16.0 (phase 2, G4). The finding came along from 3.15.1: it
+  # is built with x/net 0.61.0, and the fix is in 0.62.0.
   - id: CVE-2026-78661
     paths: ["usr/bin/prometheus", "usr/bin/promtool"]
     statement: >-
-      golang.org/x/net 0.60.0 (fixed in 0.62.0; GO-2026-6860), in x/net/html.
-      Neither binary contains the package: no x/net/html symbol in them, and
-      govulncheck -mode=binary lists the module only. Expires after the next
-      minor release, due about 2026-12-16.
+      golang.org/x/net 0.61.0 (fixed in 0.62.0; GO-2026-6860), in x/net/html.
+      Neither binary contains the package: go tool nm finds no x/net/html
+      symbol in 3.16.0's prometheus or promtool (849 other x/net symbols, so
+      they are not stripped). govulncheck -mode=binary listed the module only
+      on 3.15.1 and was not run again on 3.16.0. Expires after the next minor
+      release, due about 2026-12-16.
     expired_at: 2026-12-16
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.
