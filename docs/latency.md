@@ -4,8 +4,9 @@ How long one player's message takes to reach the other player over WebSocket,
 how that time splits between the server and everything around it, and what each
 change to the server did to it. Updated after every change.
 
-The 112 ms p95 quoted elsewhere is HTTP request latency under load. It says
-nothing about this path.
+The load-test figures in the README (matchmaking p95 27–31 ms at 500 virtual
+users, and the others in that table) are HTTP request latency under load. They
+say nothing about this path.
 
 ## What is measured
 
@@ -34,9 +35,14 @@ server" below is end-to-end minus the server's `total`.
 ## Production
 
 The number to quote. Measured 2026-11-12 on commit `1554985`, from a laptop on
-a home connection to `wss://api.gamemesh.app`: TLS, Traefik, then
-one websocket replica on the single-node k3s cluster (2 vCPU, 4 GB). One run
-per row, 550 messages per pair, the first 50 discarded.
+a home connection in İstanbul to `wss://api.gamemesh.app`, a netcup VPS in
+Nuremberg: TLS, Traefik, then one websocket replica on the single-node k3s
+cluster (2 vCPU, 4 GB). One run per row, 550 messages per pair, the first 50
+discarded.
+
+The 40 ms belongs to that pair of places. A TCP connect from the same laptop to
+the same data centre took 42–46 ms when the server was chosen (2026-10-20,
+`docs/deployment-phase1-plan.md`): one round trip, the same distance.
 
 | Pairs | Samples | Lost | p50 ms | p95 ms | p99 ms | max ms | Ping RTT p50 | Ping RTT p95 |
 |---|---|---|---|---|---|---|---|---|
@@ -44,19 +50,44 @@ per row, 550 messages per pair, the first 50 discarded.
 | 10 | 5 000 | 0 | 41.691 | 44.995 | 47.987 | 138.034 | 41.564 ms | 44.126 ms |
 
 - **It is all network.** End-to-end p50 and the ping round trip differ by
-  0.10 ms and 0.13 ms, in opposite directions. The server's share cannot be
-  seen from outside; measured locally it is 0.02–0.13 ms per message, under
-  half a percent of these 40 ms.
+  0.10 ms and 0.13 ms, in opposite directions. The server held each message
+  for 0.15 ms and 0.12 ms on average (below), under half a percent of these
+  40 ms.
 - **The 40 ms is this client's path, twice.** A message goes sender → server →
   receiver, and both ends were the same laptop. Two real players each bring
   their own path to the server.
 - The two rows were measured ten hours apart (01:14 and 11:42 UTC): the first
   attempt at ten pairs was lost when the laptop went to sleep mid-run. They
   should not be read as "ten pairs is 1.8 ms slower than one".
-- The server's stage histogram was not scraped by the bench: `/metrics` is not
-  public. 50 pairs were not run against production.
+- **The 138 ms maximum at ten pairs is one message, and it was not the
+  server:** no message spent more than 2.5 ms inside it in that window (below).
+  It was recorded, not traced.
+- 50 pairs were not run against production.
 - The bench ran without `-cleanup-dsn`. 42 bench accounts remain in production
   (2, 20 from the lost run, 20), recognisable by `bench…@latencybench.invalid`.
+
+### Inside the server, in production
+
+`/metrics` is not public, so the bench could not scrape the stage histogram
+the way it does locally. These are the same counters read afterwards from
+production's Prometheus, as the difference across each run's window
+(01:13:45–01:15:00 and 11:42:15–11:43:30 UTC). The counts in each window are
+exactly the run's messages, warm-up included (550 and 5 500).
+
+| Pairs | Messages | process mean | queue mean | write mean | total mean | total ~p95 | total ~p99 | Slower than 2.5 ms | Shed | Rejected |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 550 | 0.065 ms | 0.036 ms | 0.068 ms | 0.148 ms | 0.249 ms | 0.480 ms | 0 | 0 | 0 |
+| 10 | 5 500 | 0.050 ms | 0.027 ms | 0.056 ms | 0.116 ms | 0.243 ms | 0.428 ms | 0 | 0 | 0 |
+
+Means are exact (Δsum/Δcount); p95 and p99 are interpolated within histogram
+buckets, as in the local tables.
+
+- **0.37 % and 0.28 % of the end-to-end p50** (0.148 of 39.867 ms, 0.116 of
+  41.691 ms).
+- **More than locally at the same loads** (0.11–0.13 ms at one pair and
+  0.05–0.06 ms at ten, on a 14-core laptop against two vCPUs here). Why was
+  not looked into. Across everything measured, local and production, the
+  server's mean share is 0.02–0.15 ms.
 
 ## Baseline
 
@@ -192,8 +223,10 @@ reroute.
 
 This is not a before and after. The relay never took this route, and nothing
 was made faster by not taking it. It is a one-off measurement of what the
-durable route would cost for the same message, on branch `exp/relay-jetstream`
-(`04064a2`), which is not merged.
+durable route would cost for the same message, on branch
+[`exp/relay-jetstream`](https://github.com/AlpNuhoglu/gamemesh/tree/exp/relay-jetstream)
+(`04064a2`). The branch is kept so the number can be reproduced; it is not
+merged and must not be: three of the boundary tests are skipped on it.
 
 In that build an accepted relay message is published to a JetStream stream of
 its own the way backend events are (synchronous publish, waiting for the
@@ -286,7 +319,7 @@ the read side allocates for every message.
 | Class | Messages | Path | Guarantee |
 |---|---|---|---|
 | Ephemeral | `relay` (movement, position, input) | client → hub → clients, in memory | At-most-once; shed for a slow receiver; one replica only |
-| Ephemeral | `PlayerJoined`, `PlayerLeft` (room notices) | hub → clients | Same |
+| Ephemeral | `PlayerJoined`, `PlayerLeft`, `JoinRejected` (room notices) | hub → clients | Same |
 | Durable | `MatchFound`, `LeaderboardUpdated`, presence | service → JetStream → websocket bridge | At-least-once |
 | Durable | `PlayerRegistered`, `PlayerUpdated`, `SessionRevoked` | Postgres outbox → relay → JetStream | Never lost once committed |
 
@@ -303,19 +336,48 @@ API and the durable path, never through `relay`.
   replicas, Redis Pub/Sub or core NATS (not JetStream): each replica publishes
   a relay message once and delivers what it receives to its own room members.
   It adds a hop for cross-replica pairs and was left out of this work.
-- **Who may join a room.** `join` accepts any room ID from any authenticated
-  client, and a member can read and send that room's relay messages. Room IDs
-  are random UUIDs handed out in `MatchFound`, so they are hard to guess, but
-  nothing checks them. Matchmaking already keeps each room's two players in
-  Redis (`room:{id}`); `join` could check against that.
-- **Deleting an account.** There is no endpoint for it, which is why the bench
-  cleans up through the database and leaves its accounts behind in production.
+- **Deleting an account.** There is no endpoint for it, and none is planned
+  (decided 2026-11-13), which is why the bench cleans up through the database
+  and leaves its accounts behind in production.
 - **The slow tail.** The 3–8 ms maximum at every load was recorded, not traced.
 - **`WS_RELAY_RATE=0`.** It is accepted and rejects every relay message; the
   setting is not validated.
 - **Lock and allocations.** The relay fan-out shares the hub's lock with joins
   and disconnects, and the read side allocates per message. The server's whole
   share is 0.02 ms at 50 pairs, so neither was touched.
+
+## Since the measurement
+
+Done after these numbers were taken (#133, 2026-11-14), and not re-measured:
+
+- **Who may join a room.** `join` used to accept any room ID from any
+  authenticated client. It is now checked against the two players matchmaking
+  stored for the room (`room:{id}` in Redis), and refused with `JoinRejected`
+  otherwise. That is one Redis read per join; a relay message does not pay it.
+- **The rate limit is per player**, not per connection: one bucket for all of a
+  player's connections, shared with joins.
+
+Both are outside the relay's path once a player is in the room, so the numbers
+above should stand; that is an expectation, not a measurement.
+
+## For the game client (phase 3)
+
+Two requirements for the client that phase 3 builds, decided 2026-11-13. They
+follow from limits that are staying as they are.
+
+- **One combined message, at most 30 a second.** A client sends what the other
+  side needs (position, input, state) as one relay message per tick, not as a
+  stream per kind. A player's bucket is 60 messages a second with a burst of
+  120, across all of the player's connections and including joins
+  (`WS_RELAY_RATE`, `WS_RELAY_BURST`); the data of one message is at most
+  1 024 bytes. Two 30 Hz streams would use the whole allowance and leave
+  nothing for a join, a second tab or the burst after a stall; one stream
+  leaves half of it free. Messages over the limit are dropped and counted,
+  without a reply.
+- **Guest sessions, no real e-mail address.** The demo client plays under a
+  guest or anonymous session, which phase 3 has to add. With no way to delete
+  an account, the public demo must not collect an address that somebody may
+  want removed.
 
 ## Running it
 
@@ -325,7 +387,9 @@ go run ./scripts/latencybench -pairs 10 \
   -cleanup-dsn 'postgres://gamemesh:gamemesh-dev-password@localhost:5432/gamemesh?sslmode=disable'
 ```
 
-`-pairs` takes 1, 10 or 50; `-ws ws://localhost:8080` goes through the gateway.
+`-pairs` is the number of concurrent pairs (the runs here used 1, 10 and 50);
+`-ws ws://localhost:8080` goes through the gateway. Against production:
+[scripts/latencybench/README.md](../scripts/latencybench/README.md).
 
 Bench accounts are `bench<run><n>` with the address
 `bench_<run>_<n>@latencybench.invalid` (usernames must be alphanumeric, so the

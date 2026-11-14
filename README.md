@@ -48,6 +48,7 @@ not come up.
 - [In-game latency](#in-game-latency)
 - [Configuration](#configuration)
 - [Repository layout](#repository-layout)
+- [Known limits](#known-limits)
 - [Roadmap](#roadmap)
 - [Documentation](#documentation)
 
@@ -115,6 +116,52 @@ flowchart LR
     GW & PL & MM & LB & WS & PR & OR -. OTLP spans .-> OTELC
 ```
 
+### Two paths to a player's socket
+
+Game traffic and backend events reach a player through the same WebSocket and
+share nothing before it.
+
+```mermaid
+flowchart LR
+    subgraph EPH["Ephemeral: in memory, at-most-once, one replica"]
+        A(("Player A"))
+        HUB["WebSocket hub"]
+        B(("Player B"))
+        A ==>|"relay<br/>60/s per player, 1 KiB"| HUB
+        HUB ==>|"Relay<br/>shed if the receiver is slow"| B
+    end
+
+    subgraph DUR["Durable: stored, at-least-once between services"]
+        PL["player"]
+        OB[("Postgres<br/>outbox_events")]
+        RL["outbox-relay"]
+        SV["matchmaking<br/>leaderboard<br/>presence"]
+        JS[("NATS JetStream")]
+        PL -.->|"same transaction"| OB
+        OB -.->|poll| RL
+        RL -.->|publish| JS
+        SV -.->|publish| JS
+    end
+
+    JS -.->|"MatchFound, LeaderboardUpdated, ...<br/>the hub only consumes"| HUB
+```
+
+| | Ephemeral (thick) | Durable (dotted) |
+|---|---|---|
+| Carries | `relay`: movement, position, input | `MatchFound`, `LeaderboardUpdated`, presence, `PlayerRegistered` |
+| Route | client → hub → clients | service → JetStream (player events: Postgres outbox first) → hub |
+| What is kept | Nothing: a frame that cannot be queued for its receiver is dropped and counted | The event, in a JetStream stream on disk; a consuming service that fails gets it again, up to 5 deliveries |
+| Last hop, hub → socket | Best effort | Best effort as well: a player who is not connected is not sent the event later and reads the state from the REST API |
+| Time inside the server | 0.02–0.15 ms per message (measured) | Not on the per-frame path |
+
+The two meet only in the hub, and only in one direction: the bus delivers into
+it, and nothing a client sends can reach the bus. That is not a convention but
+four tests on the source (`internal/wsgateway/boundary_test.go`): the relay
+imports no bus, outbox or transport; only the bridge imports the bus; the
+service contains no `Publish` call; the relay's frame type is not a durable
+event's name. Anything that must not be lost (a match result, a score) goes
+through the REST API, never through `relay`.
+
 <details>
 <summary><b>Data model</b></summary>
 
@@ -151,15 +198,22 @@ erDiagram
 
 </details>
 
-### Key design decisions
+### Decisions, and what was weighed against them
+
+| Decision | Why | The alternative, and why not |
+|---|---|---|
+| **Transactional outbox for player events** | The player row and its event are written in one Postgres transaction and a relay publishes afterwards, so a committed registration cannot lose its event. Relay replicas share the table through `FOR UPDATE SKIP LOCKED`, without a leader. | *Publishing right after the commit*, a dual write: a crash between the two loses the event and leaves no trace of it. *Two-phase commit* between Postgres and NATS: neither supports it cheaply. The price paid instead is duplicates, so consumers are idempotent. [docs/outbox.md](docs/outbox.md) |
+| **NATS JetStream as the event bus** | Durable, replayable, at-least-once with explicit ACK/NAK: `MatchFound` routes players into a game, so losing it between services is a correctness bug. Work-queue consumers share a durable; the WebSocket fan-out uses one ephemeral consumer per replica so every replica sees every event. | *Redis Pub/Sub*, the first transport and still selectable (`EVENT_BUS=redis`): already in the stack and faster, but a subscriber that is restarting never sees the message, and there is no acknowledgement or replay. *Core NATS* has the same gap. Kafka would fit behind the same `Publisher`/`Subscriber` interface and was not tried. [docs/messaging.md](docs/messaging.md) |
+| **Game traffic stays off the bus** | A position update is worthless a moment later and there are tens of them a second per player, so it is relayed from memory, at-most-once, and dropped for a slow receiver. The server holds a message for 0.02–0.15 ms. | *The same message through JetStream.* Measured once, as an experiment on a branch that is not merged: the server held the message 6–10 times longer, and every frame would wait on NATS, up to the 5 s publish timeout when it is slow. The cost of the choice: the relay does not cross replicas, so the websocket service runs one. [docs/latency.md](docs/latency.md) |
+| **k3s on one VPS** | Certified Kubernetes as a single binary, with Traefik, a load balancer and local-path storage included. The same Kustomize base runs on a laptop (k3d) and in production, and the server can be rebuilt from the runbook. | *kubeadm*: far more to install and maintain for a single node. Running the compose file on the server was never weighed: Kubernetes was the goal from the start. One node is one failure domain, whatever runs on it ([Known limits](#known-limits)). |
+
+### Further design decisions
 
 | Decision | Rationale |
 |---|---|
 | **Gateway terminates JWT, forwards `X-User-ID`** | Auth lives in one place; internal services stay simple and are reachable only on the cluster network. The WebSocket service validates tokens itself (browsers can't set headers on an upgrade) and re-checks the session at the handshake and every 10 s, so a logout closes live sockets too. |
 | **Session revocation with a short-TTL in-process cache** | Every authenticated request honours logout without a Redis round-trip per request: a 5 s positive cache bounds how long a revoked token stays usable on one replica. |
 | **Redis ZSETs for leaderboard and matchmaking queue** | `ZADD`/`ZREVRANK` are O(log n) at millions of members; a rank-scored queue lets each 5 s tick pair neighbours in O(n) with no sort step. |
-| **NATS JetStream behind `Publisher`/`Subscriber`** | Durable, replayable, at-least-once delivery with explicit ACK/NAK — a lost `MatchFound` is a correctness bug. Work-queue consumers share a durable; the WebSocket fan-out uses one ephemeral consumer per instance so every replica sees every event. |
-| **Transactional outbox for player events** | The business row and its event are written in one Postgres transaction; the relay publishes asynchronously — no dual-write problem. Relay replicas coordinate through `FOR UPDATE SKIP LOCKED`, without a leader. |
 | **Presence as its own service with TTL + heartbeat** | A full state machine (`ONLINE`/`IN_QUEUE`/`IN_MATCH`/`AWAY`/`OFFLINE`); a 45 s TTL refreshed every 15 s means a crashed client heals itself with no reaper job. |
 | **Trace context inside the event envelope** | W3C trace headers travel in a `Carrier` field, so a trace survives Redis, NATS *and* the outbox's database round-trip. |
 | **Fail fast on weak production config** | With `APP_ENV=production` every service refuses to start on a missing, short (< 32 chars) or default secret — a misconfigured release never takes traffic. |
@@ -413,11 +467,21 @@ calls are bcrypt-bound, about 200 ms each, and counting them put matchmaking's
 p95 anywhere between 86 and 190 ms from run to run (the "112 ms" this table
 used to show):
 
-| Scenario | Iterations | Req/s | p95 | Errors |
-|---|---|---|---|---|
-| matchmaking | 6,500 | 194 | 27–31 ms *(two runs)* | 0.00–0.13 % |
-| leaderboard | 332,138 | 2,838 | 18 ms | 0.01 % |
-| websocket | 989 sessions (avg 43 s) | — | 129 ms *(connect)* | 0.00 % |
+| Scenario | What a virtual user does | Iterations | Req/s | p95 | Errors |
+|---|---|---|---|---|---|
+| matchmaking | `POST /api/v1/queue`, polls `GET /api/v1/queue/status` until matched, `DELETE /api/v1/queue` if not | 6,500 | 194 | 27–31 ms *(two runs)* | 0.00–0.13 % |
+| leaderboard | `POST /api/v1/score`; every tenth iteration also `GET /api/v1/leaderboard/top/10` | 332,138 | 2,838 | 18 ms | 0.01 % |
+| websocket | Opens `/ws`, joins a room, holds the connection 30–60 s, leaves | 989 sessions (avg 43 s) | — | 129 ms *(connect)* | 0.00 % |
+
+All three are HTTP or connection figures through the gateway. None of them is
+the time a game message takes between two players; that is
+[In-game latency](#in-game-latency), measured separately.
+
+The websocket row is from before a join was checked against matchmaking's
+rooms (2026-11-14). The script joins rooms it makes up (`load-room-N`), which
+are now refused, so a run today still measures connecting and holding a
+session but no longer any fan-out inside a room. It has not been re-run or
+rewritten.
 
 The few errors are connections reset between k6 and Docker Desktop's port
 forwarding, before the gateway. Before the gateway reused its upstream
@@ -444,11 +508,13 @@ Full write-up: [docs/postmortem-throughput-ceiling.md](docs/postmortem-throughpu
 
 ## In-game latency
 
-**Measured where the latency is; did not reduce it.** One player's message
-reaches the other in about 40 ms in production. The server holds it for
-0.02–0.13 ms; the rest is network. Six candidate improvements were examined
-and none gave a measurable gain: five were already in place, and the one that
-needed a code change stayed inside the noise and was reverted.
+**Measured, not reduced.** One player's message reaches the other in about
+40 ms in production, from a home connection in İstanbul to the server in
+Nuremberg and back. The server holds it for 0.02–0.15 ms (0.12–0.15 ms in
+production, from its own histogram); the rest is network. Six candidate
+improvements were examined and none gave a measurable gain: five were already
+in place, and the one that needed a code change stayed inside the noise and
+was reverted.
 
 Game messages travel client → WebSocket hub → clients, in memory
 (`{"action":"relay"}`), and never through JetStream or the outbox.
@@ -457,7 +523,7 @@ matchmaking and times 500 messages per pair on the monotonic clock.
 
 | Where | Pairs | p50 | p95 | p99 | Ping round trip p50 |
 |---|---|---|---|---|---|
-| **Production**, `api.gamemesh.app` from a home connection | 1 | 39.9 ms | 41.7 ms | 42.8 ms | 40.0 ms |
+| **Production**, İstanbul (home connection) → Nuremberg → İstanbul | 1 | 39.9 ms | 41.7 ms | 42.8 ms | 40.0 ms |
 | | 10 | 41.7 ms | 45.0 ms | 48.0 ms | 41.6 ms |
 | Local, bench and server on one machine | 1 | 1.07 ms | 1.58 ms | 1.95 ms | 0.80 ms |
 | | 50 | 0.29 ms | 0.43 ms | 0.59 ms | 0.32 ms |
@@ -525,6 +591,83 @@ scripts/        database schema and seed, k6 load tests, k8s helpers
 tests/          Testcontainers integration tests
 docs/           architecture, API, operations
 ```
+
+## Known limits
+
+What the system does not do, or has not been shown to do, as of 2026-11-14.
+
+**One of everything**
+
+- **One node.** It is the only failure domain: when the VPS is down, everything
+  is. Every service runs one replica.
+- **The websocket service cannot run a second replica.** The in-game relay fans
+  out from one replica's memory and does not cross replicas, so two players of
+  a room on different replicas would never hear each other. The real-time path
+  therefore does not scale horizontally, and a rollout of that service closes
+  every open connection; clients have to reconnect.
+- **Rate limits are per process.** The gateway's per-client limit and the
+  relay's per-player limit live in memory; with more replicas each would allow
+  its own share.
+
+**Real-time path**
+
+- **The relay is at-most-once.** A frame for a receiver whose send buffer is
+  full is dropped and counted, never retried. A player may send 60 messages a
+  second (burst 120) with 1 KiB of data each; more is dropped without a reply.
+- **Rooms expire after an hour** (`ROOM_TTL`). Players already in the room
+  stay; one who drops after that cannot rejoin.
+- **When Redis is unreachable** a join is refused, but the 10 s session re-check
+  keeps existing connections open instead of closing them, so a revoked
+  session's sockets can outlive it until Redis is back.
+- **Latency was measured from one place:** both players on one home connection
+  in İstanbul. 50 pairs were not run against production, and the slow tail
+  (one message at 138 ms) was recorded, not traced.
+- **The websocket load-test scenario no longer exercises a room** (see
+  [Testing & load testing](#testing--load-testing)).
+
+**Data and recovery**
+
+- **Backups cover Postgres and k3s's state, nightly.** Up to a day of writes
+  can be lost. Redis (sessions, the matchmaking queue, presence, the
+  leaderboard's sorted set), the JetStream streams and Prometheus's history
+  are not backed up: after a restore every player logs in again and the
+  leaderboard starts empty.
+- **The restore was done once,** into an empty VM: 38 minutes, about 25 of them
+  on two problems the runbook has since been corrected for. It has not been
+  timed again with the corrected runbook, and restoring over a live database
+  has never been tried.
+- **A rollback redeploys the previous commit's manifests and images.** It does
+  not undo a schema change, data, or cluster-level manifests.
+- **Volume sizes are not enforced.** Every volume is a directory on the node's
+  one partition (`local-path`), so one that fills the disk fills it for all.
+  The disk is checked hourly from inside (alerts at 70 % and 85 %) and shown
+  on the status page; unused images are removed after a week.
+
+**Operations**
+
+- **Alerts go by e-mail only,** from outside probes that run every 3 minutes;
+  there are no alert rules inside the cluster yet ([Roadmap](#roadmap)).
+- **Certificate renewal has not happened in production yet.** cert-manager is
+  due to renew on 2026-12-20; a daily outside check reports a certificate
+  that is running out.
+- **The deploy's smoke test is narrow:** `/health` reports the commit,
+  `/api/v1/leaderboard` answers 200, and a join on `/ws` gets an answer. It
+  does not register, queue or submit a score, and it cannot tell whether the
+  room lookup behind a join works.
+- **Cluster-level manifests are applied by hand** (RBAC, admission policies,
+  issuers, the kubelet's settings); CI cannot touch them, and nothing checks
+  that the server matches the repository.
+- **Grafana's login form is not switched off.** What keeps it from the internet
+  is the ingress, which routes only the public dashboard's own paths, and the
+  admission policy that refuses any other route.
+
+**Accounts**
+
+- **An account cannot be deleted:** there is no endpoint for it. Production
+  holds 42 accounts left by the latency measurement (`bench…@latencybench.invalid`)
+  and `benchsmoke`, which the deploy logs in as.
+- **Any logged-in player can submit any score for themselves.** The leaderboard
+  trusts `POST /api/v1/score`; there is no game server to vouch for a result.
 
 ## Roadmap
 
