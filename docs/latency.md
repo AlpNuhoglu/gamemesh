@@ -387,7 +387,9 @@ go run ./scripts/latencybench -pairs 10 \
   -cleanup-dsn 'postgres://gamemesh:gamemesh-dev-password@localhost:5432/gamemesh?sslmode=disable'
 ```
 
-`-pairs` takes 1, 10 or 50; `-ws ws://localhost:8080` goes through the gateway.
+`-pairs` is the number of concurrent pairs (the runs here used 1, 10 and 50);
+`-ws ws://localhost:8080` goes through the gateway. Against production:
+[scripts/latencybench/README.md](../scripts/latencybench/README.md).
 
 Bench accounts are `bench<run><n>` with the address
 `bench_<run>_<n>@latencybench.invalid` (usernames must be alphanumeric, so the
