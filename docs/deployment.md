@@ -279,6 +279,12 @@ is the one that keeps the disk empty; thresholds alone would hold it between
 50 and 60 %. Rollbacks are unaffected: the previous release is a week old at
 most in normal use, and an older one pulls its images again.
 
+In place on the server since 2026-11-14 (read back with the command below:
+60, 50, 168h0m0s). That evening the disk was at 47.5 % (29.3 of 61.7 GiB) with
+18.9 GiB of images: nothing has been removed yet, since the thresholds are not
+reached and the age limit counts from the kubelet's restart. The first
+removals are due around 2026-11-21; what they free is not measured yet.
+
 The kubelet reads the file at start, so it takes a restart of k3s (pods keep
 running; the API is away for some seconds). The age limit has no command-line
 flag, which is why this is a kubelet configuration drop-in and not a
@@ -509,6 +515,13 @@ noticed there too ("The dead man's switch"). And Prometheus keeps the figure
 (job `node-disk`, from the kubelet), shown on the status dashboard's "Node
 disk used" panel with lines at the same two levels. The panel tells nobody;
 the checks do.
+
+The two do not show the same number, and the check is the higher one. On
+2026-11-14 the check's `df` said 49 % while the kubelet and the panel said
+47.5 %: 29.3 GiB used of 61.7, but only 29.8 GiB available, because 2.6 GiB
+of the filesystem is neither (reserved blocks). `df` leaves those out of the
+total, the kubelet's figure does not. So a check fires about two points
+before the panel reaches its line.
 
 The CronJob needs the two ping URLs, given on standard input like the
 backups':
