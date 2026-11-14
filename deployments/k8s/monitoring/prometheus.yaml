@@ -51,7 +51,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: prometheus
-          image: prom/prometheus:v3.15.1-distroless@sha256:451a845bae1d51622b41af1780eb2ad911bbb79a9855bc8e9bb67fabbc03f934
+          image: prom/prometheus:v3.16.0-distroless@sha256:e8b8fb0e336fe0affce6f9ea347b11d24975465fd3ba8119420186679c3efd5f
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
