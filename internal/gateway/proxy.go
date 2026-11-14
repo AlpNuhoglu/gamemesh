@@ -40,6 +40,40 @@ var upstreamTransport = func() *http.Transport {
 	return t
 }()
 
+// dropUpstreamCORS removes the CORS headers of an upstream's response, so the
+// browser gets the gateway's and only the gateway's.
+//
+// Every service runs the same CORS middleware (pkg/server), the gateway
+// included, and ReverseProxy adds the upstream's response headers to the ones
+// the gateway's middleware has already set. A proxied response therefore
+// carried Access-Control-Allow-Origin twice, and a browser refuses that: the
+// header must have exactly one value. No browser client existed to notice.
+// The gateway is the one the browser talks to, so its answer is the one that
+// counts; an upstream with a looser list must not widen it either.
+//
+// "Origin" is taken out of the upstream's Vary for the same reason (the
+// gateway sets its own); any other Vary value is kept.
+func dropUpstreamCORS(resp *http.Response) error {
+	for name := range resp.Header {
+		if strings.HasPrefix(name, "Access-Control-") {
+			resp.Header.Del(name)
+		}
+	}
+	vary := resp.Header.Values("Vary")
+	if len(vary) == 0 {
+		return nil
+	}
+	resp.Header.Del("Vary")
+	for _, line := range vary {
+		for _, v := range strings.Split(line, ",") {
+			if v = strings.TrimSpace(v); v != "" && !strings.EqualFold(v, "Origin") {
+				resp.Header.Add("Vary", v)
+			}
+		}
+	}
+	return nil
+}
+
 // newProxy builds a gin handler that strips /api/v1 and forwards to target.
 // The authenticated identity travels on X-User-ID / X-Token-JTI headers —
 // internal services trust these because they are only reachable inside the
@@ -68,7 +102,8 @@ func newProxy(target string, log *zap.Logger) gin.HandlerFunc {
 		// is a client span and the W3C traceparent header is injected
 		// automatically. Combined with otelgin on the downstream, gateway ->
 		// service -> store shows up as a single distributed trace.
-		Transport: otelhttp.NewTransport(upstreamTransport),
+		Transport:      otelhttp.NewTransport(upstreamTransport),
+		ModifyResponse: dropUpstreamCORS,
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		// The client gave up (closed the page or the connection, or hit its
