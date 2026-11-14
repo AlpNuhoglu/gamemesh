@@ -223,8 +223,10 @@ reroute.
 
 This is not a before and after. The relay never took this route, and nothing
 was made faster by not taking it. It is a one-off measurement of what the
-durable route would cost for the same message, on branch `exp/relay-jetstream`
-(`04064a2`), which is not merged.
+durable route would cost for the same message, on branch
+[`exp/relay-jetstream`](https://github.com/AlpNuhoglu/gamemesh/tree/exp/relay-jetstream)
+(`04064a2`). The branch is kept so the number can be reproduced; it is not
+merged and must not be: three of the boundary tests are skipped on it.
 
 In that build an accepted relay message is published to a JetStream stream of
 its own the way backend events are (synchronous publish, waiting for the
