@@ -23,7 +23,7 @@ func startRedis(t *testing.T) *goredis.Client {
 	t.Helper()
 	ctx := context.Background()
 
-	redisC, err := tcredis.Run(ctx, "redis:8.8.4-alpine@sha256:c027ae0f677dcf73d74038256f5b88c9ba7b11ccbfae97e96a9f091208d36125")
+	redisC, err := tcredis.Run(ctx, "redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisC.Terminate(context.Background()) })
 
