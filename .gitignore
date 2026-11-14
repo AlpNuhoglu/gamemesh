@@ -24,3 +24,9 @@ scripts/k6/reports/
 # Graphify knowledge-graph output — local-only, never expose publicly
 # (build artifact; .graphify_python embeds a machine-specific absolute path)
 graphify-out/
+
+# Claude Code's local state: skills, agent worktrees, settings
+.claude/
+
+# Python bytecode (the deploy action's smoke script is run with python3)
+__pycache__/
