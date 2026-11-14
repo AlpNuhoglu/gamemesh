@@ -507,11 +507,13 @@ Full write-up: [docs/postmortem-throughput-ceiling.md](docs/postmortem-throughpu
 
 ## In-game latency
 
-**Measured where the latency is; did not reduce it.** One player's message
-reaches the other in about 40 ms in production. The server holds it for
-0.02–0.13 ms; the rest is network. Six candidate improvements were examined
-and none gave a measurable gain: five were already in place, and the one that
-needed a code change stayed inside the noise and was reverted.
+**Measured, not reduced.** One player's message reaches the other in about
+40 ms in production, from a home connection in İstanbul to the server in
+Nuremberg and back. The server holds it for 0.02–0.15 ms (0.12–0.15 ms in
+production, from its own histogram); the rest is network. Six candidate
+improvements were examined and none gave a measurable gain: five were already
+in place, and the one that needed a code change stayed inside the noise and
+was reverted.
 
 Game messages travel client → WebSocket hub → clients, in memory
 (`{"action":"relay"}`), and never through JetStream or the outbox.
@@ -520,7 +522,7 @@ matchmaking and times 500 messages per pair on the monotonic clock.
 
 | Where | Pairs | p50 | p95 | p99 | Ping round trip p50 |
 |---|---|---|---|---|---|
-| **Production**, `api.gamemesh.app` from a home connection | 1 | 39.9 ms | 41.7 ms | 42.8 ms | 40.0 ms |
+| **Production**, İstanbul (home connection) → Nuremberg → İstanbul | 1 | 39.9 ms | 41.7 ms | 42.8 ms | 40.0 ms |
 | | 10 | 41.7 ms | 45.0 ms | 48.0 ms | 41.6 ms |
 | Local, bench and server on one machine | 1 | 1.07 ms | 1.58 ms | 1.95 ms | 0.80 ms |
 | | 50 | 0.29 ms | 0.43 ms | 0.59 ms | 0.32 ms |
