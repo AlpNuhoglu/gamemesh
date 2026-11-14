@@ -197,15 +197,22 @@ erDiagram
 
 </details>
 
-### Key design decisions
+### Decisions, and what was weighed against them
+
+| Decision | Why | The alternative, and why not |
+|---|---|---|
+| **Transactional outbox for player events** | The player row and its event are written in one Postgres transaction and a relay publishes afterwards, so a committed registration cannot lose its event. Relay replicas share the table through `FOR UPDATE SKIP LOCKED`, without a leader. | *Publishing right after the commit*, a dual write: a crash between the two loses the event and leaves no trace of it. *Two-phase commit* between Postgres and NATS: neither supports it cheaply. The price paid instead is duplicates, so consumers are idempotent. [docs/outbox.md](docs/outbox.md) |
+| **NATS JetStream as the event bus** | Durable, replayable, at-least-once with explicit ACK/NAK: `MatchFound` routes players into a game, so losing it between services is a correctness bug. Work-queue consumers share a durable; the WebSocket fan-out uses one ephemeral consumer per replica so every replica sees every event. | *Redis Pub/Sub*, the first transport and still selectable (`EVENT_BUS=redis`): already in the stack and faster, but a subscriber that is restarting never sees the message, and there is no acknowledgement or replay. *Core NATS* has the same gap. Kafka would fit behind the same `Publisher`/`Subscriber` interface and was not tried. [docs/messaging.md](docs/messaging.md) |
+| **Game traffic stays off the bus** | A position update is worthless a moment later and there are tens of them a second per player, so it is relayed from memory, at-most-once, and dropped for a slow receiver. The server holds a message for 0.02–0.15 ms. | *The same message through JetStream.* Measured once, as an experiment on a branch that is not merged: the server held the message 6–10 times longer, and every frame would wait on NATS, up to the 5 s publish timeout when it is slow. The cost of the choice: the relay does not cross replicas, so the websocket service runs one. [docs/latency.md](docs/latency.md) |
+| **k3s on one VPS** | Certified Kubernetes as a single binary, with Traefik, a load balancer and local-path storage included. The same Kustomize base runs on a laptop (k3d) and in production, and the server can be rebuilt from the runbook. | *kubeadm*: far more to install and maintain for a single node. Running the compose file on the server was never weighed: Kubernetes was the goal from the start. One node is one failure domain, whatever runs on it ([Known limits](#known-limits)). |
+
+### Further design decisions
 
 | Decision | Rationale |
 |---|---|
 | **Gateway terminates JWT, forwards `X-User-ID`** | Auth lives in one place; internal services stay simple and are reachable only on the cluster network. The WebSocket service validates tokens itself (browsers can't set headers on an upgrade) and re-checks the session at the handshake and every 10 s, so a logout closes live sockets too. |
 | **Session revocation with a short-TTL in-process cache** | Every authenticated request honours logout without a Redis round-trip per request: a 5 s positive cache bounds how long a revoked token stays usable on one replica. |
 | **Redis ZSETs for leaderboard and matchmaking queue** | `ZADD`/`ZREVRANK` are O(log n) at millions of members; a rank-scored queue lets each 5 s tick pair neighbours in O(n) with no sort step. |
-| **NATS JetStream behind `Publisher`/`Subscriber`** | Durable, replayable, at-least-once delivery with explicit ACK/NAK — a lost `MatchFound` is a correctness bug. Work-queue consumers share a durable; the WebSocket fan-out uses one ephemeral consumer per instance so every replica sees every event. |
-| **Transactional outbox for player events** | The business row and its event are written in one Postgres transaction; the relay publishes asynchronously — no dual-write problem. Relay replicas coordinate through `FOR UPDATE SKIP LOCKED`, without a leader. |
 | **Presence as its own service with TTL + heartbeat** | A full state machine (`ONLINE`/`IN_QUEUE`/`IN_MATCH`/`AWAY`/`OFFLINE`); a 45 s TTL refreshed every 15 s means a crashed client heals itself with no reaper job. |
 | **Trace context inside the event envelope** | W3C trace headers travel in a `Carrier` field, so a trace survives Redis, NATS *and* the outbox's database round-trip. |
 | **Fail fast on weak production config** | With `APP_ENV=production` every service refuses to start on a missing, short (< 32 chars) or default secret — a misconfigured release never takes traffic. |
