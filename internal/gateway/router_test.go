@@ -382,3 +382,57 @@ func TestUpstreamDownReturns502(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "upstream unavailable")
 }
+
+// TestProxiedResponseCarriesCORSOnce: a browser must see the gateway's CORS
+// answer exactly once. Every service applies the same CORS middleware, so an
+// upstream's response arrives with its own Access-Control-* headers; passed
+// on beside the gateway's they made two Access-Control-Allow-Origin values,
+// which a browser rejects. The upstream here also has a looser policy than
+// the gateway ("*"), which must not reach the browser either.
+func TestProxiedResponseCarriesCORSOnce(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+		w.Header().Add("Vary", "Origin, Accept-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"entries":[]}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	cfg := config.Load("gateway")
+	cfg.LeaderboardServiceURL = upstream.URL
+	origins, err := middleware.ParseOrigins([]string{"https://gamemesh.app"})
+	require.NoError(t, err)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(middleware.CORS(origins)) // as server.NewEngine does for every service
+	RegisterRoutes(r, cfg, auth.NewTokenManager("gw-test-secret", time.Hour, "gamemesh"), nil, zap.NewNop())
+	gw := httptest.NewServer(r)
+	t.Cleanup(gw.Close)
+
+	get := func(origin string) *http.Response {
+		req, err := http.NewRequest(http.MethodGet, gw.URL+"/api/v1/leaderboard", nil)
+		require.NoError(t, err)
+		req.Header.Set("Origin", origin)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return resp
+	}
+
+	allowed := get("https://gamemesh.app")
+	assert.Equal(t, []string{"https://gamemesh.app"}, allowed.Header.Values("Access-Control-Allow-Origin"),
+		"exactly one value, the gateway's")
+	for _, name := range []string{"Access-Control-Allow-Methods", "Access-Control-Allow-Headers", "Access-Control-Max-Age"} {
+		assert.Len(t, allowed.Header.Values(name), 1, name)
+	}
+	assert.ElementsMatch(t, []string{"Origin", "Accept-Encoding"}, allowed.Header.Values("Vary"),
+		"Origin once, the upstream's other Vary value kept")
+
+	refused := get("https://evil.example")
+	assert.Empty(t, refused.Header.Values("Access-Control-Allow-Origin"),
+		"the upstream's * must not stand in for the gateway's refusal")
+}
