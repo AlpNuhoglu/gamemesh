@@ -18,6 +18,7 @@ resources:
   - ../../base
   - redirect-https.yaml
   - backup.yaml
+  - disk-check.yaml
 # The images CI published, at the commit being deployed: the deploy job sets
 # the tag with kustomize edit set image <name>=...:<sha> before applying
 # (step D). The value here is a deliberate placeholder: an apply by hand pulls

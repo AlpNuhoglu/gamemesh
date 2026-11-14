@@ -266,6 +266,39 @@ In its first seconds `secrets-encrypt status` can answer `secret-encrypt error
 ID ...` (the server log says `runtime core not ready`); asked again half a
 minute later it reports the status.
 
+#### Image garbage collection
+
+Every deploy pulls eight new images, and the kubelet's defaults remove unused
+ones only when the disk is 85 % full. Three weeks and about a hundred deploys
+after the first one, images were 17.7 GiB of the 27.6 GiB in use, 45 % of the
+61.7 GiB disk (2026-11-13; Prometheus's data was 74 MiB and the pods' logs
+20 MiB). `deployments/server/k3s/kubelet.conf.d/10-image-gc.conf` changes
+that: an image unused for a week is removed whatever the disk's state, and if
+the disk still reaches 60 % the kubelet collects down to 50 %. The age limit
+is the one that keeps the disk empty; thresholds alone would hold it between
+50 and 60 %. Rollbacks are unaffected: the previous release is a week old at
+most in normal use, and an older one pulls its images again.
+
+The kubelet reads the file at start, so it takes a restart of k3s (pods keep
+running; the API is away for some seconds). The age limit has no command-line
+flag, which is why this is a kubelet configuration drop-in and not a
+`kubelet-arg` in `config.yaml`. Tried on k3d with k3s 1.35.5: the three values
+are picked up and the file survives the restart.
+
+```bash
+# Admin machine, in the repo
+scp deployments/server/k3s/kubelet.conf.d/10-image-gc.conf gamemesh:
+# Server, as alp
+sudo install -D -m 644 10-image-gc.conf /var/lib/rancher/k3s/agent/etc/kubelet.conf.d/10-image-gc.conf
+sudo systemctl restart k3s
+# Admin machine: 60, 50 and 168h0m0s
+kprod get --raw /api/v1/nodes/gamemesh-prod-1/proxy/configz |
+  jq '.kubeletconfig | {imageGCHighThresholdPercent, imageGCLowThresholdPercent, imageMaximumGCAge}'
+```
+
+The kubelet forgets when an image was last used when it restarts, so the
+first removals come a week after the restart, not at once.
+
 The admin kubeconfig (cluster-admin) is kept in its own file on the admin's
 machine, never merged into `~/.kube/config` and never given to CI, so a plain
 `kubectl` always talks to the local cluster:
@@ -367,7 +400,8 @@ job in `.github/workflows/ci.yml` (environment `production`, one at a time,
 never cancelled halfway) points the prod overlay at the commit's images,
 applies it after a server-side dry run, waits for every Deployment and
 StatefulSet, and waits for `https://api.gamemesh.app/health` to report the
-commit. Then it applies the same commit's monitoring and waits for it; if
+commit and for a join on `/ws` to be answered ("The smoke test's account").
+Then it applies the same commit's monitoring and waits for it; if
 that fails the job is red, but the app is not rolled back. Measured on the
 first one: merge to live in 6 min 46 s (CI about
 4 min, publish 1.5 min, deploy 38 s), 3494 of 3494 public requests answered
@@ -376,11 +410,53 @@ first one: merge to live in 6 min 46 s (CI about
 The job logs the image that ran before it. The procedure below is the same
 thing by hand, for when CI cannot run.
 
+#### The smoke test's account
+
+`/ws` carries the game, and the HTTP checks never reach it. After them the
+smoke test (`.github/actions/deploy/ws_smoke.py`) logs in, opens `/ws` with
+the token, sends a `join` for a room that does not exist, needs the answer
+within 5 s, closes and logs out; five tries, 5 s apart. A release that breaks
+the upgrade, the token or session check, or the read or write loop of the
+WebSocket service is rolled back like any other failed deploy.
+
+It logs in as a fixed account, `benchsmoke`, which exists for nothing else and
+which the admin creates once, by hand. The deploy never registers it: sign-up
+is not the smoke test's to check, and a broken sign-up must not fail a deploy.
+Its password is the `production` environment's secret `SMOKE_PASSWORD`: 8 to
+72 characters, printable ASCII, no space at either end.
+
+```bash
+read -rs "PW?benchsmoke password: "; echo
+jq -n --arg p "$PW" '{username:"benchsmoke", email:"bench_smoke@latencybench.invalid", password:$p}' |
+  curl -sS -X POST https://api.gamemesh.app/api/v1/auth/register -H 'Content-Type: application/json' -d @- | jq .username
+printf '%s' "$PW" | gh secret set SMOKE_PASSWORD --env production; unset PW
+```
+
+Both are checked before the cluster is touched. With the secret empty, or the
+login refused, the deploy stops with `smoke account missing or wrong password`
+and changes nothing. (The API answers 401 for a missing account and for a
+wrong password alike.) If the login fails any other way, production may
+already be down, which is when a deploy is wanted: a warning, and it goes on.
+
+**Either answer to the join passes, and that must stay so.** Releases with the
+room membership check answer a stranger's join with `JoinRejected`; releases
+before it accepted any join and broadcast `PlayerJoined`. A rollback runs this
+same script against the previous commit, so a check that required
+`JoinRejected` would report a working rollback to an older release as failed.
+
+What it does not prove: that the room lookup in Redis works. A lookup that
+fails is answered with the same `JoinRejected`, on purpose without a reason;
+`gamemesh_ws_join_rejected_total{reason="unavailable"}` is where that shows.
+A change to the login answer, to `?token=` or to the `join` action has to
+change this check in the same pull request, and stay compatible with the
+release before it.
+
 ### Monitoring
 
 Prometheus and Grafana run in the `monitoring` namespace
 (`deployments/k8s/monitoring`). Prometheus scrapes the services' pods in `gamemesh` every 15 s and keeps 7 days, at
-most 2 GB, on a 3 Gi volume. It is never exposed: its Service is ClusterIP and
+most 2 GB, on a 3 Gi volume. Once a minute it also reads the node's disk
+usage from the kubelet, keeping only those series ("Disk"). It is never exposed: its Service is ClusterIP and
 the namespace's admission policy refuses any other Service type and any
 Ingress. Grafana has one data source (Prometheus) and the status dashboard
 (`grafana/dashboards/status.json`), both provisioned from the repository and
@@ -390,6 +466,22 @@ exposed; only the status page is ("Status page"). CI deploys both after the
 app; they need the namespace, Prometheus's ServiceAccount and Role in
 `gamemesh` ("Cluster-level manifests") and the `grafana-admin` Secret
 ("Production secrets") first.
+
+**Two files to keep in step by hand.** CI applies Prometheus's configuration
+(`monitoring/prometheus.yml`) but may not write RBAC, so what Prometheus is
+allowed to read (`cluster/prometheus-rbac.yaml`) reaches the server only when
+the admin copies it ("Cluster-level manifests"). A scrape job that needs a new
+right therefore stays without targets, logging `... is forbidden`, until that
+file is copied again; nothing else is affected, and it starts working without
+a restart. The `node-disk` job needs the ClusterRole `prometheus-node-metrics`
+from that file:
+
+```bash
+scp deployments/k8s/cluster/prometheus-rbac.yaml gamemesh:/tmp/
+# -t: sudo on the server asks for alp's password and needs a terminal for it
+ssh -t gamemesh 'sudo install -m 600 /tmp/prometheus-rbac.yaml /var/lib/rancher/k3s/server/manifests/prometheus-rbac.yaml && rm /tmp/prometheus-rbac.yaml'
+kprod get clusterrolebinding prometheus-node-metrics    # k3s applies the directory within seconds
+```
 
 To reach them, from the admin's machine:
 
@@ -401,6 +493,40 @@ curl -s 127.0.0.1:9090/api/v1/query --data-urlencode 'query=count by (app) (up{n
 kprod -n monitoring port-forward svc/grafana 3000:3000       # then http://127.0.0.1:3000, user admin
 kprod -n monitoring get secret grafana-admin -o jsonpath='{.data.password}' | base64 -d | pbcopy
 ```
+
+### Disk
+
+Everything the cluster writes is on one partition of the node: images, logs
+and every volume. The volumes' sizes (1 Gi, 3 Gi) are requests, not limits:
+`local-path` volumes are directories on that partition, so one that grows
+takes the room of all the others.
+
+Two things watch it. Every hour the `disk-check` CronJob
+(`deployments/k8s/overlays/prod/disk-check.yaml`) reads the usage and reports
+to two checks at Healthchecks.io: `disk-warning` fails at 70 %, `disk-critical`
+at 85 %, and either e-mails `ops@gamemesh.app`; a run that does not happen is
+noticed there too ("The dead man's switch"). And Prometheus keeps the figure
+(job `node-disk`, from the kubelet), shown on the status dashboard's "Node
+disk used" panel with lines at the same two levels. The panel tells nobody;
+the checks do.
+
+The CronJob needs the two ping URLs, given on standard input like the
+backups':
+
+```bash
+read -rs "WARN?disk-warning ping URL: "; echo; read -rs "CRIT?disk-critical ping URL: "; echo
+printf '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"gamemesh-disk-check","namespace":"gamemesh"},"stringData":{"DISK_WARN_PING_URL":"%s","DISK_CRIT_PING_URL":"%s"}}' "$WARN" "$CRIT" |
+  kprod apply -f -; unset WARN CRIT
+kprod -n gamemesh create job --from=cronjob/disk-check disk-check-now   # then its log, and both checks turn green
+```
+
+Without the Secret the job fails every hour and its log says which URL is
+missing; nothing else is affected.
+
+When a check fails: `kprod get --raw /api/v1/nodes/gamemesh-prod-1/proxy/stats/summary | jq '.node.fs, .node.runtime.imageFs'`
+shows the disk and the images' share. Images are the usual cause ("Image
+garbage collection"); `sudo k3s crictl rmi --prune` on the server removes the
+unused ones at once.
 
 ### Status page
 
@@ -624,6 +750,8 @@ an e-mail to `ops@gamemesh.app` when the report is bad or missing:
 | `postgres-backup` | cron `15 2 * * *` UTC, grace 30 minutes | the CronJob's pod |
 | `k3s-backup` | cron `30 2 * * *` UTC, grace 30 minutes | the upload pod; on failure also the server's script |
 | `cert-check` | simple: once a day, grace 12 hours | the `cert-check` workflow |
+| `disk-warning` | cron `5 * * * *` UTC, grace 30 minutes | the `disk-check` CronJob's pod: fails at 70 % |
+| `disk-critical` | cron `5 * * * *` UTC, grace 30 minutes | the same pod: fails at 85 % |
 
 `cert-check` is not on a cron schedule because GitHub starts this
 repository's scheduled workflows 7 to 8.5 hours late (measured; its 06:00
@@ -949,8 +1077,9 @@ reports again.
 ### Rolling back
 
 - **Automatic.** When a deploy does not come up (rollout stuck for 5 minutes,
-  or the smoke test fails: `/health` must report the commit and
-  `/api/v1/leaderboard` must answer 200), the job redeploys the commit that ran
+  or the smoke test fails: `/health` must report the commit,
+  `/api/v1/leaderboard` must answer 200 and a join on `/ws` must be answered),
+  the job redeploys the commit that ran
   before, with that commit's own manifests and images, and ends red. Its log
   says `rolled back: <previous> runs again`. Tested with a deliberately broken
   release: the old gateway pod kept serving and never restarted.

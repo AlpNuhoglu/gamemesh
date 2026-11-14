@@ -9,6 +9,12 @@ inputs:
   sha:
     description: Full SHA of a commit on main whose images are published
     required: true
+  smoke-password:
+    description: >-
+      Password of the benchsmoke account the smoke test's WebSocket check
+      logs in as (the production environment's secret SMOKE_PASSWORD).
+      Without it nothing is deployed.
+    required: true
 
 runs:
   using: composite
@@ -17,4 +23,5 @@ runs:
       shell: bash
       env:
         DEPLOY_SHA: ${{ inputs.sha }}
+        SMOKE_PASSWORD: ${{ inputs.smoke-password }}
       run: bash "${GITHUB_ACTION_PATH}/deploy.sh" "${DEPLOY_SHA}"

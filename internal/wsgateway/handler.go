@@ -37,14 +37,10 @@ const sessionCheckTimeout = 2 * time.Second
 
 // NewHandler constructs the handler. sessions must not be cached: the lookup
 // happens once per connection, so revocation takes effect immediately.
-// allowedOrigins mirrors the HTTP CORS configuration for the upgrade
-// handshake's Origin check.
-func NewHandler(hub *Hub, tokens *auth.TokenManager, sessions middleware.SessionChecker, allowedOrigins []string, log *zap.Logger) *Handler {
-	allowAll := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
-	allowed := make(map[string]struct{}, len(allowedOrigins))
-	for _, o := range allowedOrigins {
-		allowed[o] = struct{}{}
-	}
+// origins is the same ALLOWED_ORIGINS matcher the HTTP CORS middleware
+// uses; the upgrade handshake's Origin check applies it. A nil matcher allows
+// no browser origin.
+func NewHandler(hub *Hub, tokens *auth.TokenManager, sessions middleware.SessionChecker, origins *middleware.OriginMatcher, log *zap.Logger) *Handler {
 	return &Handler{
 		hub:      hub,
 		tokens:   tokens,
@@ -53,16 +49,14 @@ func NewHandler(hub *Hub, tokens *auth.TokenManager, sessions middleware.Session
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
+			// A disallowed origin gets 403 from Upgrade. A request without an
+			// Origin header is accepted on purpose: it does not come from a
+			// browser (the bench tool, k6, native clients), the origin check
+			// only keeps other sites from using a browser's credentials, and
+			// the JWT is checked either way.
 			CheckOrigin: func(r *http.Request) bool {
-				if allowAll {
-					return true
-				}
 				origin := r.Header.Get("Origin")
-				if origin == "" {
-					return true // non-browser client
-				}
-				_, ok := allowed[origin]
-				return ok
+				return origin == "" || origins.Allowed(origin)
 			},
 		},
 	}

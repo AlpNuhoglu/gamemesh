@@ -2,8 +2,10 @@ package matchmaking
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 )
@@ -79,6 +82,9 @@ func TestQueueRequiresIdentityAndValidRank(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, doReq(r, http.MethodPost, "/queue", `not json`, "alice").Code)
 }
 
+// TestGetRoomEndpoint: a room is returned to its players only. A caller who
+// is not one of them gets the same 404 as for a room that does not exist,
+// and the refusal is counted; a caller without an identity gets 401.
 func TestGetRoomEndpoint(t *testing.T) {
 	r, svc := newHandlerRouter(t)
 	ctx := context.Background()
@@ -90,8 +96,49 @@ func TestGetRoomEndpoint(t *testing.T) {
 	require.NoError(t, err)
 
 	pub := svc.pub.(*capturingPublisher)
-	require.NotEmpty(t, pub.events)
+	require.Len(t, pub.events, 1)
+	var match events.MatchFoundPayload
+	require.NoError(t, json.Unmarshal(pub.events[0].Payload, &match))
+	path := "/rooms/" + match.RoomID
 
-	w := doReq(r, http.MethodGet, "/rooms/missing", "", "alice")
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	for _, player := range []string{"alice", "bob"} {
+		w := doReq(r, http.MethodGet, path, "", player)
+		require.Equal(t, http.StatusOK, w.Code, player)
+		var room Room
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &room), w.Body.String())
+		assert.Equal(t, match.RoomID, room.ID)
+		assert.ElementsMatch(t, []string{"alice", "bob"}, room.Players)
+	}
+	assert.Zero(t, roomDenied(t, svc))
+
+	missing := doReq(r, http.MethodGet, "/rooms/missing", "", "alice")
+	assert.Equal(t, http.StatusNotFound, missing.Code)
+	assert.Zero(t, roomDenied(t, svc), "a missing room is not a denial")
+
+	stranger := doReq(r, http.MethodGet, path, "", "mallory")
+	assert.Equal(t, http.StatusNotFound, stranger.Code)
+	assert.Equal(t, missing.Body.String(), stranger.Body.String(),
+		"a stranger cannot tell a live room from a missing one")
+	assert.NotContains(t, stranger.Body.String(), "alice")
+	assert.Equal(t, float64(1), roomDenied(t, svc))
+
+	assert.Equal(t, http.StatusUnauthorized, doReq(r, http.MethodGet, path, "", "").Code)
+	assert.Equal(t, float64(1), roomDenied(t, svc))
+}
+
+// roomDenied scrapes gamemesh_matchmaking_room_denied_total.
+func roomDenied(t *testing.T, svc *Service) float64 {
+	t.Helper()
+	w := httptest.NewRecorder()
+	svc.m.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	const series = `gamemesh_matchmaking_room_denied_total{service="mm-handler-test"} `
+	for _, line := range strings.Split(w.Body.String(), "\n") {
+		if v, ok := strings.CutPrefix(line, series); ok {
+			f, err := strconv.ParseFloat(v, 64)
+			require.NoError(t, err)
+			return f
+		}
+	}
+	t.Fatalf("no series %q", series)
+	return 0
 }

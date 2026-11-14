@@ -35,11 +35,16 @@ const (
 	// message from a backend event and cannot pass one off as the other.
 	relayType = "Relay"
 
+	// joinRejectedType answers a join that was refused (hub.go). Like
+	// relayType it is server-only and must not be a durable event's name.
+	joinRejectedType = "JoinRejected"
+
 	// maxRelayData bounds the data value of one relay message. The
 	// connection's read limit (maxMsgSize) stays the outer bound.
 	maxRelayData = 1024
 
-	// Default per-connection token bucket; see Hub.SetRelayLimit.
+	// Default per-player token bucket, shared by relays and joins; see
+	// Hub.SetRelayLimit.
 	defaultRelayRate  = 60
 	defaultRelayBurst = 120
 )
@@ -72,6 +77,8 @@ func newRelayMetrics(m *metrics.Metrics) relayMetrics {
 
 // relayState is a connection's relay state. Only its readPump touches it.
 type relayState struct {
+	// limiter is the player's token bucket (Hub.buckets), shared with the
+	// player's other connections; register sets it.
 	limiter *rate.Limiter
 	// prefix is the frame up to the data value for room, built once per room
 	// rather than per message.
@@ -79,9 +86,11 @@ type relayState struct {
 	prefix []byte
 }
 
-// SetRelayLimit sets the per-connection relay token bucket: perSecond
-// messages per second, up to burst at once. It applies to connections opened
-// afterwards, so call it before serving.
+// SetRelayLimit sets the per-player relay token bucket: perSecond messages
+// per second, up to burst at once, across all of a player's connections on
+// this replica. Join attempts draw from the same bucket. It applies to
+// buckets created afterwards, i.e. to players with no open connection yet, so
+// call it before serving.
 func (h *Hub) SetRelayLimit(perSecond float64, burst int) {
 	h.relayRate = rate.Limit(perSecond)
 	h.relayBurst = burst

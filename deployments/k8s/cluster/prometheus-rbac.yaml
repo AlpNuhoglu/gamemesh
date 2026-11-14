@@ -1,7 +1,15 @@
-# Prometheus's identity and what it may read (phase 2, G2): pods in gamemesh,
-# for service discovery, and nothing else. A Role, not a ClusterRole: its
-# scrape configuration names that namespace, so it never lists pods anywhere
-# else (deployments/k8s/monitoring/prometheus.yml).
+# Prometheus's identity and what it may read: pods in gamemesh, for service
+# discovery (phase 2, G2), and the nodes' own metrics, for the disk (G4).
+# Pods through a Role, not a ClusterRole: the scrape configuration names that
+# namespace, so it never lists pods anywhere else
+# (deployments/k8s/monitoring/prometheus.yml). Nodes are cluster-scoped, so
+# that part is a ClusterRole, limited to reading the node list and the
+# kubelet's metrics endpoints; not nodes/proxy, which would reach the whole
+# kubelet API.
+#
+# KEEP IN STEP BY HAND: CI applies prometheus.yml but not this file. A scrape
+# job added there that needs a right added here stays down until the admin
+# copies this file to the server again (docs/deployment.md, "Monitoring").
 #
 # Cluster-level, written by the admin (k3s auto-deploy directory); CI may not
 # create ServiceAccounts or bindings, so it cannot give Prometheus, or itself,
@@ -35,3 +43,28 @@ roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
   name: prometheus-discovery
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-node-metrics
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-node-metrics
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: prometheus-node-metrics

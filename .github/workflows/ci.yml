@@ -552,7 +552,11 @@ jobs:
   # decided in the cluster (ci-deployer Role, admission policy).
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # As deploy.yml. A deploy that fails late and is then rolled back runs
+    # the rollout wait and the smoke test twice; the WebSocket check alone
+    # can take five minutes against a server that accepts and never answers.
+    # At 20 the job could be cut off halfway through the rollback.
+    timeout-minutes: 30
     # Every gate, through the one job that checks them all, and the
     # published images the cluster will pull.
     needs: [ci-ok, publish]
@@ -581,9 +585,11 @@ jobs:
 
       # Checks the images exist, applies after a server-side dry run, waits
       # for every workload and for https://api.gamemesh.app to serve this
-      # commit; if any of that fails, redeploys the commit that ran before
-      # (with its own manifests) and fails the job. See deploy.sh.
+      # commit and answer a join on /ws (as benchsmoke, SMOKE_PASSWORD); if
+      # any of that fails, redeploys the commit that ran before (with its own
+      # manifests) and fails the job. See deploy.sh.
       - name: Deploy this commit
         uses: ./.github/actions/deploy
         with:
           sha: ${{ github.sha }}
+          smoke-password: ${{ secrets.SMOKE_PASSWORD }}

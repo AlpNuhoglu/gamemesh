@@ -1,0 +1,94 @@
+# The hourly node disk check (phase 3, G4b): reads how full the node's disk is
+# and tells two checks at Healthchecks.io, one for 70 % (warning) and one for
+# 85 % (critical). Nothing watched the disk before: images pile up until the
+# kubelet collects them, and a full disk stops the node. Production only:
+# locally there is no node worth watching.
+#
+# Each check is a dead man's switch as well: below its threshold the job pings
+# it, at or above it pings /fail, and a run that never happens (the node is
+# down, the job is stuck) is noticed at Healthchecks when the ping is overdue.
+#
+# Needs the gamemesh-disk-check Secret, created by the admin:
+#   DISK_WARN_PING_URL     the ping URL of the 70 % check
+#   DISK_CRIT_PING_URL     the ping URL of the 85 % check
+# Without them the job fails and says which one is missing.
+#
+# The figure is the node's because everything the cluster writes lives on one
+# partition: images, logs and the local-path volumes (the only other one is a
+# 1 GiB /boot). It stops being true if a volume moves to its own disk: df
+# would then show the container's overlay and not that disk.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: disk-check
+  labels:
+    app.kubernetes.io/name: disk-check
+spec:
+  schedule: "5 * * * *"
+  timeZone: Etc/UTC
+  # One at a time; a run that could not start within ten minutes is skipped,
+  # and the dead man's switch notices the gap.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: disk-check
+            app.kubernetes.io/name: disk-check
+            app.kubernetes.io/part-of: gamemesh
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: disk-check
+              # The backup's image: BusyBox has the shell, df, awk and wget.
+              image: gamemesh/backup
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # The container's root is an overlay on the node's disk, on the one
+                  # partition the cluster writes to, so this is the node's usage.
+                  used=$(df -P / | awk 'NR==2 { sub("%", "", $5); print $5 }')
+                  case "$used" in ''|*[!0-9]*) echo "could not read disk usage: '$used'" >&2; exit 1 ;; esac
+                  echo "node disk: ${used}% used (warn at ${DISK_WARN_PERCENT}%, critical at ${DISK_CRIT_PERCENT}%)"
+                  rc=0
+                  report() { # <name> <threshold> <ping url>
+                    if [ -z "$3" ]; then echo "$1: ping URL not set in the gamemesh-disk-check Secret" >&2; rc=1; return; fi
+                    if [ "$used" -ge "$2" ]; then url="$3/fail"; state="ABOVE"; else url="$3"; state="below"; fi
+                    if wget -q -T 10 -O /dev/null --post-data "node disk ${used}% used, ${state} the $1 threshold of $2%" "$url"; then
+                      echo "$1: ${state} $2%, reported"
+                    else
+                      echo "$1: could not reach the check" >&2; rc=1
+                    fi
+                  }
+                  report warning "$DISK_WARN_PERCENT" "${DISK_WARN_PING_URL:-}"
+                  report critical "$DISK_CRIT_PERCENT" "${DISK_CRIT_PING_URL:-}"
+                  exit "$rc"
+              env:
+                - name: DISK_WARN_PERCENT
+                  value: "70"
+                - name: DISK_CRIT_PERCENT
+                  value: "85"
+                - name: DISK_WARN_PING_URL
+                  valueFrom: { secretKeyRef: { name: gamemesh-disk-check, key: DISK_WARN_PING_URL, optional: true } }
+                - name: DISK_CRIT_PING_URL
+                  valueFrom: { secretKeyRef: { name: gamemesh-disk-check, key: DISK_CRIT_PING_URL, optional: true } }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits: { cpu: 100m, memory: 32Mi }

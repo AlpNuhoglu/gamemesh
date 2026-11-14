@@ -141,4 +141,6 @@ func TestRelayTypeIsNotADurableEventType(t *testing.T) {
 
 	assert.NotContains(t, durable, relayType,
 		"%q is both the relay's frame type and a durable event type", relayType)
+	assert.NotContains(t, durable, joinRejectedType,
+		"%q is both the join rejection's type and a durable event type", joinRejectedType)
 }

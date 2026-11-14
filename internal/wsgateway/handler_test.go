@@ -21,6 +21,7 @@ import (
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/events"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
+	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
 )
 
 // fakeSessions is an in-memory SessionChecker: every session exists unless
@@ -66,10 +67,17 @@ func newWSServer(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub) {
 
 func newWSServerWithSessions(t *testing.T) (*httptest.Server, *auth.TokenManager, *Hub, *fakeSessions) {
 	t.Helper()
+	return newWSServerWithOrigins(t, "*")
+}
+
+func newWSServerWithOrigins(t *testing.T, allowedOrigins ...string) (*httptest.Server, *auth.TokenManager, *Hub, *fakeSessions) {
+	t.Helper()
 	tokens := auth.NewTokenManager("ws-test-secret", time.Hour, "gamemesh")
-	hub := NewHub(zap.NewNop(), metrics.New("ws-handler-test"), nil)
+	hub := NewHub(zap.NewNop(), metrics.New("ws-handler-test"), nil, newFakeRooms())
 	sessions := &fakeSessions{revoked: map[string]bool{}}
-	handler := NewHandler(hub, tokens, sessions, []string{"*"}, zap.NewNop())
+	origins, err := middleware.ParseOrigins(allowedOrigins)
+	require.NoError(t, err)
+	handler := NewHandler(hub, tokens, sessions, origins, zap.NewNop())
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -98,17 +106,20 @@ func TestServeWSRejectsMissingOrBadToken(t *testing.T) {
 }
 
 func TestWebSocketConnectJoinAndReceive(t *testing.T) {
-	srv, tokens, _ := newWSServer(t)
+	srv, tokens, hub := newWSServer(t)
 
-	token, _, err := tokens.Generate(uuid.New(), "alice")
+	alice := uuid.New()
+	token, _, err := tokens.Generate(alice, "alice")
 	require.NoError(t, err)
+	roomsOf(hub).add("room-1", alice.String(), uuid.NewString())
 
 	conn, resp, err := websocket.DefaultDialer.Dial(wsURL(srv.URL)+"/ws?token="+token, nil)
 	require.NoError(t, err)
 	defer conn.Close()
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 
-	// Join a room; the joiner itself receives the PlayerJoined broadcast.
+	// Join a room matchmaking put this player in; the joiner itself receives
+	// the PlayerJoined broadcast.
 	require.NoError(t, conn.WriteJSON(map[string]string{"action": "join", "room": "room-1"}))
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
@@ -327,4 +338,89 @@ func TestBridgeClosesRevokedSession(t *testing.T) {
 	assert.Equal(t, "session revoked", ce.Text)
 	assert.Eventually(t, func() bool { return hub.count() == 1 }, 2*time.Second, 10*time.Millisecond,
 		"the player's other session stays connected")
+}
+
+// TestJoinRejectsNonParticipant: end to end, a client with a valid token
+// that matchmaking did not put in the room asks to join it. It gets a bare
+// JoinRejected, is not a member, the members are not told it joined, it does
+// not receive their relays and cannot relay into the room.
+func TestJoinRejectsNonParticipant(t *testing.T) {
+	srv, tokens, hub := newWSServer(t)
+	alice, bob, mallory := uuid.New(), uuid.New(), uuid.New()
+	roomsOf(hub).add("room-1", alice.String(), bob.String())
+	dial := func(id uuid.UUID) *websocket.Conn {
+		token, _, err := tokens.Generate(id, "player")
+		require.NoError(t, err)
+		return dialToken(t, srv, token)
+	}
+
+	members := map[uuid.UUID]*websocket.Conn{}
+	for _, id := range []uuid.UUID{alice, bob} {
+		conn := dial(id)
+		require.NoError(t, conn.WriteJSON(map[string]string{"action": "join", "room": "room-1"}))
+		readUntil(t, conn, "PlayerJoined") // its own join: now a member
+		members[id] = conn
+	}
+
+	intruder := dial(mallory)
+	require.NoError(t, intruder.WriteJSON(map[string]string{"action": "join", "room": "room-1"}))
+	require.NoError(t, intruder.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, raw, err := intruder.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, `{"type":"JoinRejected","room":"room-1"}`, string(raw))
+	assert.ElementsMatch(t, []string{alice.String(), bob.String()}, membersOf(hub, "room-1"))
+	assert.Equal(t, float64(1), joinRejected(hub, "not_participant"))
+
+	// It cannot send into the room: its relay is refused as from a non-member.
+	require.NoError(t, intruder.WriteMessage(websocket.TextMessage,
+		[]byte(`{"action":"relay","room":"room-1","data":"from-mallory"}`)))
+	require.Eventually(t, func() bool { return rejected(hub, "not_member") == 1 },
+		time.Second, 10*time.Millisecond)
+
+	// The next thing bob receives is alice's relay: no PlayerJoined for the
+	// intruder and nothing it sent came before it.
+	require.NoError(t, members[alice].WriteMessage(websocket.TextMessage,
+		[]byte(`{"action":"relay","room":"room-1","data":{"seq":1}}`)))
+	require.NoError(t, members[bob].SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, raw, err = members[bob].ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, `{"type":"Relay","room":"room-1","from":"`+alice.String()+`","data":{"seq":1}}`, string(raw))
+
+	// And it does not receive the room's relays.
+	require.NoError(t, intruder.SetReadDeadline(time.Now().Add(300*time.Millisecond)))
+	_, raw, err = intruder.ReadMessage()
+	require.Error(t, err, "the intruder received %s", raw)
+	var netErr interface{ Timeout() bool }
+	require.ErrorAs(t, err, &netErr)
+	assert.True(t, netErr.Timeout())
+}
+
+// TestUpgradeChecksOrigin: with the production allow-list, a browser from a
+// disallowed origin is refused with 403, while allowed origins, a local
+// development origin and a client that sends no Origin at all (the bench
+// tool, k6) connect.
+func TestUpgradeChecksOrigin(t *testing.T) {
+	srv, tokens, _, _ := newWSServerWithOrigins(t,
+		"https://gamemesh.app", "https://*.gamemesh.app", "http://localhost:*", "http://127.0.0.1:*")
+	token, _, err := tokens.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	url := wsURL(srv.URL) + "/ws?token=" + token
+
+	for _, origin := range []string{"https://evil.example", "https://evilgamemesh.app", "null"} {
+		_, resp, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": {origin}})
+		require.Error(t, err, origin)
+		require.NotNil(t, resp, origin)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, origin)
+	}
+
+	for _, origin := range []string{"https://gamemesh.app", "https://play.gamemesh.app", "http://localhost:5173", ""} {
+		var header http.Header
+		if origin != "" {
+			header = http.Header{"Origin": {origin}}
+		}
+		conn, resp, err := websocket.DefaultDialer.Dial(url, header)
+		require.NoError(t, err, "origin %q", origin)
+		assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+		_ = conn.Close()
+	}
 }

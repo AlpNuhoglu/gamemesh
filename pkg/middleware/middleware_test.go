@@ -197,7 +197,7 @@ func countSeries(c prometheus.Collector) int {
 }
 
 func TestCORSAllowAll(t *testing.T) {
-	r := newEngine(CORS([]string{"*"}))
+	r := newEngine(CORS(mustOrigins(t, "*")))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Origin", "https://game.example.com")
@@ -206,7 +206,7 @@ func TestCORSAllowAll(t *testing.T) {
 }
 
 func TestCORSAllowList(t *testing.T) {
-	r := newEngine(CORS([]string{"https://allowed.example.com"}))
+	r := newEngine(CORS(mustOrigins(t, "https://allowed.example.com")))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -221,8 +221,29 @@ func TestCORSAllowList(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
+// TestCORSUsesTheOriginMatcher: with the production list, an allowed
+// subdomain is echoed back and a look-alike domain is not; both responses
+// say they vary by Origin.
+func TestCORSUsesTheOriginMatcher(t *testing.T) {
+	r := newEngine(CORS(mustOrigins(t, prodOrigins...)))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "https://play.gamemesh.app")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, "https://play.gamemesh.app", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "Origin", w.Header().Get("Vary"))
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "https://evilgamemesh.app")
+	r.ServeHTTP(w, req)
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "Origin", w.Header().Get("Vary"))
+}
+
 func TestCORSPreflight(t *testing.T) {
-	r := newEngine(CORS([]string{"*"}))
+	r := newEngine(CORS(mustOrigins(t, "*")))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
 	req.Header.Set("Origin", "https://game.example.com")

@@ -6,7 +6,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -29,7 +28,7 @@ type Client struct {
 	hub      *Hub
 	rooms    map[string]struct{}
 	log      *zap.Logger
-	relay    relayState // see relay.go
+	relay    relayState // see relay.go; its bucket is set by Hub.register
 }
 
 // outbound is one message queued for the writer. A relay frame also carries
@@ -52,7 +51,6 @@ func newClient(playerID, jti string, expires time.Time, conn *websocket.Conn, hu
 		hub:      hub,
 		rooms:    make(map[string]struct{}),
 		log:      log,
-		relay:    relayState{limiter: rate.NewLimiter(hub.relayRate, hub.relayBurst)},
 	}
 }
 
@@ -114,7 +112,7 @@ func (c *Client) readPump() {
 		}
 		switch msg.Action {
 		case "join":
-			c.hub.join(c, msg.Room)
+			c.handleJoin(msg.Room, readAt)
 		case "leave":
 			c.hub.leave(c, msg.Room)
 		}
