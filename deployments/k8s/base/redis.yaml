@@ -54,7 +54,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: redis
-          image: redis:8.8.4-alpine@sha256:c027ae0f677dcf73d74038256f5b88c9ba7b11ccbfae97e96a9f091208d36125
+          image: redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
           # AOF: every write is appended and fsynced once a second, so a restart
           # loses at most about a second of writes instead of everything.
           # requirepass: without it any pod in the cluster read and changed

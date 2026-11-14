@@ -1134,6 +1134,21 @@ reports again.
   new, empty volume. Measured with containers (back to 7.4 works before a
   rewrite, fails after it, works again on an empty volume); the two `delete`
   commands have not been tried on a cluster.
+- **Redis 8.10 back to 8.8** (any commit before the move to Redis 8.10). The
+  same, one format later. 8.8 reads 8.10's files, with everything 8.10 wrote,
+  until 8.10 rewrites its append-only file; after that the base is `REDIS0015`
+  and 8.8 stops with `Can't handle RDB format version 15`. The rewrite comes on
+  its own once the file is at least 64 MB and twice its size after the last
+  rewrite (`auto-aof-rewrite-min-size`, `auto-aof-rewrite-percentage`, both at
+  their defaults). The deploy's own rollback runs within about a minute of
+  the upgrade, so it is expected to come before a rewrite; how large
+  production's file was on the day of the upgrade was not measured. If Redis
+  does stop this way, the data is not lost: deploy a commit with Redis 8.10
+  again and it starts on the same files. Dropping the volume, as above, is the
+  way out only if 8.8 has to run. Measured with containers on 2026-11-14,
+  8.8.4 and 8.10.3: back to 8.8.4 works before a rewrite, fails after it, and
+  8.10.3 then starts again on the same files with nothing missing. Not tried on
+  a cluster.
 
 ### Rotating secrets
 
