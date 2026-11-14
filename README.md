@@ -48,6 +48,7 @@ not come up.
 - [In-game latency](#in-game-latency)
 - [Configuration](#configuration)
 - [Repository layout](#repository-layout)
+- [Known limits](#known-limits)
 - [Roadmap](#roadmap)
 - [Documentation](#documentation)
 
@@ -590,6 +591,83 @@ scripts/        database schema and seed, k6 load tests, k8s helpers
 tests/          Testcontainers integration tests
 docs/           architecture, API, operations
 ```
+
+## Known limits
+
+What the system does not do, or has not been shown to do, as of 2026-11-14.
+
+**One of everything**
+
+- **One node.** It is the only failure domain: when the VPS is down, everything
+  is. Every service runs one replica.
+- **The websocket service cannot run a second replica.** The in-game relay fans
+  out from one replica's memory and does not cross replicas, so two players of
+  a room on different replicas would never hear each other. The real-time path
+  therefore does not scale horizontally, and a rollout of that service closes
+  every open connection; clients have to reconnect.
+- **Rate limits are per process.** The gateway's per-client limit and the
+  relay's per-player limit live in memory; with more replicas each would allow
+  its own share.
+
+**Real-time path**
+
+- **The relay is at-most-once.** A frame for a receiver whose send buffer is
+  full is dropped and counted, never retried. A player may send 60 messages a
+  second (burst 120) with 1 KiB of data each; more is dropped without a reply.
+- **Rooms expire after an hour** (`ROOM_TTL`). Players already in the room
+  stay; one who drops after that cannot rejoin.
+- **When Redis is unreachable** a join is refused, but the 10 s session re-check
+  keeps existing connections open instead of closing them, so a revoked
+  session's sockets can outlive it until Redis is back.
+- **Latency was measured from one place:** both players on one home connection
+  in İstanbul. 50 pairs were not run against production, and the slow tail
+  (one message at 138 ms) was recorded, not traced.
+- **The websocket load-test scenario no longer exercises a room** (see
+  [Testing & load testing](#testing--load-testing)).
+
+**Data and recovery**
+
+- **Backups cover Postgres and k3s's state, nightly.** Up to a day of writes
+  can be lost. Redis (sessions, the matchmaking queue, presence, the
+  leaderboard's sorted set), the JetStream streams and Prometheus's history
+  are not backed up: after a restore every player logs in again and the
+  leaderboard starts empty.
+- **The restore was done once,** into an empty VM: 38 minutes, about 25 of them
+  on two problems the runbook has since been corrected for. It has not been
+  timed again with the corrected runbook, and restoring over a live database
+  has never been tried.
+- **A rollback redeploys the previous commit's manifests and images.** It does
+  not undo a schema change, data, or cluster-level manifests.
+- **Volume sizes are not enforced.** Every volume is a directory on the node's
+  one partition (`local-path`), so one that fills the disk fills it for all.
+  The disk is checked hourly from inside (alerts at 70 % and 85 %) and shown
+  on the status page; unused images are removed after a week.
+
+**Operations**
+
+- **Alerts go by e-mail only,** from outside probes that run every 3 minutes;
+  there are no alert rules inside the cluster yet ([Roadmap](#roadmap)).
+- **Certificate renewal has not happened in production yet.** cert-manager is
+  due to renew on 2026-12-20; a daily outside check reports a certificate
+  that is running out.
+- **The deploy's smoke test is narrow:** `/health` reports the commit,
+  `/api/v1/leaderboard` answers 200, and a join on `/ws` gets an answer. It
+  does not register, queue or submit a score, and it cannot tell whether the
+  room lookup behind a join works.
+- **Cluster-level manifests are applied by hand** (RBAC, admission policies,
+  issuers, the kubelet's settings); CI cannot touch them, and nothing checks
+  that the server matches the repository.
+- **Grafana's login form is not switched off.** What keeps it from the internet
+  is the ingress, which routes only the public dashboard's own paths, and the
+  admission policy that refuses any other route.
+
+**Accounts**
+
+- **An account cannot be deleted:** there is no endpoint for it. Production
+  holds 42 accounts left by the latency measurement (`bench…@latencybench.invalid`)
+  and `benchsmoke`, which the deploy logs in as.
+- **Any logged-in player can submit any score for themselves.** The leaderboard
+  trusts `POST /api/v1/score`; there is no game server to vouch for a result.
 
 ## Roadmap
 
