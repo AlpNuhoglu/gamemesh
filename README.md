@@ -152,7 +152,7 @@ flowchart LR
 | Route | client → hub → clients | service → JetStream (player events: Postgres outbox first) → hub |
 | What is kept | Nothing: a frame that cannot be queued for its receiver is dropped and counted | The event, in a JetStream stream on disk; a consuming service that fails gets it again, up to 5 deliveries |
 | Last hop, hub → socket | Best effort | Best effort as well: a player who is not connected is not sent the event later and reads the state from the REST API |
-| Time inside the server | 0.02–0.15 ms per message (measured) | Not on the per-frame path |
+| Time inside the server | 0.02–0.20 ms per message (measured) | Not on the per-frame path |
 
 The two meet only in the hub, and only in one direction: the bus delivers into
 it, and nothing a client sends can reach the bus. That is not a convention but
@@ -204,7 +204,7 @@ erDiagram
 |---|---|---|
 | **Transactional outbox for player events** | The player row and its event are written in one Postgres transaction and a relay publishes afterwards, so a committed registration cannot lose its event. Relay replicas share the table through `FOR UPDATE SKIP LOCKED`, without a leader. | *Publishing right after the commit*, a dual write: a crash between the two loses the event and leaves no trace of it. *Two-phase commit* between Postgres and NATS: neither supports it cheaply. The price paid instead is duplicates, so consumers are idempotent. [docs/outbox.md](docs/outbox.md) |
 | **NATS JetStream as the event bus** | Durable, replayable, at-least-once with explicit ACK/NAK: `MatchFound` routes players into a game, so losing it between services is a correctness bug. Work-queue consumers share a durable; the WebSocket fan-out uses one ephemeral consumer per replica so every replica sees every event. | *Redis Pub/Sub*, the first transport and still selectable (`EVENT_BUS=redis`): already in the stack and faster, but a subscriber that is restarting never sees the message, and there is no acknowledgement or replay. *Core NATS* has the same gap. Kafka would fit behind the same `Publisher`/`Subscriber` interface and was not tried. [docs/messaging.md](docs/messaging.md) |
-| **Game traffic stays off the bus** | A position update is worthless a moment later and there are tens of them a second per player, so it is relayed from memory, at-most-once, and dropped for a slow receiver. The server holds a message for 0.02–0.15 ms. | *The same message through JetStream.* Measured once, as an experiment on a branch that is not merged: the server held the message 6–10 times longer, and every frame would wait on NATS, up to the 5 s publish timeout when it is slow. The cost of the choice: the relay does not cross replicas, so the websocket service runs one. [docs/latency.md](docs/latency.md) |
+| **Game traffic stays off the bus** | A position update is worthless a moment later and there are tens of them a second per player, so it is relayed from memory, at-most-once, and dropped for a slow receiver. The server holds a message for 0.02–0.20 ms. | *The same message through JetStream.* Measured once, as an experiment on a branch that is not merged: the server held the message 6–10 times longer, and every frame would wait on NATS, up to the 5 s publish timeout when it is slow. The cost of the choice: the relay does not cross replicas, so the websocket service runs one. [docs/latency.md](docs/latency.md) |
 | **k3s on one VPS** | Certified Kubernetes as a single binary, with Traefik, a load balancer and local-path storage included. The same Kustomize base runs on a laptop (k3d) and in production, and the server can be rebuilt from the runbook. | *kubeadm*: far more to install and maintain for a single node. Running the compose file on the server was never weighed: Kubernetes was the goal from the start. One node is one failure domain, whatever runs on it ([Known limits](#known-limits)). |
 
 ### Further design decisions
@@ -510,7 +510,8 @@ Full write-up: [docs/postmortem-throughput-ceiling.md](docs/postmortem-throughpu
 
 **Measured, not reduced.** One player's message reaches the other in about
 40 ms in production, from a home connection in İstanbul to the server in
-Nuremberg and back. The server holds it for 0.02–0.15 ms (0.12–0.15 ms in
+Nuremberg and back; a third run two days later took 73 ms, with the ping
+round trip at 66 ms. The server holds it for 0.02–0.20 ms (0.12–0.20 ms in
 production, from its own histogram); the rest is network. Six candidate
 improvements were examined and none gave a measurable gain: five were already
 in place, and the one that needed a code change stayed inside the noise and
@@ -525,8 +526,17 @@ matchmaking and times 500 messages per pair on the monotonic clock.
 |---|---|---|---|---|---|
 | **Production**, İstanbul (home connection) → Nuremberg → İstanbul | 1 | 39.9 ms | 41.7 ms | 42.8 ms | 40.0 ms |
 | | 10 | 41.7 ms | 45.0 ms | 48.0 ms | 41.6 ms |
+| | 1, two days later | 73.1 ms | 117.2 ms | 391.2 ms | 65.8 ms |
 | Local, bench and server on one machine | 1 | 1.07 ms | 1.58 ms | 1.95 ms | 0.80 ms |
 | | 50 | 0.29 ms | 0.43 ms | 0.59 ms | 0.32 ms |
+
+That third run as the server saw it, on the public
+[status page](https://status.gamemesh.app) (2026-11-14, 19:29:47–19:30:24 UTC,
+one pair, 20 messages a second): 0.20 ms a message on average, nothing shed
+and nothing rejected. Each point covers the minute before it, so the lines run
+on past the end of the run.
+
+![The status page's relay panels during a one-pair run](docs/images/status-page-relay.png)
 
 Before and after, locally. No server change is in the code between the two
 columns; where they differ, it is the session (the Docker VM was restarted in
@@ -664,7 +674,7 @@ What the system does not do, or has not been shown to do, as of 2026-11-14.
 **Accounts**
 
 - **An account cannot be deleted:** there is no endpoint for it. Production
-  holds 42 accounts left by the latency measurement (`bench…@latencybench.invalid`)
+  holds 44 accounts left by the latency measurement (`bench…@latencybench.invalid`)
   and `benchsmoke`, which the deploy logs in as.
 - **Any logged-in player can submit any score for themselves.** The leaderboard
   trusts `POST /api/v1/score`; there is no game server to vouch for a result.
