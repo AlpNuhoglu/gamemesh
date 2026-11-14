@@ -66,7 +66,7 @@ services:
 
   redis:
     restart: always
-    image: redis:8.8.4-alpine@sha256:c027ae0f677dcf73d74038256f5b88c9ba7b11ccbfae97e96a9f091208d36125
+    image: redis:8.10.2-alpine@sha256:9f8d2d789b9a1d1e3f283f979aa9cbf393373806472e1ccd460e2f9c869b833b
     # The first argument must stay redis-server: the image's entrypoint only
     # drops root for that command.
     command: ["redis-server", "--requirepass", *redis-password]
@@ -89,7 +89,7 @@ services:
   # endpoint used for the healthcheck.
   nats:
     restart: always
-    image: nats:2.15.2-alpine@sha256:823e7f1d6d8ffe3b30dbd73d4a06bbb939acf94929f7fdf224404da7a05bafb5
+    image: nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "127.0.0.1:4222:4222" # client
@@ -340,7 +340,7 @@ services:
 
   prometheus:
     restart: always
-    image: prom/prometheus:v3.15.1-distroless@sha256:451a845bae1d51622b41af1780eb2ad911bbb79a9855bc8e9bb67fabbc03f934
+    image: prom/prometheus:v3.16.0-distroless@sha256:e8b8fb0e336fe0affce6f9ea347b11d24975465fd3ba8119420186679c3efd5f
     command:
       - --config.file=/etc/prometheus/prometheus.yml
     ports:
@@ -353,7 +353,7 @@ services:
 
   grafana:
     restart: always
-    image: grafana/grafana:12.4.14@sha256:ae509d9ae8c1021ca32ec370a9ca975d40165eda9fccd1e1102d317ff8787cd7
+    image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
