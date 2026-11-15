@@ -104,6 +104,33 @@ type Config struct {
 	// hunter aims while it is still far away, so that it approaches from the
 	// centre and drives the runner towards the shrinking edge.
 	BotPinOffset float64
+
+	// DrawTolerance is how close the two mean hunter pressure distances must
+	// be for a match without a decisive capture to be a draw (section 1.4).
+	DrawTolerance float64
+	// Points is the scoring table of section 4.
+	Points Points
+}
+
+// Points is the scoring table of section 4.
+type Points struct {
+	// Win is the base award of a winner of a completed match.
+	Win int
+	// Loss is the participation award of the loser of a completed match.
+	Loss int
+	// Draw is what each player gets for a draw.
+	Draw int
+	// Forfeit is what a player who did not come back gets (negative).
+	Forfeit int
+	// ForfeitWin is what the remaining player gets for a forfeit, with no
+	// speed or streak bonus.
+	ForfeitWin int
+	// StreakStep is the streak bonus per win in the streak, this win
+	// included, up to StreakCap.
+	StreakStep, StreakCap int
+	// SpeedUnit is the speed bonus resolution: one point for every
+	// SpeedUnit by which the winner's capture beat THalf.
+	SpeedUnit time.Duration
 }
 
 // DefaultConfig returns the starting values of section 8 and the server's
@@ -147,6 +174,18 @@ func DefaultConfig() Config {
 		BotWallMargin:  60,
 		BotLeadMax:     time.Second,
 		BotPinOffset:   40,
+
+		DrawTolerance: 1e-3,
+		Points: Points{
+			Win:        40,
+			Loss:       5,
+			Draw:       20,
+			Forfeit:    -25,
+			ForfeitWin: 40,
+			StreakStep: 5,
+			StreakCap:  25,
+			SpeedUnit:  time.Second,
+		},
 	}
 }
 
@@ -200,6 +239,9 @@ func (c Config) Validate() error {
 		"BotWallMargin must lie in [0, RMin), got %v", c.BotWallMargin)
 	check(c.BotLeadMax >= 0, "BotLeadMax must be >= 0, got %v", c.BotLeadMax)
 	check(c.BotPinOffset >= 0, "BotPinOffset must be >= 0, got %v", c.BotPinOffset)
+	check(c.DrawTolerance >= 0, "DrawTolerance must be >= 0, got %v", c.DrawTolerance)
+	check(c.Points.StreakStep >= 0 && c.Points.StreakCap >= 0, "the streak bonus must not be negative")
+	check(c.Points.SpeedUnit >= time.Millisecond, "Points.SpeedUnit must be >= 1ms, got %v", c.Points.SpeedUnit)
 	if len(errs) > 0 {
 		return fmt.Errorf("ghosttag: invalid config: %w", errors.Join(errs...))
 	}
