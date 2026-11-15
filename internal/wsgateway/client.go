@@ -33,12 +33,15 @@ type Client struct {
 
 // outbound is one message queued for the writer. A relay frame also carries
 // when it was read from the sender and when it was queued, so the writer can
-// time it; for every other message both are zero and it is written as before.
-// msg may be shared by many recipients and must not be modified.
+// time it; so does a validated room's answer to an inbound message (game),
+// which is timed in its own instruments. For every other message both times
+// are zero and it is written as before. msg may be shared by many recipients
+// and must not be modified.
 type outbound struct {
 	msg      []byte
 	readAt   time.Time
 	queuedAt time.Time
+	game     bool
 }
 
 func newClient(playerID, jti string, expires time.Time, conn *websocket.Conn, hub *Hub, log *zap.Logger) *Client {

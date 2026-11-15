@@ -26,19 +26,20 @@ func TestRoomParticipantsReadsMatchmakingRooms(t *testing.T) {
 	require.NoError(t, store.Save(ctx, &matchmaking.Room{ID: "r1", Players: []string{"alice", "bob"}}))
 	p := roomParticipants{store: store}
 
-	ok, err := p.IsParticipant(ctx, "r1", "alice")
+	access, err := p.Access(ctx, "r1", "alice")
 	require.NoError(t, err)
-	assert.True(t, ok)
+	assert.True(t, access.Participant)
+	assert.Nil(t, access.Game, "matchmaking's rooms are opaque-relay rooms")
 
-	ok, err = p.IsParticipant(ctx, "r1", "mallory")
+	access, err = p.Access(ctx, "r1", "mallory")
 	require.NoError(t, err)
-	assert.False(t, ok)
+	assert.False(t, access.Participant)
 
-	_, err = p.IsParticipant(ctx, "missing", "alice")
+	_, err = p.Access(ctx, "missing", "alice")
 	assert.ErrorIs(t, err, wsgateway.ErrRoomNotFound)
 
 	mr.Close()
-	_, err = p.IsParticipant(ctx, "r1", "alice")
+	_, err = p.Access(ctx, "r1", "alice")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, wsgateway.ErrRoomNotFound)
 }

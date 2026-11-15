@@ -29,28 +29,30 @@ func newHubClient(hub *Hub, playerID string) *Client {
 type fakeRooms struct {
 	mu    sync.Mutex
 	rooms map[string][]string
+	games map[string]*GameSpec // the validated rooms among rooms (game_test.go)
 	err   error
 	block bool
 	calls int
 }
 
-func (f *fakeRooms) IsParticipant(ctx context.Context, room, playerID string) (bool, error) {
+func (f *fakeRooms) Access(ctx context.Context, room, playerID string) (RoomAccess, error) {
 	f.mu.Lock()
 	f.calls++
 	players, found := f.rooms[room]
+	game := f.games[room]
 	err, block := f.err, f.block
 	f.mu.Unlock()
 	if block {
 		<-ctx.Done()
-		return false, ctx.Err()
+		return RoomAccess{}, ctx.Err()
 	}
 	if err != nil {
-		return false, err
+		return RoomAccess{}, err
 	}
 	if !found {
-		return false, ErrRoomNotFound
+		return RoomAccess{}, ErrRoomNotFound
 	}
-	return slices.Contains(players, playerID), nil
+	return RoomAccess{Participant: slices.Contains(players, playerID), Game: game}, nil
 }
 
 // add creates room with the given players, as matchmaking would.
@@ -66,7 +68,9 @@ func (f *fakeRooms) lookups() int {
 	return f.calls
 }
 
-func newFakeRooms() *fakeRooms { return &fakeRooms{rooms: map[string][]string{}} }
+func newFakeRooms() *fakeRooms {
+	return &fakeRooms{rooms: map[string][]string{}, games: map[string]*GameSpec{}}
+}
 
 // roomsOf returns the fake RoomChecker a test hub was built with.
 func roomsOf(hub *Hub) *fakeRooms { return hub.participants.(*fakeRooms) }

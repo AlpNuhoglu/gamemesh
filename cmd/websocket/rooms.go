@@ -16,13 +16,15 @@ type roomParticipants struct {
 	store *matchmaking.RoomStore
 }
 
-func (p roomParticipants) IsParticipant(ctx context.Context, room, playerID string) (bool, error) {
+func (p roomParticipants) Access(ctx context.Context, room, playerID string) (wsgateway.RoomAccess, error) {
 	r, err := p.store.Get(ctx, room)
 	if errors.Is(err, matchmaking.ErrRoomNotFound) {
-		return false, wsgateway.ErrRoomNotFound
+		return wsgateway.RoomAccess{}, wsgateway.ErrRoomNotFound
 	}
 	if err != nil {
-		return false, err
+		return wsgateway.RoomAccess{}, err
 	}
-	return r.HasPlayer(playerID), nil
+	// Matchmaking creates opaque-relay rooms only, so far: no room is a
+	// validated room until its record can say so.
+	return wsgateway.RoomAccess{Participant: r.HasPlayer(playerID)}, nil
 }

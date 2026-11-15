@@ -50,6 +50,7 @@ func packageFiles(t *testing.T) map[string]*ast.File {
 	}
 	require.Contains(t, files, "relay.go")
 	require.Contains(t, files, "bridge.go")
+	require.Contains(t, files, "game.go")
 	return files
 }
 
@@ -64,13 +65,16 @@ func imports(t *testing.T, f *ast.File) []string {
 	return paths
 }
 
-// The relay code has no way to name the bus, the outbox or a transport.
+// The relay code has no way to name the bus, the outbox or a transport, and
+// neither have the validated rooms, which carry the same class of traffic.
 func TestRelayDoesNotImportTheDurablePath(t *testing.T) {
-	for _, p := range imports(t, packageFiles(t)["relay.go"]) {
-		assert.NotEqual(t, eventsPkg, p, "relay.go must not import the event bus")
-		assert.NotEqual(t, outboxPkg, p, "relay.go must not import the outbox")
-		for _, client := range busClients {
-			assert.False(t, strings.HasPrefix(p, client), "relay.go must not import %s", p)
+	for _, name := range []string{"relay.go", "game.go"} {
+		for _, p := range imports(t, packageFiles(t)[name]) {
+			assert.NotEqual(t, eventsPkg, p, "%s must not import the event bus", name)
+			assert.NotEqual(t, outboxPkg, p, "%s must not import the outbox", name)
+			for _, client := range busClients {
+				assert.False(t, strings.HasPrefix(p, client), "%s must not import %s", name, p)
+			}
 		}
 	}
 }
@@ -143,4 +147,6 @@ func TestRelayTypeIsNotADurableEventType(t *testing.T) {
 		"%q is both the relay's frame type and a durable event type", relayType)
 	assert.NotContains(t, durable, joinRejectedType,
 		"%q is both the join rejection's type and a durable event type", joinRejectedType)
+	assert.NotContains(t, durable, gameType,
+		"%q is both the validated rooms' frame type and a durable event type", gameType)
 }
