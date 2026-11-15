@@ -471,17 +471,30 @@ used to show):
 |---|---|---|---|---|---|
 | matchmaking | `POST /api/v1/queue`, polls `GET /api/v1/queue/status` until matched, `DELETE /api/v1/queue` if not | 6,500 | 194 | 27–31 ms *(two runs)* | 0.00–0.13 % |
 | leaderboard | `POST /api/v1/score`; every tenth iteration also `GET /api/v1/leaderboard/top/10` | 332,138 | 2,838 | 18 ms | 0.01 % |
-| websocket | Opens `/ws`, joins a room, holds the connection 30–60 s, leaves | 989 sessions (avg 43 s) | — | 129 ms *(connect)* | 0.00 % |
+| websocket | Opens `/ws`, queues (`POST /api/v1/queue`), joins the room its `MatchFound` names, stays 30–60 s, leaves | 936–955 sessions (avg 45–46 s) *(two runs, 2026-11-15)* | — | 22–73 ms *(connect)* | 0.00 % |
 
 All three are HTTP or connection figures through the gateway. None of them is
 the time a game message takes between two players; that is
 [In-game latency](#in-game-latency), measured separately.
 
-The websocket row is from before a join was checked against matchmaking's
-rooms (2026-11-14). The script joins rooms it makes up (`load-room-N`), which
-are now refused, so a run today still measures connecting and holding a
-session but no longer any fan-out inside a room. It has not been re-run or
-rewritten.
+The websocket row was measured again on 2026-11-15 with a rewritten script.
+Since 2026-11-14 a join is accepted only for a room matchmaking created and
+only from one of its two players, so the rooms the old script made up
+(`load-room-N`, ten clients each) are refused. A session now does what a
+player does: it queues with its socket open, is matched, and joins the room
+it is given. In the two runs:
+
+- **Every session that was matched joined its room, and every one that joined
+  was sent its partner's join or leave** (656 of 656 and 687 of 687). No join
+  was refused. One session in the second run found no partner within 30 s.
+- **`MatchFound` came 2.0–2.3 s after queueing at the median,** 4.4–4.6 s at
+  p95 and 9.3–9.6 s at most: the matcher runs every 5 s. The join was answered
+  within 2–3 ms at p95, on k6's millisecond clock.
+- **About 270–280 sessions per run were still open when the run ended** and
+  are not in those counts.
+
+The earlier row, 989 sessions and 129 ms to connect (2026-10-25), came from
+the old script. Only the connect figure measures the same thing in both.
 
 The few errors are connections reset between k6 and Docker Desktop's port
 forwarding, before the gateway. Before the gateway reused its upstream
@@ -495,6 +508,9 @@ connections (finding #96), the leaderboard run at 770 requests/s answered
   sends from one address, so above ~50 rps an unmodified run measures the
   limiter (80 % HTTP 429 at 500 VUs). Raise it for the load-test run only:
   `RATE_LIMIT_RPS=20000 RATE_LIMIT_BURST=40000 docker compose up -d --no-deps gateway`.
+  The websocket scenario needs it too at `--vus 500`: every session queues
+  once through the gateway, and 500 starting together had 392 of their queue
+  calls refused at the default limit.
 - **`POOL` must be ≥ the VU count:** each script provisions real accounts, and
   two VUs sharing a token are the same queue member.
 - **500 VUs is the honest level on this hardware.** At 1,000 VUs a Jaeger trace
@@ -632,8 +648,6 @@ What the system does not do, or has not been shown to do, as of 2026-11-14.
 - **Latency was measured from one place:** both players on one home connection
   in İstanbul. 50 pairs were not run against production, and the slow tail
   (one message at 138 ms) was recorded, not traced.
-- **The websocket load-test scenario no longer exercises a room** (see
-  [Testing & load testing](#testing--load-testing)).
 
 **Data and recovery**
 
