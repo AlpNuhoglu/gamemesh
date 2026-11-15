@@ -281,9 +281,19 @@ most in normal use, and an older one pulls its images again.
 
 In place on the server since 2026-11-14 (read back with the command below:
 60, 50, 168h0m0s). That evening the disk was at 47.5 % (29.3 of 61.7 GiB) with
-18.9 GiB of images: nothing has been removed yet, since the thresholds are not
-reached and the age limit counts from the kubelet's restart. The first
-removals are due around 2026-11-21; what they free is not measured yet.
+18.9 GiB of images.
+
+The first removals came the same night, by the threshold and not by age.
+Eleven merges to `main` that day took the panel to 55.6 % by 23:44 UTC. With
+the 2.6 GiB that are neither used nor available counted as used ("Disk"), that
+is 59.8 %, and the threshold appears to be measured that way: by 23:48 the
+panel read 26.6 %, and the kubelet's own counter stood at
+`kubelet_image_garbage_collected_total{reason="space"} 338`, with no removal
+counted for age. One deploy later the disk held 16.8 GiB (27.2 %), 9.6 GiB of
+it images. That is well below the 50 % the collection is set to stop at. Why
+it removed that much was not looked into, and neither was whether the
+previous release's images were among them (a rollback would then pull them
+again). Removals by age are still due from 2026-11-21.
 
 The kubelet reads the file at start, so it takes a restart of k3s (pods keep
 running; the API is away for some seconds). The age limit has no command-line
