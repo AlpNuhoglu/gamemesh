@@ -108,6 +108,12 @@ type room struct {
 	players []*player // the humans in Spec order, then the bot
 	byID    map[string]*player
 
+	// bot is the bot player, nil without one. Its two brains get their
+	// inputs from stepBot and from nowhere else (bot.go).
+	bot       *player
+	botRunner botRunner
+	botHunter botHunter
+
 	state state
 	since time.Time // when the current state began
 	half  int       // the half being played, or the next one to be
@@ -153,6 +159,9 @@ func newRoom(cfg *Config, roomID string, humans []string, botID string, out send
 	}
 	if botID != "" {
 		add(botID, true)
+		r.bot = r.byID[botID]
+		r.botRunner = botRunner{cfg: cfg, rng: rng}
+		r.botHunter = botHunter{cfg: cfg}
 	}
 	return r
 }
@@ -235,7 +244,34 @@ func (r *room) tick(now time.Time) {
 	if !r.active() {
 		return
 	}
+	r.stepBot(now)
+	if !r.active() {
+		return // the bot's step was a capture
+	}
 	r.keepInArena(now)
+}
+
+// stepBot moves the bot once: its brain picks a target from what it may
+// know, and the target goes through the same pipeline as a human packet.
+// The bot's ServerTs is the tick's time; it has no seq and no packet, so
+// the transport gets the zero arrival time.
+func (r *room) stepBot(now time.Time) {
+	b := r.bot
+	if b == nil {
+		return
+	}
+	radius := r.radius(now)
+	opp := r.opponent(b)
+	var target vec
+	if b.role == roleRunner {
+		spawn := vec{-r.cfg.SpawnDistance, 0} // where every hunter starts
+		target = r.botRunner.next(b.mot, radius, delayedSight(&opp.hist, now, r.cfg.BotSightDelay, spawn))
+	} else {
+		pos, vel := liveView(&opp.hist)
+		target = r.botHunter.next(b.mot, radius, pos, vel)
+	}
+	hint := target.sub(b.mot.pos).scale(1 / r.cfg.Tick.Seconds())
+	r.move(now, b, target, hint, time.Time{})
 }
 
 // advance runs every transition whose deadline is not after now, each at
