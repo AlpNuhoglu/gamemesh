@@ -220,6 +220,12 @@ hükmen yenilgi **yazılmaz**, skor katmanına dokunulmaz. Aksi halde her
 rollout iki oyuncuyu da "terk etmiş" sayar. Maç ortasındaki oyuncular maçı
 kaybeder; bkz. bölüm 11.
 
+**Oda paniği.** Odanın goroutine'i paniklerse panik yakalanır ve loglanır,
+maç **geçersiz ve puansız** biter (kazanan yok, skor katmanı çağrılmaz),
+süreç ve diğer odalar ayakta kalır. Panikten sonra maçı puanlı bitirmek,
+durumu bozuk bir odadan skor yazmak olurdu. `room_panic` sayacı artırılır
+(bölüm 5).
+
 **Bağlı sayılma.** Bir oyuncu, odaya katılmış en az bir bağlantısı varken
 bağlıdır (ikinci sekme tek bağlantının kopmasını örter).
 
@@ -352,6 +358,15 @@ seri kayıpsız devreder.
 | Maç sonu RTT dağılımı | — | — |
 | `join_timeout` | `T_join` içinde odaya katılmayan oyuncu yüzünden iptal edilen maç sayısı | — |
 | `both_disconnected` | İki oyuncunun da kopmasıyla geçersiz sayılan maç sayısı | — |
+| `room_panic` | Paniklediği için geçersiz bitirilen oda sayısı | 0 |
+| İlk yarı avcısının kazanma oranı | İki yarısı da oynanarak sonuçlanan insan-insan maçlarda `first_hunter_won / (first_hunter_won + second_hunter_won)` | ~%50 |
+
+**İlk yarı avcısı oranı neden ölçülür:** rol sırası teoride küçük bir
+asimetri taşır; ikinci yarının avcısı geçmesi gereken süreyi bilir. Oran
+%50'den belirgin saparsa rol sırası avantaj yaratıyor demektir.
+
+Sayaçlar `gamemesh_ws_game_events_total{event="…"}` serisinde tutulur; oda
+veya oyuncu etiketi taşımaz.
 
 **İkinci tur oranı belirleyici metriktir:** "biri bu oyunu ikinci kez oynar
 mı?" sorusunun doğrudan ölçümü ve projenin gerçek oyuna dönüşüp
@@ -454,6 +469,16 @@ Puansız maçta (`ranked: false`) `deltas` tüm oyuncular için 0'dır.
                                     └────────────────────┘
 ```
 
+**İlk yarıda kim avcı.**
+
+- **İnsan-insan:** rastgele, ancak tohum **oda kimliğinden** türetilir. Aynı
+  oda her zaman aynı rol sırasını verir; maç tekrar oynatılabilir ve rol
+  dağıtımı log'dan doğrulanabilir. Eşleştirme oyuncuları rank sırasıyla
+  yazdığı için "ilk oyuncu avcı" kuralı sistematik yanlılık üretirdi.
+- **Bot maçı:** rastgele değil. **İnsan ilk yarıda KAÇAK'tır** (bot avcı).
+  Kaçak rolünde oyuncu avcıyı hiç görmez, yalnızca izini görür; yeni
+  ziyaretçinin ilk 45 saniyesi botun en doğal göründüğü yarı olur.
+
 **`WAITING`.** Oda, ilk oyuncunun katılmasıyla açılır ve tüm insan oyuncular
 katılana kadar bekler. Bu durumda geri sayım başlamaz, `R(t)` işlemez, konum
 paketleri yoksayılır. `T_join` dolarsa maç iptal edilir: oyun hiç başlamadığı
@@ -490,6 +515,13 @@ türetilir; ayrı goroutine'de koşan zamanlayıcı geri çağrısı kullanılma
 kodu saati parametre olarak alır, kendisi okumaz. `ServerTs`, paketin
 soketten okunduğu andır ve oda içinde monotonluğu döngü zorlar. Hub, kendi
 kilidini tutarken odaya bloklanan bir çağrı yapmaz.
+
+**Bağlantı durumu seviye tetiklemelidir.** Hub odaya "şu oyuncu koptu" demez;
+"şu oyuncunun durumu değişmiş olabilir" der ve oda gerçeği hub'a sorar. Kenar
+tetiklemeli olaylar sıra bozulmasına açıktır: bir sekme kapanırken diğeri
+katılırsa "koptu" bildirimi "bağlandı"dan sonra ulaşabilir ve oda bağlı bir
+oyuncuyu kopmuş sanar. Olayı işlemek yerine güncel durumu okumak bu hata
+sınıfını ortadan kaldırır.
 
 ---
 
@@ -555,6 +587,17 @@ devrede olacak şekilde çalıştırılır; ölçülen fark `docs/latency.md` ve
 
 Mevcut ölçülmüş değerler (referans): sunucu payı mesaj başına 0,02–0,13 ms;
 prod'da uçtan uca p50 ~40 ms, tamamı ağ.
+
+Ölçüm üç satırdır:
+
+1. **Opaque relay, değişiklik öncesi ve sonrası** (`main` ile bu dal).
+   Validated odalar eklenirken opaque relay'in çerçevesi hub'ın okuma kilidi
+   altında kurulur oldu. Bu yol k6 senaryolarına ve yayınlanmış rakamlara
+   hizmet eder; gerileme olursa README'deki sayılar yanlışa düşer.
+2. **Validated oda**, aynı boyutta `pos` yükü ve aynı frekansla.
+3. **`go test -bench`**, yalnızca paket başına yol (doğrulama + halka +
+   yakalama); 1 ile 2 arasındaki farkın ne kadarının hesap, ne kadarının JSON
+   ve döngü atlaması olduğunu ayırır.
 
 **Validated modlu bench yalnızca yerelde koşar, prod'da asla.** Bench maçları
 Ghost Tag sıralamasına puan yazar. İkinci emniyet olarak bench odaları
@@ -638,4 +681,9 @@ kararlar:
 | Hız bonusu | Kazananın kendi avcı yarısındaki yakalama süresi | 4 |
 | `match_end` örneği | 58 hatalıydı (5'in katı seri bonusuyla üretilemez); 61 | 6 |
 | Bench | Validated mod yalnızca yerelde; bench odaları puansız | 9 |
+| Bağlantı durumu | Seviye tetiklemeli: oda bildirimi işlemez, gerçeği hub'a sorar | 7 |
+| Oda paniği | Yakalanır, loglanır; maç geçersiz ve puansız; `room_panic` sayacı | 2, 5 |
+| İlk yarı avcısı | İnsan-insan: oda kimliğinden tohumlu rastgele. Bot maçı: insan KAÇAK | 7 |
+| Rol sırası telemetrisi | İlk yarı avcısının kazanma oranı ölçülür | 5 |
+| Ölçüm planı | Opaque relay öncesi/sonrası ayrı satır | 9 |
 

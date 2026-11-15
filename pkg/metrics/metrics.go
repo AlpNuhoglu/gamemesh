@@ -70,7 +70,7 @@ type Metrics struct {
 	// stages for a validated room's answer to an inbound message, in a
 	// histogram of its own so that the relay's series keep meaning what they
 	// meant. WSGameEventsTotal counts what happens in the rooms, by a small
-	// fixed set of events (join_timeout, both_disconnected, clamp, ...),
+	// fixed set of events (join_timeout, both_disconnected, room_panic, ...),
 	// never by room or player.
 	WSGameDuration     *prometheus.HistogramVec
 	WSGameDroppedTotal prometheus.Counter

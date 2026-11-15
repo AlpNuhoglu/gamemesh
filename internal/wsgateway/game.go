@@ -110,7 +110,12 @@ type gameMetrics struct {
 	stageMetrics
 	dropped prometheus.Counter
 	rooms   prometheus.Gauge
+	panics  prometheus.Counter
 }
+
+// GameEventRoomPanic is the event a room that panicked is counted under in
+// WSGameEventsTotal, by the hub or by the session that recovered itself.
+const GameEventRoomPanic = "room_panic"
 
 func newGameMetrics(m *metrics.Metrics) gameMetrics {
 	stage := m.WSGameDuration.WithLabelValues
@@ -123,6 +128,7 @@ func newGameMetrics(m *metrics.Metrics) gameMetrics {
 		},
 		dropped: m.WSGameDroppedTotal,
 		rooms:   m.WSGameRooms,
+		panics:  m.WSGameEventsTotal.WithLabelValues(GameEventRoomPanic),
 	}
 }
 
@@ -205,12 +211,20 @@ func (h *Hub) joinGame(c *Client, room string, spec GameSpec) bool {
 
 // runGame is a session's goroutine. When the session ends the room is marked
 // finished; its members stay in it and can leave, but what they relay is
-// rejected. A panic in a game must not take the service, and every other
-// room, down with it: it ends that room.
+// rejected.
+//
+// A panic in a game must not take the service, and every other room, down
+// with it: it ends that room, without a result. A session is expected to
+// recover on its own, where it can still tell its players that the match is
+// void; this is the backstop for a panic that gets past it, and it can only
+// close the room, since the hub does not speak the game's protocol. Either
+// way nothing is scored from a room whose state can no longer be trusted,
+// and the panic is counted under the same event.
 func (h *Hub) runGame(g *gameRoom) {
 	defer h.gameWG.Done()
 	defer func() {
 		if r := recover(); r != nil {
+			h.gameM.panics.Inc()
 			h.log.Error("validated room panicked", zap.String("room", g.room), zap.Any("panic", r), zap.Stack("stack"))
 		}
 		h.mu.Lock()

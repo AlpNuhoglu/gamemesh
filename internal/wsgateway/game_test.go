@@ -486,6 +486,10 @@ func TestPanickingGameEndsOnlyItsRoom(t *testing.T) {
 		return hub.games["game-1"].finished
 	}, time.Second, time.Millisecond)
 	require.Equal(t, 1, logs.FilterMessage("validated room panicked").Len(), "the panic was recovered and logged")
+	assert.Equal(t, float64(1), counter(hub, `gamemesh_ws_game_events_total{event="room_panic",service="ws-hub-test"}`))
+	frames := drainFrames(alice)
+	require.Len(t, frames, 1, "the hub sends nothing in the game's name")
+	assert.Contains(t, frames[0], `"type":"PlayerJoined"`)
 
 	bob := newHubClient(hub, "bob")
 	hub.register(bob)
