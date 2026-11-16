@@ -65,11 +65,20 @@ oyuncuyu kilitlememesi için yalnızca `P_anchor` üzerinden kurulur.
 **1 — Zaman adımı sınırlandırma**
 
 ```
-Δt = clamp(ServerTs_n − ServerTs_{n-1}, Δt_min, Δt_max)
-Δt_min = 0,02 sn    Δt_max = 0,25 sn
+Δt   = min(ServerTs_n − ServerTs_{n-1}, Δt_max)     Δt_max = 0,25 sn
+Δt_θ = max(Δt, Δt_min)                              Δt_min = 0,02 sn
 ```
 
-`Δt_max` paket birikmesiyle ışınlanmayı önler.
+`Δt` mesafe bütçesinin zaman adımıdır ve **gerçek geçen süredir**; yalnızca
+üstten kırpılır. `Δt_max` paket birikmesiyle ışınlanmayı önler. `Δt_θ`
+yalnızca açısal sınırda (adım 2) kullanılır: kümelenmiş paketlerde ölçülen
+süre sıfıra yaklaşınca dönüş izninin de sıfırlanmaması için alttan `Δt_min`
+ile sınırlanır.
+
+`Δt` alttan kırpılmaz. Kırpılsaydı saniyede 50'den fazla paket gönderen
+istemci, paket başına 0,02 sn'lik bütçe biriktirerek hız sınırını aşardı
+(60 Hz'de %20). Kümelenmiş paketlerin meşru hareketini korumak adım 3'teki
+slack bütçesinin işidir.
 
 **2 — Yön türetme ve rol bazlı açısal kırpma**
 
@@ -85,7 +94,7 @@ sertleştikçe izin verilen hız düşer:
 
 ```
 Δθ        = wrapPi(θ_ham − θ_{n-1})
-Δθ_geçerli = clamp(Δθ, −ω_max·Δt, +ω_max·Δt)
+Δθ_geçerli = clamp(Δθ, −ω_max·Δt_θ, +ω_max·Δt_θ)
 θ_n       = wrapPi(θ_{n-1} + Δθ_geçerli)
 V_izin    = V_kaçak · (1 − α · |Δθ_geçerli| / π)
 ```
@@ -94,13 +103,49 @@ V_izin    = V_kaçak · (1 − α · |Δθ_geçerli| / π)
 (`θ_n = θ_ham`, `V_izin = V_avcı`). Ancak durum tutarlılığı için `θ_{n-1}`
 yine de güncellenir; rol değişiminde gerekir.
 
-**3 — Mesafe ve daralan arena kırpması**
+**3 — Mesafe (slack bütçesi) ve daralan arena kırpması**
 
 ```
-d_max     = V_izin · Δt + B_jitter
+d_max     = V_izin · Δt + slack
 d_geçerli = min(‖d_ham‖, d_max)
+slack     = clamp(slack + V_izin · Δt − d_geçerli, 0, S_max)     S_max = 25 birim
 P_n       = P_{n-1} + d_geçerli · (cos θ_n, sin θ_n)
 ```
+
+**Slack bütçesi.** Paketler ağda kümelenince ölçülen `Δt` küçülür ve
+istemcinin meşru hareketi kırpılır. Tolerans paket başına sabit bir ek
+değil, **zamanla biriken ve tavanlı bir bütçedir**: oyuncu izin verilenden
+az hareket ettiği her adımda aradaki fark slack'e eklenir (en fazla
+`S_max`), izin verilenden fazla hareket ettiğinde slack'ten düşülür. Bu,
+hız sınırlayıcıdaki token bucket'ın mesafe cinsinden aynısıdır.
+
+Anahtar özellik: sınır paket başına değil, **toplam mesafe üzerindedir.**
+Herhangi bir `T` saniyelik pencerede kat edilebilecek en fazla mesafe
+`V · T + S_max` olur ve paket hızından bağımsızdır.
+
+- Yarı başlangıcında (spawn) slack doludur (`S_max`).
+- `DISCONNECT_GRACE` dönüşünde slack **yeniden doldurulmaz**; kopma anındaki
+  değeriyle devam eder. Slack yalnızca zamanla dolar; kopup dönmek bedava
+  bütçe vermez.
+- Duran oyuncunun slack'i `S_max`'e kadar dolar, orada kalır.
+
+**Neden paket başına sabit değil.** İlk tasarım `d_max = V_izin · Δt +
+B_jitter` idi; `B_jitter` (25 birim) her pakete ekleniyordu. Doğrulama hattı
+üzerinde ölçüldüğünde (hep uzak bir noktayı isteyen istemci, 1 saniyede kat
+edilen mesafe):
+
+| Rol, paket hızı | 1 sn'de | Nominal |
+|---|---|---|
+| Avcı, 25 Hz | 850,0 | 225 |
+| Kaçak, 25 Hz | 885,0 | 260 |
+| Avcı, 60 Hz | 1774,5 | 225 |
+| Kaçak, 60 Hz | 1817,2 | 260 |
+
+Üç kusur: efektif hız nominalin 3–8 katıydı; sınır paket hızının
+fonksiyonuydu; ve iki role aynı sabit eklendiği için kaçak ile avcı
+arasındaki hız farkı %15'ten %4'e iniyor, kaçağın avcıdan belirgin hızlı
+olmasına dayanan denge ortadan kalkıyordu. 885 birim/sn ile 1000 birimlik
+arena çapı 1,1 saniyede geçiliyordu; nominal hızda ~4 saniye sürer.
 
 Sunucu, aktif yarı süresine göre güncel yarıçapı kendisi hesaplar: son 15
 saniyede `R_0 → R_min` lineer daralma. `‖P_n‖ > R(t_yarı)` ise konum sınır
@@ -205,13 +250,29 @@ Maç aktifken bir oyuncunun WebSocket bağlantısı koparsa oda
 | **Dönüş (RESUME)** | 5,0 sn içinde yeniden bağlanırsa sunucu `snap` gönderir, bölüm 1.2'deki dönüş sıfırlaması uygulanır, yarı kaldığı saniyeden devam eder |
 | **Süre dolumu (FORFEIT)** | Kopan oyuncu hükmen yenik sayılır, maç `FINISHED`'a geçer, kalan oyuncu anında yeni eşleşmeye dönebilir |
 
+**Sayaç oyuncu başınadır.** Kopma oda başına değil, oyuncu başına bir
+olaydır; her kopan oyuncunun kendi 5,0 saniyelik son tarihi vardır.
+
+| Kural | Davranış |
+|---|---|
+| Son tarihin başlangıcı | Oda o oyuncuyu beklemeye başladığı an: aktif yarıda veya `DISCONNECT_GRACE` içinde koptuysa kopma anı; geri sayım / rol değişimi sonunda kopuk bulunduysa odanın `DISCONNECT_GRACE`'e girdiği an |
+| Bağımsızlık | Bir oyuncunun sayacı diğerininkini etkilemez; ikinci kopan oyuncu kendi tam 5,0 saniyesini alır |
+| Oda durumu | Herhangi bir oyuncu kopukken oda `DISCONNECT_GRACE`'te kalır |
+| Dönüş | Son tarihinden önce dönen oyuncunun sayacı silinir. Oda, **tüm** oyuncular bağlı olduğunda devam eder |
+| Süre dolumu | Oyuncu kendi son tarihi dolunca hükmen yenilir; sonradan dönmesi bunu geri almaz. Rakibi o an bağlıysa maç hemen biter. Rakibi de kopuksa (ve kendi süresi dolmamışsa) oda rakibi beklemeye devam eder: rakip zamanında dönerse hükmen galip gelir |
+| İkisinin de süresi dolarsa | Maç geçersiz, puansız, kazanan yok |
+
+Oda başına tek sayaç şu hatayı üretiyordu: A `t0`'da, B `t0 + 4,9 sn`'de
+kopar, A `t0 + 4,95 sn`'de döner; sayaç `t0 + 5 sn`'de dolar ve B yalnızca
+0,1 saniyelik yokluktan sonra hükmen yenilir.
+
 **`COUNTDOWN_1` / `ROLE_SWAP` sırasında kopma.** Geri sayım bittiğinde
 oyunculardan birinin bağlantısı kopuksa oda aktif yarıyı **başlatmadan**
 doğrudan `DISCONNECT_GRACE` durumuna geçer. Aksi halde yarı, hareket
 edemeyen bir oyuncuyla başlar ve grace sayacı hiç tetiklenmez.
 
-**İki oyuncu da koparsa.** `DISCONNECT_GRACE` süresi dolduğunda iki oyuncu da
-kopuksa maç **geçersizdir**: kazanan yoktur, puan yazılmaz, kimseye hükmen
+**İki oyuncu da koparsa.** İki oyuncunun da kendi son tarihi dolarsa maç
+**geçersizdir**: kazanan yoktur, puan yazılmaz, kimseye hükmen
 yenilgi işlenmez. `both_disconnected` sayacı artırılır (bölüm 5); bu durum
 beklenenden sık görülürse sorun oyuncuda değil bağlantı tarafındadır.
 
@@ -539,8 +600,9 @@ ayarlanacaktır.
 | `R_0` | 500 birim | Başlangıç arena yarıçapı |
 | `R_min` | 280 birim | Daralmış arena yarıçapı |
 | `D_capture` | 36 birim | Yakalama yarıçapı (~2,5 × görsel yarıçap) |
-| `B_jitter` | 25 birim | Ağ titreşim toleransı |
-| `Δt_min` / `Δt_max` | 0,02 / 0,25 sn | Doğrulama zaman adımı sınırları |
+| `S_max` | 25 birim | Slack bütçesinin tavanı: ağ titreşim toleransı. Paket başına eklenmez, zamanla dolar (bölüm 1.2) |
+| `Δt_max` | 0,25 sn | Mesafe bütçesi zaman adımının tavanı |
+| `Δt_min` | 0,02 sn | Yalnızca açısal sınırda zaman adımının tabanı |
 | `Δt_initial` | 0,04 sn | Spawn / reconnect sonrası ilk paketin `dt` değeri |
 | İstemci render tamponu | 60 ms | Rakip enterpolasyon gecikmesi |
 | Dead-reckoning tavanı | 80 ms | Paket gecikmesinde öngörü süresi |
@@ -548,7 +610,7 @@ ayarlanacaktır.
 | `T_shrink` | 15 sn | Daralma penceresi (yarı sonu) |
 | `T_countdown` | 2 sn | Başlangıç geri sayımı |
 | `T_roleswap` | 3 sn | Rol değişim arası |
-| `T_grace` | 5 sn | Bağlantı kopma bekleme süresi |
+| `T_grace` | 5 sn | Bağlantı kopma bekleme süresi, **oyuncu başına** (bölüm 2) |
 | `T_join` | 10 sn | `WAITING` durumunda oyuncuların odaya katılması için süre |
 | Yakalama penceresi | 150 ms | Simetrik kontrol geçmiş penceresi |
 | Bot görüş gecikmesi | 2000 ms | Bot kaçağın avcıyı gördüğü gecikme |
@@ -686,4 +748,6 @@ kararlar:
 | İlk yarı avcısı | İnsan-insan: oda kimliğinden tohumlu rastgele. Bot maçı: insan KAÇAK | 7 |
 | Rol sırası telemetrisi | İlk yarı avcısının kazanma oranı ölçülür | 5 |
 | Ölçüm planı | Opaque relay öncesi/sonrası ayrı satır | 9 |
+| Hız toleransı | Paket başına `B_jitter` yerine zamanla dolan slack bütçesi (`S_max`); mesafe adımı alttan kırpılmaz | 1.2, 8 |
+| Grace sayacı | Oda başına değil oyuncu başına | 2 |
 
