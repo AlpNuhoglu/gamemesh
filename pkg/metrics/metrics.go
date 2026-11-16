@@ -61,8 +61,21 @@ type Metrics struct {
 
 	// WSJoinRejectedTotal counts room joins the WebSocket service refused, by
 	// reason: not_participant, room_not_found, unavailable (the room lookup
-	// failed or timed out), rate_limited. Never labelled by room or player.
+	// failed or timed out), rate_limited, room_closed (a validated room
+	// whose match is over or which is too old to start). Never labelled by
+	// room or player.
 	WSJoinRejectedTotal *prometheus.CounterVec
+
+	// Validated rooms (wsgateway/game.go). WSGameDuration has the relay's
+	// stages for a validated room's answer to an inbound message, in a
+	// histogram of its own so that the relay's series keep meaning what they
+	// meant. WSGameEventsTotal counts what happens in the rooms, by a small
+	// fixed set of events (join_timeout, both_disconnected, room_panic, ...),
+	// never by room or player.
+	WSGameDuration     *prometheus.HistogramVec
+	WSGameDroppedTotal prometheus.Counter
+	WSGameRooms        prometheus.Gauge
+	WSGameEventsTotal  *prometheus.CounterVec
 
 	// Event-transport instruments. Shared by every transport (RedisBus,
 	// NATSBus) so dashboards work regardless of EVENT_BUS. Labelled by topic so
@@ -166,6 +179,27 @@ func New(service string) *Metrics {
 			Help:        "Total WebSocket room joins rejected, by reason.",
 			ConstLabels: constLabels,
 		}, []string{"reason"}),
+		WSGameDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:        "gamemesh_ws_game_duration_seconds",
+			Help:        "Server-side latency of a validated room's answer to an inbound message, by stage.",
+			ConstLabels: constLabels,
+			Buckets:     wsRelayBuckets,
+		}, []string{"stage"}),
+		WSGameDroppedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name:        "gamemesh_ws_game_dropped_total",
+			Help:        "Total validated-room position frames shed because a recipient's send buffer was full.",
+			ConstLabels: constLabels,
+		}),
+		WSGameRooms: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "gamemesh_ws_game_rooms",
+			Help:        "Validated rooms with a running session on this replica.",
+			ConstLabels: constLabels,
+		}),
+		WSGameEventsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "gamemesh_ws_game_events_total",
+			Help:        "Total events in validated rooms, by event.",
+			ConstLabels: constLabels,
+		}, []string{"event"}),
 		EventsPublishedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "gamemesh_events_published_total",
 			Help:        "Total events published to the event bus.",
@@ -240,6 +274,7 @@ func New(service string) *Metrics {
 		m.WSConnections, m.MatchmakingQueueSize, m.MatchesCreated, m.LeaderboardUpdates,
 		m.MatchmakingRoomDeniedTotal,
 		m.WSRelayDuration, m.WSRelayDroppedTotal, m.WSRelayRejectedTotal, m.WSJoinRejectedTotal,
+		m.WSGameDuration, m.WSGameDroppedTotal, m.WSGameRooms, m.WSGameEventsTotal,
 		m.EventsPublishedTotal, m.EventsConsumedTotal, m.EventsFailedTotal, m.EventProcessingDuration,
 		m.PresenceOnlinePlayers, m.PresenceStateTransitionsTotal, m.PresenceHeartbeatTotal, m.PresenceInvalidTransitions,
 		m.OutboxEventsPending, m.OutboxEventsPublishedTotal, m.OutboxPublishFailuresTotal,

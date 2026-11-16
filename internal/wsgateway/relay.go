@@ -16,6 +16,9 @@ package wsgateway
 // A rejected message (invalid, too large, over the rate limit, sender not in
 // the room) is dropped and counted; the connection stays open, no reply is
 // sent and nothing is logged, since a client sends these many times a second.
+//
+// In a validated room (game.go) the same checks apply, and the message then
+// goes to the room's game instead of to the other members.
 
 import (
 	"encoding/json"
@@ -49,29 +52,41 @@ const (
 	defaultRelayBurst = 120
 )
 
+// stageMetrics are the stages one message is timed through inside the
+// server: process (read to queued for its recipients), queue, write, and
+// total. Relays and validated rooms each have their own set.
+type stageMetrics struct {
+	process, queue, write, total prometheus.Observer
+}
+
 // relayMetrics holds the labelled instruments resolved once, so the hot path
 // does no label lookup.
 type relayMetrics struct {
-	process, queue, write, total prometheus.Observer
+	stageMetrics
 
 	dropped prometheus.Counter
 
 	notMember, tooLarge, rateLimited, invalid prometheus.Counter
+	// roomClosed: a relay into a validated room whose match is over.
+	roomClosed prometheus.Counter
 }
 
 func newRelayMetrics(m *metrics.Metrics) relayMetrics {
 	stage := m.WSRelayDuration.WithLabelValues
 	reason := m.WSRelayRejectedTotal.WithLabelValues
 	return relayMetrics{
-		process:     stage("process"),
-		queue:       stage("queue"),
-		write:       stage("write"),
-		total:       stage("total"),
+		stageMetrics: stageMetrics{
+			process: stage("process"),
+			queue:   stage("queue"),
+			write:   stage("write"),
+			total:   stage("total"),
+		},
 		dropped:     m.WSRelayDroppedTotal,
 		notMember:   reason("not_member"),
 		tooLarge:    reason("too_large"),
 		rateLimited: reason("rate_limited"),
 		invalid:     reason("invalid"),
+		roomClosed:  reason("room_closed"),
 	}
 }
 
@@ -111,12 +126,27 @@ func (c *Client) handleRelay(msg *inboundMessage, readAt time.Time) {
 		rm.rateLimited.Inc()
 		return
 	}
-	if !c.hub.relayToRoom(c, msg.Room, c.relayFrame(msg.Room, msg.Data), readAt) {
+	switch c.hub.relayToRoom(c, msg.Room, msg.Data, readAt) {
+	case relayNotMember:
 		rm.notMember.Inc()
-		return
+	case relayRoomClosed:
+		rm.roomClosed.Inc()
+	case relayed:
+		rm.process.Observe(time.Since(readAt).Seconds())
+	case relayedToGame:
+		// The game times its own answer (gameRoom.BroadcastExcept).
 	}
-	rm.process.Observe(time.Since(readAt).Seconds())
 }
+
+// relayResult is what relayToRoom did with a message.
+type relayResult int
+
+const (
+	relayed         relayResult = iota // fanned out to the room's other members
+	relayedToGame                      // handed to the validated room's session
+	relayNotMember                     // the sender is not in the room
+	relayRoomClosed                    // a validated room whose match is over
+)
 
 // relayFrame builds the outbound frame. It is written by hand rather than
 // with json.Marshal so that data goes out byte-for-byte (Marshal compacts and
@@ -138,18 +168,33 @@ func (c *Client) relayFrame(room string, data []byte) []byte {
 	return append(frame, '}')
 }
 
-// relayToRoom queues frame, shared by all recipients, for every member of
-// room except from, and reports whether from is a member. The membership
-// check and the fan-out happen under one read lock, so a concurrent leave or
-// disconnect cannot slip between them. A full send buffer sheds the frame,
-// counted rather than logged.
-func (h *Hub) relayToRoom(from *Client, room string, frame []byte, readAt time.Time) bool {
+// relayToRoom delivers one relay from a member of room. In an opaque-relay
+// room it queues the frame, shared by all recipients, for every member
+// except from; in a validated room it hands data to the room's session and
+// queues nothing, so there is no way around the game for what a client
+// sends. A validated room whose match is over takes nothing: it does not
+// turn into an opaque-relay room.
+//
+// The membership check and the delivery happen under one read lock, so a
+// concurrent leave or disconnect cannot slip between them. A full send
+// buffer sheds the frame, counted rather than logged. from's readPump is the
+// only caller, which is what relayFrame's cache needs.
+func (h *Hub) relayToRoom(from *Client, room string, data []byte, readAt time.Time) relayResult {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	members := h.rooms[room]
 	if _, ok := members[from]; !ok {
-		return false
+		return relayNotMember
 	}
+	if g := h.games[room]; g != nil {
+		if g.finished {
+			return relayRoomClosed
+		}
+		// Post does not block. A full inbox is the session's to count.
+		g.session.Post(from.playerID, data, readAt)
+		return relayedToGame
+	}
+	frame := from.relayFrame(room, data)
 	for c := range members {
 		if c == from {
 			continue
@@ -160,20 +205,24 @@ func (h *Hub) relayToRoom(from *Client, room string, frame []byte, readAt time.T
 			h.relayM.dropped.Inc()
 		}
 	}
-	return true
+	return relayed
 }
 
-// writeRelay writes one relay frame and records its queue, write and total
-// times. queue runs until the writer starts this write.
+// writeRelay writes one timed frame, a relay or a validated room's answer to
+// an inbound message, and records its queue, write and total times in the
+// instruments of its kind. queue runs until the writer starts this write.
 func (c *Client) writeRelay(out outbound) error {
 	start := time.Now()
 	if err := c.conn.WriteMessage(websocket.TextMessage, out.msg); err != nil {
 		return err
 	}
 	end := time.Now()
-	rm := &c.hub.relayM
-	rm.queue.Observe(start.Sub(out.queuedAt).Seconds())
-	rm.write.Observe(end.Sub(start).Seconds())
-	rm.total.Observe(end.Sub(out.readAt).Seconds())
+	sm := &c.hub.relayM.stageMetrics
+	if out.game {
+		sm = &c.hub.gameM.stageMetrics
+	}
+	sm.queue.Observe(start.Sub(out.queuedAt).Seconds())
+	sm.write.Observe(end.Sub(start).Seconds())
+	sm.total.Observe(end.Sub(out.readAt).Seconds())
 	return nil
 }

@@ -38,6 +38,11 @@ import (
 // A relay goes to the room's other members only, and type and from are set
 // by the server. Its frame is built in relay.go rather than from Message, so
 // data is passed through byte-for-byte.
+//
+// In a validated room (game.go) a relay is not passed on: its data goes to
+// the room's game, which answers with frames of its own:
+//
+//	Server → client: {"type": "Game", "room": "<id>", "data": <game payload>}
 type Message struct {
 	Type string          `json:"type,omitempty"`
 	Room string          `json:"room,omitempty"`
@@ -85,19 +90,33 @@ type Hub struct {
 	relayRate  rate.Limit
 	relayBurst int
 	relayM     relayMetrics
+
+	// Validated rooms (game.go).
+	gameState
 }
 
 // ErrRoomNotFound is what a RoomChecker returns for a room that does not
 // exist, or no longer does.
 var ErrRoomNotFound = errors.New("room not found")
 
-// RoomChecker answers whether a player may join a room. In the service it
-// reads matchmaking's room record (cmd/websocket); it is an interface so this
-// package depends on neither Redis nor matchmaking.
+// RoomAccess is a RoomChecker's answer about one player and one room.
+type RoomAccess struct {
+	// Participant says the player is one of the room's players.
+	Participant bool
+	// Game is set for a validated room (game.go) and nil for an
+	// opaque-relay room. The room's record decides, never the client.
+	Game *GameSpec
+}
+
+// RoomChecker answers whether a player may join a room, and what kind of
+// room it is. In the service it reads matchmaking's room record
+// (cmd/websocket), in one lookup; it is an interface so this package depends
+// on neither Redis nor matchmaking.
 type RoomChecker interface {
-	// IsParticipant reports whether playerID is one of the room's players,
-	// or returns ErrRoomNotFound if there is no such room.
-	IsParticipant(ctx context.Context, room, playerID string) (bool, error)
+	// Access reports whether playerID is one of the room's players and
+	// whether the room is a validated room, or returns ErrRoomNotFound if
+	// there is no such room.
+	Access(ctx context.Context, room, playerID string) (RoomAccess, error)
 }
 
 // noRoomChecker is what a hub built without a RoomChecker gets: every join
@@ -105,8 +124,8 @@ type RoomChecker interface {
 // rather than opening them.
 type noRoomChecker struct{}
 
-func (noRoomChecker) IsParticipant(context.Context, string, string) (bool, error) {
-	return false, errors.New("no room checker configured")
+func (noRoomChecker) Access(context.Context, string, string) (RoomAccess, error) {
+	return RoomAccess{}, errors.New("no room checker configured")
 }
 
 // roomCheckTimeout bounds the room lookup of one join. It runs on the
@@ -118,6 +137,9 @@ const roomCheckTimeout = 2 * time.Second
 // every reason's series exist from the start.
 type joinMetrics struct {
 	notParticipant, roomNotFound, unavailable, rateLimited prometheus.Counter
+	// roomClosed: a validated room whose match is over, or which is too old
+	// to be started.
+	roomClosed prometheus.Counter
 }
 
 func newJoinMetrics(m *metrics.Metrics) joinMetrics {
@@ -127,6 +149,7 @@ func newJoinMetrics(m *metrics.Metrics) joinMetrics {
 		roomNotFound:   reason("room_not_found"),
 		unavailable:    reason("unavailable"),
 		rateLimited:    reason("rate_limited"),
+		roomClosed:     reason("room_closed"),
 	}
 }
 
@@ -156,6 +179,11 @@ func NewHub(log *zap.Logger, m *metrics.Metrics, notifier presence.Notifier, roo
 		relayRate:  defaultRelayRate,
 		relayBurst: defaultRelayBurst,
 		relayM:     newRelayMetrics(m),
+
+		gameState: gameState{
+			games: make(map[string]*gameRoom),
+			gameM: newGameMetrics(m),
+		},
 	}
 }
 
@@ -180,6 +208,7 @@ func (h *Hub) register(c *Client) {
 func (h *Hub) unregister(c *Client) {
 	h.mu.Lock()
 	var left []string
+	var games []*gameRoom
 	if _, ok := h.clients[c]; ok {
 		delete(h.clients, c)
 		delete(h.byPlayer[c.playerID], c)
@@ -187,6 +216,7 @@ func (h *Hub) unregister(c *Client) {
 			delete(h.byPlayer, c.playerID)
 			delete(h.buckets, c.playerID)
 		}
+		games = h.gamesToNotify(c.rooms)
 		for room := range c.rooms {
 			delete(h.rooms[room], c)
 			if len(h.rooms[room]) == 0 {
@@ -199,6 +229,10 @@ func (h *Hub) unregister(c *Client) {
 	}
 	h.m.WSConnections.Set(float64(len(h.clients)))
 	h.mu.Unlock()
+
+	// A validated room learns that the player may be gone, also when the
+	// room is now empty.
+	notifyGames(games, c.playerID)
 
 	// Drop one presence connection. The Presence Service only flips the player to
 	// OFFLINE when their last connection closes, so multi-device players stay
@@ -218,6 +252,11 @@ func (h *Hub) unregister(c *Client) {
 // not track hijacked WebSocket connections and clients would otherwise see
 // 1006 (abnormal closure).
 func (h *Hub) CloseAll(ctx context.Context) {
+	// Validated rooms end first, without a result: once connections start
+	// closing, a room still running would take the shutdown for its players
+	// leaving.
+	h.stopGames(ctx)
+
 	h.mu.RLock()
 	clients := make([]*Client, 0, len(h.clients))
 	for c := range h.clients {
@@ -278,40 +317,49 @@ func (c *Client) handleJoin(room string, readAt time.Time) {
 // The lookup runs before the hub lock is taken, so a slow lookup holds up
 // only this connection.
 func (h *Hub) join(c *Client, room string) bool {
-	if reason := h.checkJoin(c.playerID, room); reason != nil {
+	access, reason := h.checkJoin(c.playerID, room)
+	if reason != nil {
 		h.rejectJoin(c, room, reason)
 		return false
 	}
+	if access.Game != nil {
+		return h.joinGame(c, room, *access.Game)
+	}
 
 	h.mu.Lock()
-	if h.rooms[room] == nil {
-		h.rooms[room] = make(map[*Client]struct{})
-	}
-	h.rooms[room][c] = struct{}{}
-	c.rooms[room] = struct{}{}
+	h.addToRoom(c, room)
 	h.mu.Unlock()
 
 	h.BroadcastToRoom(room, marshal(Message{Type: "PlayerJoined", Room: room, Data: playerData(c.playerID)}))
 	return true
 }
 
-// checkJoin asks the RoomChecker whether playerID may join room, and returns
-// nil if it may, or the counter of the reason it may not. Failing to get an
-// answer in time is a rejection.
-func (h *Hub) checkJoin(playerID, room string) prometheus.Counter {
+// addToRoom makes c a member of room. The caller holds the write lock.
+func (h *Hub) addToRoom(c *Client, room string) {
+	if h.rooms[room] == nil {
+		h.rooms[room] = make(map[*Client]struct{})
+	}
+	h.rooms[room][c] = struct{}{}
+	c.rooms[room] = struct{}{}
+}
+
+// checkJoin asks the RoomChecker whether playerID may join room. It returns
+// the checker's answer and nil if it may, or the counter of the reason it
+// may not. Failing to get an answer in time is a rejection.
+func (h *Hub) checkJoin(playerID, room string) (RoomAccess, prometheus.Counter) {
 	ctx, cancel := context.WithTimeout(context.Background(), roomCheckTimeout)
 	defer cancel()
-	ok, err := h.participants.IsParticipant(ctx, room, playerID)
+	access, err := h.participants.Access(ctx, room, playerID)
 	switch {
 	case errors.Is(err, ErrRoomNotFound):
-		return h.joinM.roomNotFound
+		return RoomAccess{}, h.joinM.roomNotFound
 	case err != nil:
 		h.log.Warn("room membership check failed", zap.String("player_id", playerID), zap.Error(err))
-		return h.joinM.unavailable
-	case !ok:
-		return h.joinM.notParticipant
+		return RoomAccess{}, h.joinM.unavailable
+	case !access.Participant:
+		return RoomAccess{}, h.joinM.notParticipant
 	}
-	return nil
+	return access, nil
 }
 
 // rejectJoin counts a rejected join and tells the sender alone, without a
@@ -328,6 +376,10 @@ func (h *Hub) rejectJoin(c *Client, room string, reason prometheus.Counter) {
 func (h *Hub) leave(c *Client, room string) {
 	h.mu.Lock()
 	_, wasMember := h.rooms[room][c]
+	var games []*gameRoom
+	if wasMember {
+		games = h.gamesToNotify(map[string]struct{}{room: {}})
+	}
 	delete(c.rooms, room)
 	if members, ok := h.rooms[room]; ok {
 		delete(members, c)
@@ -340,6 +392,7 @@ func (h *Hub) leave(c *Client, room string) {
 	if !wasMember {
 		return
 	}
+	notifyGames(games, c.playerID)
 	h.BroadcastToRoom(room, marshal(Message{Type: "PlayerLeft", Room: room, Data: playerData(c.playerID)}))
 }
 
