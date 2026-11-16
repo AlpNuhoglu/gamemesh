@@ -220,7 +220,7 @@ func TestRoleSwapResetsState(t *testing.T) {
 		assert.Equal(t, sample{ts: half2, p: p.mot.pos}, p.hist.at(0))
 	}
 	// The first packet of the half, 1 s after it began, moves the new
-	// hunter at most 225·0.04 + 25 = 34 units.
+	// hunter at most 225·0.04 + the full slack of a new half, 25 = 34 units.
 	h.send(half2.Add(time.Second), firstRunner, 0, 0)
 	assert.InDelta(t, -225+34, firstRunner.mot.pos.X, 1e-9)
 }
@@ -229,6 +229,9 @@ func TestRoleSwapResetsState(t *testing.T) {
 // grace keeps their position (P_anchor) but not their motion, and so does
 // the player who stayed: the first packet of each after the return moves at
 // most one DtInitial step, although more than 4 s passed since their last.
+// The slack both spent walking before the drop is not refilled by the
+// return: it stays empty, so the step is V·DtInitial and no more (9 and
+// 10.4, not 34 and 35.4).
 func TestReconnectResetsMotion(t *testing.T) {
 	h := twoPlayers(t)
 	start := h.started()
@@ -236,6 +239,8 @@ func TestReconnectResetsMotion(t *testing.T) {
 	last := h.walk(start.Add(ms(40)), hunter, vec{-225, 200}, 5)
 	h.walk(start.Add(ms(60)), runner, vec{225, -200}, 5)
 	anchorH, anchorR := hunter.mot.pos, runner.mot.pos
+	require.Zero(t, hunter.mot.slack)
+	require.Zero(t, runner.mot.slack)
 
 	h.r.setPresence(last.Add(ms(10)), runner.id, false)
 	require.Equal(t, stateGrace, h.r.state)
@@ -246,11 +251,13 @@ func TestReconnectResetsMotion(t *testing.T) {
 	assert.Equal(t, anchorR, runner.mot.pos)
 	assert.False(t, hunter.mot.hasPrev)
 	assert.False(t, runner.mot.hasPrev)
+	assert.Zero(t, hunter.mot.slack, "not refilled by the return")
+	assert.Zero(t, runner.mot.slack)
 
 	h.send(back.Add(ms(500)), hunter, anchorH.X, anchorH.Y+500)
 	h.send(back.Add(ms(500)), runner, anchorR.X, anchorR.Y-500)
-	assert.InDelta(t, 34, hunter.mot.pos.dist(anchorH), 1e-9)
-	assert.InDelta(t, 35.4, runner.mot.pos.dist(anchorR), 1e-9)
+	assert.InDelta(t, 225*0.04, hunter.mot.pos.dist(anchorH), 1e-9)
+	assert.InDelta(t, 260*0.04, runner.mot.pos.dist(anchorR), 1e-9)
 }
 
 // TestGracePausesTheClockCaptureAndPressure: in DISCONNECT_GRACE the half
@@ -427,7 +434,7 @@ func captureBy(t *testing.T, moverIsHunter bool) (*harness, sent) {
 		mover, still = h.hunter(), h.runner()
 	}
 	now := start
-	for i := 0; i < 40 && !h.r.finished() && h.r.state == stateHalf1; i++ {
+	for i := 0; i < 80 && !h.r.finished() && h.r.state == stateHalf1; i++ {
 		now = now.Add(ms(20))
 		h.send(now, still, still.mot.pos.X, still.mot.pos.Y)
 		now = now.Add(ms(20))
@@ -503,7 +510,7 @@ func TestSilentPlayerIsKeptInTheArena(t *testing.T) {
 	h := twoPlayers(t)
 	start := h.started()
 	runner := h.runner()
-	h.walk(start.Add(ms(40)), runner, vec{499, 0}, 20)
+	h.walk(start.Add(ms(40)), runner, vec{499, 0}, 60)
 	require.InDelta(t, 499, runner.mot.pos.X, 1e-9)
 
 	late := start.Add(40 * time.Second) // R = 500 − 220·(10/15)

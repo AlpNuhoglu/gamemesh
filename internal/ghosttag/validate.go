@@ -33,14 +33,19 @@ func polar(r, theta float64) vec { return vec{r * math.Cos(theta), r * math.Sin(
 func wrapPi(a float64) float64 { return math.Remainder(a, 2*math.Pi) }
 
 // motion is what the validation of a player's next packet starts from: the
-// last validated position and heading, and the ServerTs they were validated
-// at. hasPrev is has_prev_motion of section 1.2; when it is false, pos is the
-// spawn point or P_anchor and ts and theta mean nothing.
+// last validated position and heading, the ServerTs they were validated at,
+// and the slack budget. hasPrev is has_prev_motion of section 1.2; when it
+// is false, pos is the spawn point or P_anchor and ts and theta mean
+// nothing, but slack still does: it is full at a spawn and carried over a
+// return from DISCONNECT_GRACE.
 type motion struct {
 	pos     vec
 	theta   float64
 	ts      time.Time
 	hasPrev bool
+	// slack is distance the player was allowed and did not use, in
+	// [0, SlackMax] (section 1.2, step 3). It fills with time only.
+	slack float64
 }
 
 // errNonFinite rejects a position that is NaN or infinite. encoding/json
@@ -70,21 +75,32 @@ func validateMove(c *Config, m motion, r role, raw vec, now time.Time, radius fl
 		return m, false, errNonFinite
 	}
 
-	// 1. The time step. The first packet after a spawn or a return has no
-	// previous packet: it gets one tick's worth (the implementation note of
-	// section 1.2), not Δt_max, which would allow a ~90-unit jump.
-	dt := c.DtInitial.Seconds()
+	// 1. The time steps. dt, of the distance budget, is the real elapsed
+	// time, capped at DtMax so a backlog cannot teleport, and never raised:
+	// raised to DtMin, every packet above 50 Hz would accrue budget it did
+	// not wait for (20 % at 60 Hz). dtTheta, of the turn limit only, is
+	// floored at DtMin so bunched packets do not freeze the turn. The first
+	// packet after a spawn or a return has no previous packet: both are one
+	// tick's worth (the implementation note of section 1.2), not DtMax.
+	dt, dtTheta := c.DtInitial.Seconds(), c.DtInitial.Seconds()
 	if m.hasPrev {
-		dt = math.Max(c.DtMin.Seconds(), math.Min(c.DtMax.Seconds(), now.Sub(m.ts).Seconds()))
+		dt = math.Max(0, math.Min(c.DtMax.Seconds(), now.Sub(m.ts).Seconds()))
+		dtTheta = math.Max(dt, c.DtMin.Seconds())
+	}
+	base := c.VHunter
+	if r == roleRunner {
+		base = c.VRunner
 	}
 
 	if dist == 0 {
 		// Standing still: there is no direction to derive and the heading is
-		// kept, and a first packet that does not move does not start the
-		// motion. The arena still applies: R(t) may have shrunk past a
-		// player who stands still.
+		// kept; the unused budget goes into slack, up to the cap. A first
+		// packet that does not move neither starts the motion nor accrues.
+		// The arena still applies: R(t) may have shrunk past a player who
+		// stands still.
 		if m.hasPrev {
 			m.ts = now
+			m.slack = math.Min(c.SlackMax, m.slack+base*dt)
 		}
 		p, scaled := intoArena(m.pos, radius)
 		m.pos = p
@@ -96,21 +112,22 @@ func validateMove(c *Config, m motion, r role, raw vec, now time.Time, radius fl
 	// is recorded either way, for the next packet and the next half.
 	thetaRaw := math.Atan2(d.Y, d.X)
 	theta := thetaRaw
-	allowed := c.VHunter
-	if r == roleRunner {
-		allowed = c.VRunner
-		if m.hasPrev {
-			limit := c.OmegaMax * dt
-			turn := math.Max(-limit, math.Min(limit, wrapPi(thetaRaw-m.theta)))
-			theta = wrapPi(m.theta + turn)
-			allowed = c.VRunner * (1 - c.Alpha*math.Abs(turn)/math.Pi)
-		}
+	allowed := base
+	if r == roleRunner && m.hasPrev {
+		limit := c.OmegaMax * dtTheta
+		turn := math.Max(-limit, math.Min(limit, wrapPi(thetaRaw-m.theta)))
+		theta = wrapPi(m.theta + turn)
+		allowed = c.VRunner * (1 - c.Alpha*math.Abs(turn)/math.Pi)
 	}
 
-	// 3. Distance, then the shrinking arena.
-	step := math.Min(dist, allowed*dt+c.BJitter)
+	// 3. Distance against the budget of this step plus the slack, then the
+	// shrinking arena. The slack is charged with the validated step, before
+	// any scaling onto the arena.
+	budget := allowed * dt
+	step := math.Min(dist, budget+m.slack)
+	slack := math.Max(0, math.Min(c.SlackMax, m.slack+budget-step))
 	p, _ := intoArena(m.pos.add(polar(step, theta)), radius)
-	return motion{pos: p, theta: theta, ts: now, hasPrev: true}, p.dist(raw) > clipEpsilon, nil
+	return motion{pos: p, theta: theta, ts: now, hasPrev: true, slack: slack}, p.dist(raw) > clipEpsilon, nil
 }
 
 // intoArena scales p onto the boundary circle if it lies outside it, and

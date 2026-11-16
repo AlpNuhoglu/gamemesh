@@ -347,14 +347,14 @@ func (r *room) enterCountdown(now time.Time) {
 
 // placeAtSpawn is the half-start reset of section 1.2: both players on
 // their symmetric spawn points, heading for the centre, with no previous
-// motion and empty rings. With seed, the spawn point is written into the
+// motion, a full slack budget and empty rings. With seed, the spawn point is written into the
 // ring as the half's first validated position, so a player who never sends
 // a packet is still somewhere the capture check can find.
 func (r *room) placeAtSpawn(at time.Time, seed bool) {
 	for _, p := range r.players {
-		p.mot = motion{pos: vec{r.cfg.SpawnDistance, 0}, theta: math.Pi}
+		p.mot = motion{pos: vec{r.cfg.SpawnDistance, 0}, theta: math.Pi, slack: r.cfg.SlackMax}
 		if p.role == roleHunter {
-			p.mot = motion{pos: vec{-r.cfg.SpawnDistance, 0}, theta: 0}
+			p.mot = motion{pos: vec{-r.cfg.SpawnDistance, 0}, theta: 0, slack: r.cfg.SlackMax}
 		}
 		p.hist.reset()
 		if seed {
@@ -432,8 +432,9 @@ func (r *room) enterGrace(at time.Time, halfStarted bool) {
 // so the first packet is measured from the anchor with DtInitial. It is
 // applied to both players: the one who stayed was frozen for the grace too,
 // and their next packet would otherwise be measured against a ServerTs
-// seconds old (and clamped up to DtMax). A half that had not begun starts
-// now.
+// seconds old (and clamped up to DtMax). The slack budget is kept as it was
+// at the drop, not refilled: it fills with time only, so dropping and coming
+// back buys no distance. A half that had not begun starts now.
 func (r *room) resume(now time.Time) {
 	if !r.halfStarted {
 		r.startHalf(now)

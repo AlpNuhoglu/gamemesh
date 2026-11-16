@@ -22,7 +22,7 @@ func TestDefaultConfigIsSection8(t *testing.T) {
 	assert.Equal(t, 500.0, c.R0)
 	assert.Equal(t, 280.0, c.RMin)
 	assert.Equal(t, 36.0, c.DCapture)
-	assert.Equal(t, 25.0, c.BJitter)
+	assert.Equal(t, 25.0, c.SlackMax)
 	assert.Equal(t, 20*time.Millisecond, c.DtMin)
 	assert.Equal(t, 250*time.Millisecond, c.DtMax)
 	assert.Equal(t, 40*time.Millisecond, c.DtInitial)
@@ -58,7 +58,7 @@ func TestConfigValidateRejects(t *testing.T) {
 		"hunter speed NaN":      func(c *Config) { c.VHunter = math.NaN() },
 		"omega zero":            func(c *Config) { c.OmegaMax = 0 },
 		"capture zero":          func(c *Config) { c.DCapture = 0 },
-		"jitter negative":       func(c *Config) { c.BJitter = -1 },
+		"slack negative":        func(c *Config) { c.SlackMax = -1 },
 		"dtmin above dtmax":     func(c *Config) { c.DtMin = c.DtMax + time.Millisecond },
 		"dtinitial above dtmax": func(c *Config) { c.DtInitial = c.DtMax + time.Millisecond },
 		"shrink longer than half": func(c *Config) {
