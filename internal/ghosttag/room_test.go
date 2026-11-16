@@ -365,8 +365,10 @@ func TestJoinTimeoutCancels(t *testing.T) {
 	assert.Equal(t, verdict{}, decide(&h.cfg, h.r.result))
 }
 
-// TestBothGoneAtGraceExpiryIsVoid: no forfeit, no winner,
-// EventBothDisconnected.
+// TestBothGoneAtGraceExpiryIsVoid: when both players' own deadlines pass,
+// the match is void at the second one: no forfeit, no winner,
+// EventBothDisconnected. At the first, the room is still waiting for the
+// second player.
 func TestBothGoneAtGraceExpiryIsVoid(t *testing.T) {
 	h := twoPlayers(t)
 	start := h.started()
@@ -374,8 +376,12 @@ func TestBothGoneAtGraceExpiryIsVoid(t *testing.T) {
 	h.r.setPresence(start.Add(2*time.Second), "b", false)
 
 	h.r.tick(start.Add(time.Second + h.cfg.TGrace))
+	require.Equal(t, stateGrace, h.r.state, "b still has a second")
+	assert.True(t, h.r.byID["a"].expired)
+	h.r.tick(start.Add(2*time.Second + h.cfg.TGrace))
 
 	require.True(t, h.r.finished())
+	assert.Equal(t, start.Add(2*time.Second+h.cfg.TGrace), h.r.endedAt)
 	assert.Equal(t, outcomeVoid, h.r.result.outcome)
 	assert.Empty(t, h.r.result.leaver)
 	assert.Equal(t, 1, h.obs[EventBothDisconnected])
