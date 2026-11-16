@@ -126,6 +126,23 @@ func TestSlackFillsWhileStandingStillUpToTheCap(t *testing.T) {
 	assert.Equal(t, 3.0, next.slack, "a first packet that does not move accrues nothing")
 }
 
+// TestSlackIsChargedWithTheStepBeforeTheArena: a hunter 10 units from the
+// edge asks for a point far outside it. The validated step is 34 (9 of
+// budget and all 25 of slack); the arena then scales the position back to
+// the edge, a displacement of only 10. The slack is charged with the step,
+// so it is empty, not 24: pressing into the wall is not a way to save it.
+func TestSlackIsChargedWithTheStepBeforeTheArena(t *testing.T) {
+	c := DefaultConfig()
+	m := motion{pos: vec{490, 0}, ts: t0, hasPrev: true, slack: c.SlackMax}
+
+	next, clipped, err := validateMove(&c, m, roleHunter, vec{600, 0}, t0.Add(ms(40)), 500)
+
+	require.NoError(t, err)
+	assert.True(t, clipped)
+	assert.InDelta(t, 500, next.pos.X, 1e-9)
+	assert.InDelta(t, 0, next.slack, 1e-9)
+}
+
 // TestBunchedPacketsAreNotClipped: a legitimate hunter at top speed sends
 // every 40 ms, but after its packet at t0 the next three arrive bunched: an
 // 80 ms gap, then three packets 1 ms apart. Measured on the server, they
