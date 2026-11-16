@@ -65,20 +65,35 @@ oyuncuyu kilitlememesi için yalnızca `P_anchor` üzerinden kurulur.
 **1 — Zaman adımı sınırlandırma**
 
 ```
-Δt   = min(ServerTs_n − ServerTs_{n-1}, Δt_max)     Δt_max = 0,25 sn
-Δt_θ = max(Δt, Δt_min)                              Δt_min = 0,02 sn
+Δt = clamp(ServerTs_n − ServerTs_{n-1}, 0, Δt_max)     Δt_max = 0,25 sn
 ```
 
-`Δt` mesafe bütçesinin zaman adımıdır ve **gerçek geçen süredir**; yalnızca
-üstten kırpılır. `Δt_max` paket birikmesiyle ışınlanmayı önler. `Δt_θ`
-yalnızca açısal sınırda (adım 2) kullanılır: kümelenmiş paketlerde ölçülen
-süre sıfıra yaklaşınca dönüş izninin de sıfırlanmaması için alttan `Δt_min`
-ile sınırlanır.
+`Δt` **gerçek geçen süredir**; yalnızca üstten kırpılır ve hem mesafe
+bütçesinde (adım 3) hem açısal sınırda (adım 2) aynı değer kullanılır.
+`Δt_max` paket birikmesiyle ışınlanmayı önler.
 
-`Δt` alttan kırpılmaz. Kırpılsaydı saniyede 50'den fazla paket gönderen
-istemci, paket başına 0,02 sn'lik bütçe biriktirerek hız sınırını aşardı
-(60 Hz'de %20). Kümelenmiş paketlerin meşru hareketini korumak adım 3'teki
-slack bütçesinin işidir.
+**`Δt` alttan kırpılmaz** (eski `Δt_min` = 0,02 sn tabanı kaldırıldı). Taban,
+saniyede 50'den fazla paket gönderen istemciye beklemediği süre için bütçe
+yazıyordu: 1 saniyedeki gerçek sürelerin toplamı en fazla 1 saniyedir, ama
+tabanla kırpılmış sürelerin toplamı paket sayısıyla büyür. Mesafede bu
+60 Hz'de %20 fazla bütçe demekti; dönüşte, ölçülen 1 saniyelik en büyük
+kaçak dönüşü:
+
+| Paket hızı | Tabanla | Tabansız | Nominal `ω_max` |
+|---|---|---|---|
+| 25 Hz | 4,20 rad | 4,20 rad | 4,2 |
+| 60 Hz | 5,04 rad | 4,20 rad | 4,2 |
+| 120 Hz | 10,08 rad | 4,20 rad | 4,2 |
+
+Dönüş için ayrı bir kredi havuzu yoktur: gerçek sürelerin toplamı zaten
+sınırlı olduğu için 1 saniyede en fazla `ω_max` radyan dönülür, paket
+hızından bağımsız. Bedeli bölüm 11'de: kümelenmiş paketlerde dönüş
+kırpılabilir.
+
+**Mikro hareket.** `‖d_ham‖ < ε_hareket` (10⁻³ birim) ise paket "duruyor"
+sayılır: konum ve `θ` güncellenmez, yön türetilmez. Milimetre altı bir yer
+değiştirmenin açısı gürültüdür; ondan yön türetmek kaçağın `θ`'sını rastgele
+savurur ve sonraki gerçek adımda haksız açısal kırpmaya yol açar.
 
 **2 — Yön türetme ve rol bazlı açısal kırpma**
 
@@ -94,7 +109,7 @@ sertleştikçe izin verilen hız düşer:
 
 ```
 Δθ        = wrapPi(θ_ham − θ_{n-1})
-Δθ_geçerli = clamp(Δθ, −ω_max·Δt_θ, +ω_max·Δt_θ)
+Δθ_geçerli = clamp(Δθ, −ω_max·Δt, +ω_max·Δt)
 θ_n       = wrapPi(θ_{n-1} + Δθ_geçerli)
 V_izin    = V_kaçak · (1 − α · |Δθ_geçerli| / π)
 ```
@@ -271,6 +286,11 @@ olaydır; her kopan oyuncunun kendi 5,0 saniyelik son tarihi vardır.
 | Dönüş | Son tarihinden önce dönen oyuncunun sayacı silinir. Oda, **tüm** oyuncular bağlı olduğunda devam eder |
 | Süre dolumu | Oyuncu kendi son tarihi dolunca hükmen yenilir; sonradan dönmesi bunu geri almaz. Rakibi o an bağlıysa maç hemen biter. Rakibi de kopuksa (ve kendi süresi dolmamışsa) oda rakibi beklemeye devam eder: rakip zamanında dönerse hükmen galip gelir |
 | İkisinin de süresi dolarsa | Maç geçersiz, puansız, kazanan yok |
+| Maç toplamı | Her oyuncunun maç boyunca biriken bekleme süresi tutulur. Tek kopmada en fazla `T_grace` (5 sn), maç toplamında en fazla `T_grace_total` (15 sn): bir kopmanın son tarihi `min(T_grace, T_grace_total − kullanılan)` kadar sonradır. Toplamı tükenmiş oyuncu koptuğu anda hükmen yenilir |
+
+Biriken süre, odanın o oyuncuyu beklediği süredir (son tarihin başladığı
+andan dönüşe kadar). Toplam olmadan, dönüp tekrar kopan oyuncu her seferinde
+yeni 5 saniye alır ve maçı istediği kadar kilitleyebilirdi.
 
 Oda başına tek sayaç şu hatayı üretiyordu: A `t0`'da, B `t0 + 4,9 sn`'de
 kopar, A `t0 + 4,95 sn`'de döner; sayaç `t0 + 5 sn`'de dolar ve B yalnızca
@@ -611,8 +631,8 @@ ayarlanacaktır.
 | `R_min` | 280 birim | Daralmış arena yarıçapı |
 | `D_capture` | 36 birim | Yakalama yarıçapı (~2,5 × görsel yarıçap) |
 | `S_max` | 25 birim | Slack bütçesinin tavanı: ağ titreşim toleransı. Paket başına eklenmez, zamanla dolar (bölüm 1.2) |
-| `Δt_max` | 0,25 sn | Mesafe bütçesi zaman adımının tavanı |
-| `Δt_min` | 0,02 sn | Yalnızca açısal sınırda zaman adımının tabanı |
+| `Δt_max` | 0,25 sn | Doğrulama zaman adımının tavanı (taban yoktur) |
+| `ε_hareket` | 10⁻³ birim | Bundan kısa yer değiştirme "duruyor" sayılır; `θ` güncellenmez |
 | `Δt_initial` | 0,04 sn | Spawn / reconnect sonrası ilk paketin `dt` değeri |
 | İstemci render tamponu | 60 ms | Rakip enterpolasyon gecikmesi |
 | Dead-reckoning tavanı | 80 ms | Paket gecikmesinde öngörü süresi |
@@ -620,7 +640,8 @@ ayarlanacaktır.
 | `T_shrink` | 15 sn | Daralma penceresi (yarı sonu) |
 | `T_countdown` | 2 sn | Başlangıç geri sayımı |
 | `T_roleswap` | 3 sn | Rol değişim arası |
-| `T_grace` | 5 sn | Bağlantı kopma bekleme süresi, **oyuncu başına** (bölüm 2) |
+| `T_grace` | 5 sn | Tek kopmada bekleme süresi, **oyuncu başına** (bölüm 2) |
+| `T_grace_total` | 15 sn | Bir oyuncunun maç boyunca toplam bekleme süresi |
 | `T_join` | 10 sn | `WAITING` durumunda oyuncuların odaya katılması için süre |
 | Yakalama penceresi | 150 ms | Simetrik kontrol geçmiş penceresi |
 | Bot görüş gecikmesi | 2000 ms | Bot kaçağın avcıyı gördüğü gecikme |
@@ -711,21 +732,16 @@ yazma olmaz.
   `match_end` oyun trafiğiyle aynı gönderim kuyruğunu kullanır; kuyruğu dolu
   yavaş bir istemci bunları kaçırabilir. `snap` yeniden bağlanmada tekrar
   gönderilir.
-- **Dönüş hızı hâlâ paket hızına bağlı.** Mesafe bütçesi slack ile paket
-  hızından bağımsız hale geldi, ancak açısal sınır `Δt_θ = max(Δt, Δt_min)`
-  tabanını kullanmaya devam ediyor. Ölçülen, kaçağın 1 saniyedeki en büyük
-  dönüşü: 25 Hz'de 4,20 rad (nominal `ω_max`), 60 Hz'de 5,04 rad, 120 Hz'de
-  10,08 rad. Düzeltilmedi; karar bekliyor. Aynı çözüm (zamanla dolan, tavanlı
-  bir dönüş bütçesi) burada da uygulanabilir.
+- **Kümelenmiş paketlerde dönüş kırpılabilir.** Mesafenin slack bütçesi
+  var, dönüşün yok (bilinçli seçim, bölüm 1.2). Paketleri ağda kümelenen ve
+  o sırada en yüksek hızda dönen bir kaçağın kümedeki paketleri yaklaşık
+  sıfır `Δt` görür ve dönüşü kırpılır; istemci `clamp` ile düzeltilir.
 - **Spawn sonrası ilk saniye küçük bir pay taşır.** İlk paket gerçek bekleme
   süresi yerine sabit `Δt_initial` (0,04 sn) ile ölçüldüğü için, taze
   spawn'dan sonraki ilk saniyede kat edilebilen mesafe `V + S_max`'i en fazla
   `V · Δt_initial` kadar aşar ve paket hızına hafifçe bağlıdır: avcı 25 Hz'de
   250,0, 60 Hz'de 255,3; kaçak 285,0 ve 291,1. Hareket kurulduktan sonra her
   1 saniyelik pencere tam `V + S_max` ile sınırlıdır.
-- **Toplam bekleme süresi sınırsız.** Grace sayacı oyuncu başınadır ama maç
-  başına bir toplamı yoktur: dönüp tekrar kopan oyuncu her seferinde yeni
-  5 saniye alır ve maçı uzatabilir.
 - **`pos` paketi JSON.** 76 baytın yarısı anahtar adları. v1 sınırların
   %7'sinde kaldığı için sorun değil; N oyunculu moda geçişte ikili format
   değerlendirilmelidir.
@@ -775,4 +791,7 @@ kararlar:
 | Ölçüm planı | Opaque relay öncesi/sonrası ayrı satır | 9 |
 | Hız toleransı | Paket başına `B_jitter` yerine zamanla dolan slack bütçesi (`S_max`); mesafe adımı alttan kırpılmaz | 1.2, 8 |
 | Grace sayacı | Oda başına değil oyuncu başına | 2 |
+| Dönüş sınırı | `Δt_min` tabanı tamamen kaldırıldı; ayrı dönüş kredisi yok; `ε_hareket` altında `θ` güncellenmez | 1.2, 8 |
+| Spawn sonrası ilk saniye payı | Olduğu gibi kalır; bilinen sınır | 11 |
+| Toplam grace | Oyuncu başına maç toplamı `T_grace_total` = 15 sn | 2, 8 |
 
