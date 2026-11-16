@@ -22,9 +22,11 @@ func botMatch(t *testing.T, cfg Config) (*harness, time.Time) {
 }
 
 // TestBotCannotExceedThePhysics: a bot brain that believes it is ten times
-// faster than it is still moves no further per tick than the pipeline
-// allows a human (V·Δt + B_jitter), and each excess is counted as a bot
-// clamp, apart from the human clamp count.
+// faster than it is still moves no further than the pipeline allows a
+// human: over five ticks V·5·Tick plus the slack it had (full, since the
+// half's first step was at nominal speed), and on any one tick at most
+// V·Tick + slack. Each excess is counted as a bot clamp, apart from the
+// human clamp count.
 func TestBotCannotExceedThePhysics(t *testing.T) {
 	h, start := botMatch(t, DefaultConfig())
 	fast := DefaultConfig()
@@ -33,14 +35,17 @@ func TestBotCannotExceedThePhysics(t *testing.T) {
 	bot := h.r.bot
 	before := bot.hist.len() // the spawn and the step of the tick that began the half
 
-	prev := bot.mot.pos
+	require.InDelta(t, 25, bot.mot.slack, 1e-9)
+
+	from, prev := bot.mot.pos, bot.mot.pos
 	for i := 1; i <= 5; i++ {
 		h.r.tick(start.Add(time.Duration(i) * h.cfg.Tick))
 		step := bot.mot.pos.dist(prev)
 		assert.LessOrEqual(t, step, 225*0.04+25+1e-9, "tick %d", i)
-		assert.Greater(t, step, 225*0.04, "tick %d: the bot still moves", i)
+		assert.GreaterOrEqual(t, step, 225*0.04-1e-9, "tick %d: the bot still moves", i)
 		prev = bot.mot.pos
 	}
+	assert.InDelta(t, 225*5*0.04+25, bot.mot.pos.dist(from), 1e-9)
 	assert.Equal(t, before+5, bot.hist.len(), "every step is in the bot's ring")
 	assert.Equal(t, 5, h.obs[EventBotClamp])
 	assert.Zero(t, h.obs[EventClamp])

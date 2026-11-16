@@ -10,9 +10,9 @@ import (
 )
 
 // moving is a player with a previous packet at the origin, heading theta,
-// validated at t0.
+// validated at t0, with a full slack budget (25).
 func moving(theta float64) motion {
-	return motion{pos: vec{}, theta: theta, ts: t0, hasPrev: true}
+	return motion{pos: vec{}, theta: theta, ts: t0, hasPrev: true, slack: 25}
 }
 
 func validate(t *testing.T, m motion, r role, raw vec, after time.Duration, radius float64) (motion, bool) {
@@ -23,8 +23,9 @@ func validate(t *testing.T, m motion, r role, raw vec, after time.Duration, radi
 	return next, clipped
 }
 
-// TestValidateClipsSpeed: a step longer than V·Δt + B_jitter is cut to that
-// length along the same direction; a shorter one passes untouched. At 40 ms
+// TestValidateClipsSpeed: a step longer than V·Δt + slack is cut to that
+// length along the same direction, and spends the slack; a shorter one
+// passes untouched and saves what it did not use. At 40 ms with a full slack
 // the hunter may cover 225·0.04 + 25 = 34 units and the runner
 // 260·0.04 + 25 = 35.4.
 func TestValidateClipsSpeed(t *testing.T) {
@@ -32,6 +33,7 @@ func TestValidateClipsSpeed(t *testing.T) {
 	assert.True(t, clipped)
 	assert.InDelta(t, 34, next.pos.X, 1e-9)
 	assert.InDelta(t, 0, next.pos.Y, 1e-9)
+	assert.InDelta(t, 0, next.slack, 1e-9, "the slack is spent")
 
 	next, clipped = validate(t, moving(0), roleRunner, vec{100, 0}, ms(40), 500)
 	assert.True(t, clipped)
@@ -41,17 +43,22 @@ func TestValidateClipsSpeed(t *testing.T) {
 	assert.False(t, clipped)
 	assert.InDelta(t, 20, next.pos.X, 1e-9)
 	assert.Equal(t, t0.Add(ms(40)), next.ts)
+	assert.InDelta(t, 14, next.slack, 1e-9, "25 + 9 allowed − 20 used")
+	saver := moving(0)
+	saver.slack = 20
+	next, _ = validate(t, saver, roleHunter, vec{1, 0}, ms(40), 500)
+	assert.InDelta(t, 25, next.slack, 1e-9, "20 + 9 − 1 = 28, capped at 25")
 }
 
 // TestValidateClampsTheTimeStep: a packet 2 s after the previous one gets
 // Δt_max (0.25 s), not 2 s, so a backlog of packets cannot teleport; one
-// 5 ms after gets Δt_min.
+// 5 ms after gets its real 5 ms, not raised to Δt_min.
 func TestValidateClampsTheTimeStep(t *testing.T) {
 	next, _ := validate(t, moving(0), roleHunter, vec{1000, 0}, 2*time.Second, 500)
 	assert.InDelta(t, 225*0.25+25, next.pos.X, 1e-9)
 
 	next, _ = validate(t, moving(0), roleHunter, vec{1000, 0}, ms(5), 500)
-	assert.InDelta(t, 225*0.02+25, next.pos.X, 1e-9)
+	assert.InDelta(t, 225*0.005+25, next.pos.X, 1e-9)
 }
 
 // TestValidateRunnerTurnIsClippedHunterTurnIsNot: both ask to reverse
@@ -75,7 +82,7 @@ func TestValidateRunnerTurnIsClippedHunterTurnIsNot(t *testing.T) {
 // TestValidateRunnerSpeedFallsAsTheTurnSharpens: V_izin =
 // V_kaçak·(1 − α·|Δθ_geçerli|/π). At Δt = 0.25 s the turn limit is
 // 1.05 rad, so turns of 0, 0.5 and 1.0 rad pass whole and 2.0 rad is cut
-// to 1.05; each far target is distance-clipped to V_izin·Δt + B_jitter.
+// to 1.05; each far target is distance-clipped to V_izin·Δt + the full slack (25).
 func TestValidateRunnerSpeedFallsAsTheTurnSharpens(t *testing.T) {
 	stepFor := func(turn float64) float64 {
 		next, clipped := validate(t, moving(0), roleRunner, polar(400, turn), ms(250), 500)
@@ -115,7 +122,7 @@ func TestArenaRadiusShrinks(t *testing.T) {
 // circle along its own direction, also when the player stands still while
 // the arena shrinks past them.
 func TestValidateScalesOntoTheArena(t *testing.T) {
-	m := motion{pos: vec{480, 0}, ts: t0, hasPrev: true}
+	m := motion{pos: vec{480, 0}, ts: t0, hasPrev: true, slack: 25}
 	next, clipped := validate(t, m, roleHunter, vec{500, 20}, ms(40), 390)
 	assert.True(t, clipped)
 	// (500, 20) is within one step of (480, 0) and is scaled, not moved.
@@ -131,11 +138,11 @@ func TestValidateScalesOntoTheArena(t *testing.T) {
 
 // TestValidateFirstPacketUsesDtInitial: on the first packet after a spawn
 // there is no previous ServerTs. The step is bounded by Δt_initial
-// (225·0.04 + 25 = 34 units for the hunter), not Δt_max (81.25), however
+// (225·0.04 + the full slack 25 = 34 units for the hunter), not Δt_max (81.25), however
 // long ago the spawn was; the heading is taken from the packet without the
 // turn check, and the motion starts.
 func TestValidateFirstPacketUsesDtInitial(t *testing.T) {
-	spawn := motion{pos: vec{-225, 0}}
+	spawn := motion{pos: vec{-225, 0}, slack: 25}
 
 	next, clipped := validate(t, spawn, roleHunter, vec{0, 0}, 10*time.Second, 500)
 	assert.True(t, clipped)
@@ -145,7 +152,7 @@ func TestValidateFirstPacketUsesDtInitial(t *testing.T) {
 
 	// A runner spawned facing the centre (θ = π) may leave straight away
 	// from it: no turn rate applies to the first packet.
-	runnerSpawn := motion{pos: vec{225, 0}, theta: math.Pi}
+	runnerSpawn := motion{pos: vec{225, 0}, theta: math.Pi, slack: 25}
 	next, clipped = validate(t, runnerSpawn, roleRunner, vec{255, 0}, 0, 500)
 	assert.False(t, clipped)
 	assert.InDelta(t, 255, next.pos.X, 1e-9)

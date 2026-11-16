@@ -90,6 +90,13 @@ type player struct {
 
 	lastClamp time.Time // when the last clamp message went to this player
 
+	// deadline is when this player forfeits if still gone, zero when the
+	// room is not waiting for them (section 2: per player, not per room).
+	// expired says it passed: the player has forfeited, and coming back
+	// does not undo it.
+	deadline time.Time
+	expired  bool
+
 	tally tally
 }
 
@@ -292,7 +299,11 @@ func (r *room) advance(now time.Time) {
 			r.samplePressure(now)
 			end = r.resumed.Add(r.cfg.THalf - r.played)
 		case stateGrace:
-			end = r.since.Add(r.cfg.TGrace)
+			p := r.nextDeadline()
+			if p == nil {
+				return
+			}
+			end = p.deadline
 		default:
 			return
 		}
@@ -310,7 +321,9 @@ func (r *room) advance(now time.Time) {
 		case stateHalf1, stateHalf2:
 			r.endHalf(end, reasonTimeout, int(r.cfg.THalf/time.Millisecond))
 		case stateGrace:
-			r.expireGrace(end)
+			p := r.nextDeadline()
+			p.expired, p.deadline = true, time.Time{}
+			r.settleGrace(end)
 		}
 	}
 }
@@ -347,14 +360,14 @@ func (r *room) enterCountdown(now time.Time) {
 
 // placeAtSpawn is the half-start reset of section 1.2: both players on
 // their symmetric spawn points, heading for the centre, with no previous
-// motion and empty rings. With seed, the spawn point is written into the
+// motion, a full slack budget and empty rings. With seed, the spawn point is written into the
 // ring as the half's first validated position, so a player who never sends
 // a packet is still somewhere the capture check can find.
 func (r *room) placeAtSpawn(at time.Time, seed bool) {
 	for _, p := range r.players {
-		p.mot = motion{pos: vec{r.cfg.SpawnDistance, 0}, theta: math.Pi}
+		p.mot = motion{pos: vec{r.cfg.SpawnDistance, 0}, theta: math.Pi, slack: r.cfg.SlackMax}
 		if p.role == roleHunter {
-			p.mot = motion{pos: vec{-r.cfg.SpawnDistance, 0}, theta: 0}
+			p.mot = motion{pos: vec{-r.cfg.SpawnDistance, 0}, theta: 0, slack: r.cfg.SlackMax}
 		}
 		p.hist.reset()
 		if seed {
@@ -417,13 +430,59 @@ func (r *room) capture(now time.Time) {
 }
 
 // enterGrace stops the half clock, the capture check and the pressure
-// sample, all of which run only in an active half.
+// sample, all of which run only in an active half, and starts the TGrace
+// deadline of every player found gone (section 2: the deadline is per
+// player and starts when the room starts waiting for them).
 func (r *room) enterGrace(at time.Time, halfStarted bool) {
 	if r.active() {
 		r.played += at.Sub(r.resumed)
 	}
 	r.state, r.since, r.halfStarted = stateGrace, at, halfStarted
+	for _, p := range r.players {
+		if !p.connected {
+			p.deadline = at.Add(r.cfg.TGrace)
+		}
+	}
 	r.broadcastSnap(at)
+}
+
+// nextDeadline is the gone player whose grace deadline comes first, or nil.
+func (r *room) nextDeadline() *player {
+	var next *player
+	for _, p := range r.players {
+		if !p.deadline.IsZero() && (next == nil || p.deadline.Before(next.deadline)) {
+			next = p
+		}
+	}
+	return next
+}
+
+// settleGrace decides what DISCONNECT_GRACE does next, after a return or an
+// expiry at at. While anyone is gone and not yet expired, the room waits
+// for them. Then: nobody expired, everyone is back, and the half resumes;
+// every player expired, and the match is void; otherwise the expired player
+// forfeits, at once if the opponent is there, or when the opponent comes
+// back in time.
+func (r *room) settleGrace(at time.Time) {
+	var expired []*player
+	for _, p := range r.players {
+		switch {
+		case p.expired:
+			expired = append(expired, p)
+		case !p.connected:
+			return // still waiting for p
+		}
+	}
+	switch {
+	case len(expired) == 0:
+		r.resume(at)
+	case len(expired) == len(r.players): // a bot never expires
+		r.obs.Count(EventBothDisconnected)
+		r.finish(at, outcomeVoid, "")
+	default:
+		r.obs.Count(EventForfeit)
+		r.finish(at, outcomeForfeit, expired[0].id)
+	}
 }
 
 // resume leaves DISCONNECT_GRACE with everyone back. A half that had begun
@@ -432,8 +491,9 @@ func (r *room) enterGrace(at time.Time, halfStarted bool) {
 // so the first packet is measured from the anchor with DtInitial. It is
 // applied to both players: the one who stayed was frozen for the grace too,
 // and their next packet would otherwise be measured against a ServerTs
-// seconds old (and clamped up to DtMax). A half that had not begun starts
-// now.
+// seconds old (and clamped up to DtMax). The slack budget is kept as it was
+// at the drop, not refilled: it fills with time only, so dropping and coming
+// back buys no distance. A half that had not begun starts now.
 func (r *room) resume(now time.Time) {
 	if !r.halfStarted {
 		r.startHalf(now)
@@ -448,24 +508,6 @@ func (r *room) resume(now time.Time) {
 	}
 	r.resumed, r.since = now, now
 	r.broadcastSnap(now)
-}
-
-// expireGrace ends the grace: one player gone forfeits; with everyone gone
-// the match is void (section 2).
-func (r *room) expireGrace(at time.Time) {
-	var gone []*player
-	for _, p := range r.players {
-		if !p.connected {
-			gone = append(gone, p)
-		}
-	}
-	if len(gone) == 1 {
-		r.obs.Count(EventForfeit)
-		r.finish(at, outcomeForfeit, gone[0].id)
-		return
-	}
-	r.obs.Count(EventBothDisconnected)
-	r.finish(at, outcomeVoid, "")
 }
 
 // countRoleOrder reports whether the first or the second hunter won a
@@ -523,9 +565,16 @@ func (r *room) setPresence(now time.Time, id string, connected bool) {
 			r.enterGrace(now, true)
 		}
 	case stateGrace:
-		if r.allConnected() {
-			r.resume(now)
+		// A player's own deadline starts at their drop and is cleared by
+		// their return; an expired player's return changes nothing.
+		switch {
+		case p.expired:
+		case !connected && changed:
+			p.deadline = now.Add(r.cfg.TGrace)
+		case connected:
+			p.deadline = time.Time{}
 		}
+		r.settleGrace(now)
 	}
 	switch {
 	case r.state != before:

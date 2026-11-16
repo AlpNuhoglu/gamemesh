@@ -31,12 +31,20 @@ type Config struct {
 	RMin float64
 	// DCapture is the capture radius.
 	DCapture float64
-	// BJitter is the network jitter tolerance added to the allowed step
-	// length of every packet.
-	BJitter float64
-	// DtMin and DtMax bound the time step the validation uses between two
-	// consecutive packets.
-	DtMin, DtMax time.Duration
+	// SlackMax is the cap of the slack budget (S_max), the network jitter
+	// tolerance. It is not added to every packet: a player's slack fills
+	// with the distance they were allowed but did not cover, up to SlackMax,
+	// and is spent when a packet asks for more (section 1.2, step 3). Over
+	// any T seconds a player covers at most V·T + SlackMax, whatever the
+	// packet rate.
+	SlackMax float64
+	// DtMax caps the time step of the distance budget, so a backlog of
+	// packets cannot teleport. The distance step is otherwise the real
+	// elapsed time, never raised.
+	DtMax time.Duration
+	// DtMin is the floor of the time step of the runner's turn limit only,
+	// so packets bunched by the network do not freeze the turn.
+	DtMin time.Duration
 	// DtInitial is the time step of the first packet after a spawn or a
 	// return from DISCONNECT_GRACE, when there is no previous packet to
 	// measure from.
@@ -144,7 +152,7 @@ func DefaultConfig() Config {
 		R0:                  500,
 		RMin:                280,
 		DCapture:            36,
-		BJitter:             25,
+		SlackMax:            25,
 		DtMin:               20 * time.Millisecond,
 		DtMax:               250 * time.Millisecond,
 		DtInitial:           40 * time.Millisecond,
@@ -204,7 +212,7 @@ func (c Config) Validate() error {
 	check(c.Alpha > 0 && c.Alpha < 1, "Alpha must be in (0, 1), got %v", c.Alpha)
 	check(c.RMin > 0 && c.RMin <= c.R0, "need 0 < RMin <= R0, got RMin %v, R0 %v", c.RMin, c.R0)
 	check(c.DCapture > 0, "DCapture must be > 0, got %v", c.DCapture)
-	check(c.BJitter >= 0, "BJitter must be >= 0, got %v", c.BJitter)
+	check(c.SlackMax >= 0, "SlackMax must be >= 0, got %v", c.SlackMax)
 	check(c.DtMin > 0 && c.DtMin <= c.DtMax, "need 0 < DtMin <= DtMax, got %v, %v", c.DtMin, c.DtMax)
 	check(c.DtInitial >= c.DtMin && c.DtInitial <= c.DtMax,
 		"DtInitial must lie in [DtMin, DtMax], got %v", c.DtInitial)
