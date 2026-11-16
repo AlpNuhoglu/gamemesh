@@ -123,6 +123,16 @@ Anahtar özellik: sınır paket başına değil, **toplam mesafe üzerindedir.**
 Herhangi bir `T` saniyelik pencerede kat edilebilecek en fazla mesafe
 `V · T + S_max` olur ve paket hızından bağımsızdır.
 
+Düzeltmeden sonra aynı ölçüm (dolu slack ile, hareketi kurulmuş istemci;
+10, 25, 60 ve 120 Hz'de **aynı**):
+
+| Rol | İlk 1 sn | Sonraki 1 sn | Nominal |
+|---|---|---|---|
+| Avcı | 250,0 | 225,0 | 225 |
+| Kaçak | 285,0 | 260,0 | 260 |
+
+Kaçak/avcı oranı sürekli harekette nominal orandır (260 / 225, +%15,6).
+
 - Yarı başlangıcında (spawn) slack doludur (`S_max`).
 - `DISCONNECT_GRACE` dönüşünde slack **yeniden doldurulmaz**; kopma anındaki
   değeriyle devam eder. Slack yalnızca zamanla dolar; kopup dönmek bedava
@@ -701,6 +711,21 @@ yazma olmaz.
   `match_end` oyun trafiğiyle aynı gönderim kuyruğunu kullanır; kuyruğu dolu
   yavaş bir istemci bunları kaçırabilir. `snap` yeniden bağlanmada tekrar
   gönderilir.
+- **Dönüş hızı hâlâ paket hızına bağlı.** Mesafe bütçesi slack ile paket
+  hızından bağımsız hale geldi, ancak açısal sınır `Δt_θ = max(Δt, Δt_min)`
+  tabanını kullanmaya devam ediyor. Ölçülen, kaçağın 1 saniyedeki en büyük
+  dönüşü: 25 Hz'de 4,20 rad (nominal `ω_max`), 60 Hz'de 5,04 rad, 120 Hz'de
+  10,08 rad. Düzeltilmedi; karar bekliyor. Aynı çözüm (zamanla dolan, tavanlı
+  bir dönüş bütçesi) burada da uygulanabilir.
+- **Spawn sonrası ilk saniye küçük bir pay taşır.** İlk paket gerçek bekleme
+  süresi yerine sabit `Δt_initial` (0,04 sn) ile ölçüldüğü için, taze
+  spawn'dan sonraki ilk saniyede kat edilebilen mesafe `V + S_max`'i en fazla
+  `V · Δt_initial` kadar aşar ve paket hızına hafifçe bağlıdır: avcı 25 Hz'de
+  250,0, 60 Hz'de 255,3; kaçak 285,0 ve 291,1. Hareket kurulduktan sonra her
+  1 saniyelik pencere tam `V + S_max` ile sınırlıdır.
+- **Toplam bekleme süresi sınırsız.** Grace sayacı oyuncu başınadır ama maç
+  başına bir toplamı yoktur: dönüp tekrar kopan oyuncu her seferinde yeni
+  5 saniye alır ve maçı uzatabilir.
 - **`pos` paketi JSON.** 76 baytın yarısı anahtar adları. v1 sınırların
   %7'sinde kaldığı için sorun değil; N oyunculu moda geçişte ikili format
   değerlendirilmelidir.
