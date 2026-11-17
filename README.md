@@ -148,19 +148,31 @@ flowchart LR
 
 | | Ephemeral (thick) | Durable (dotted) |
 |---|---|---|
-| Carries | `relay`: movement, position, input | `MatchFound`, `LeaderboardUpdated`, presence, `PlayerRegistered` |
+| Carries | `relay`: movement, position, input; in a validated room also the game's own `Game` frames | `MatchFound`, `LeaderboardUpdated`, presence, `PlayerRegistered` |
 | Route | client → hub → clients | service → JetStream (player events: Postgres outbox first) → hub |
 | What is kept | Nothing: a frame that cannot be queued for its receiver is dropped and counted | The event, in a JetStream stream on disk; a consuming service that fails gets it again, up to 5 deliveries |
 | Last hop, hub → socket | Best effort | Best effort as well: a player who is not connected is not sent the event later and reads the state from the REST API |
-| Time inside the server | 0.02–0.20 ms per message (measured) | Not on the per-frame path |
+| Time inside the server | 0.02–0.20 ms per message (measured); a validated room adds about 0.012 ms (measured) | Not on the per-frame path |
 
 The two meet only in the hub, and only in one direction: the bus delivers into
 it, and nothing a client sends can reach the bus. That is not a convention but
 four tests on the source (`internal/wsgateway/boundary_test.go`): the relay
 imports no bus, outbox or transport; only the bridge imports the bus; the
 service contains no `Publish` call; the relay's frame type is not a durable
-event's name. Anything that must not be lost (a match result, a score) goes
-through the REST API, never through `relay`.
+event's name. Anything that must not be lost goes through a durable path,
+never through `relay`.
+
+A room's ephemeral traffic is carried in one of two modes. Which one is
+decided by matchmaking's record of the room, never by the client.
+
+| Mode | Rooms | What the server does with a client's `relay` |
+|---|---|---|
+| **opaque-relay** | Every room without a game (the default) | Does not read it. Passes `data` on byte for byte to the room's other members, writing only `from`, the sender's identity, from its JWT |
+| **validated-room** | Ghost Tag rooms (`"mode":"ghosttag"` at the queue) | Opens it and runs it through the game: speed, turn and arena validation, capture, half and match transitions. What the other player gets is the server's own `Game` frame, never the client's packet. The match result is decided on the server; a ranked one is to be written to Redis by the WebSocket service, keyed by the room ([design](docs/ghosttag-design-v3.1.md), section 4; not built yet, so every match is unranked) |
+
+The validated room costs the server about 12 µs more per message than the
+relay (0.073 ms against 0.061 ms), and is not measurable end to end:
+[docs/latency.md](docs/latency.md#validated-rooms-ghost-tag-measured-2026-11-17).
 
 <details>
 <summary><b>Data model</b></summary>
@@ -534,7 +546,10 @@ in place, and the one that needed a code change stayed inside the noise and
 was reverted.
 
 Game messages travel client → WebSocket hub → clients, in memory
-(`{"action":"relay"}`), and never through JetStream or the outbox.
+(`{"action":"relay"}`), and never through JetStream or the outbox. In a
+validated room (Ghost Tag) the hub hands them to the room's game, which
+answers in their place; that costs the server about 12 µs more per message and
+nothing measurable end to end (`latencybench -mode ghosttag`, local only).
 [`scripts/latencybench`](scripts/latencybench) pairs players through
 matchmaking and times 500 messages per pair on the monotonic clock.
 
