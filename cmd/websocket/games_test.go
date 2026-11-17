@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/ghosttag"
+	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/internal/wsgateway"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/metrics"
@@ -43,7 +44,7 @@ type gameRooms struct{ players []string }
 func (g gameRooms) Access(_ context.Context, _ string, playerID string) (wsgateway.RoomAccess, error) {
 	return wsgateway.RoomAccess{
 		Participant: slices.Contains(g.players, playerID),
-		Game:        &wsgateway.GameSpec{Mode: modeGhostTag, Players: g.players, CreatedAt: time.Now()},
+		Game:        &wsgateway.GameSpec{Mode: matchmaking.ModeGhostTag, Players: g.players, CreatedAt: time.Now()},
 	}, nil
 }
 
@@ -377,7 +378,7 @@ func TestGameHostRejectsUnknownMode(t *testing.T) {
 
 	// A spec the game refuses comes back as an error and a nil interface,
 	// not as a nil session inside a non-nil one.
-	s, err = h.Start("r", wsgateway.GameSpec{Mode: modeGhostTag, Players: []string{"a"}}, nil)
+	s, err = h.Start("r", wsgateway.GameSpec{Mode: matchmaking.ModeGhostTag, Players: []string{"a"}}, nil)
 	require.Error(t, err)
 	assert.True(t, s == nil)
 }

@@ -38,6 +38,20 @@ func TestRoomParticipantsReadsMatchmakingRooms(t *testing.T) {
 	_, err = p.Access(ctx, "missing", "alice")
 	assert.ErrorIs(t, err, wsgateway.ErrRoomNotFound)
 
+	// A room whose record names a game is a validated room, described to
+	// the hub as the record has it.
+	created := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, store.Save(ctx, &matchmaking.Room{
+		ID: "g1", Players: []string{"alice"}, Mode: matchmaking.ModeGhostTag, Bot: true, Unranked: true, CreatedAt: created,
+	}))
+	access, err = p.Access(ctx, "g1", "alice")
+	require.NoError(t, err)
+	assert.True(t, access.Participant)
+	require.NotNil(t, access.Game)
+	assert.Equal(t, wsgateway.GameSpec{
+		Mode: matchmaking.ModeGhostTag, Players: []string{"alice"}, Bot: true, Unranked: true, CreatedAt: created,
+	}, *access.Game)
+
 	mr.Close()
 	_, err = p.Access(ctx, "r1", "alice")
 	require.Error(t, err)

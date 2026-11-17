@@ -1,7 +1,8 @@
 // The WebSocket gateway holds client connections, manages room
 // subscriptions, pushes backend events (MatchFound, LeaderboardUpdated) to
-// clients in real time, and relays ephemeral game traffic between the members
-// of a room in memory.
+// clients in real time, and carries ephemeral game traffic in memory: relayed
+// unread between the members of an opaque-relay room, or handed to the game
+// of a validated room (Ghost Tag), which validates it and answers.
 package main
 
 import (
@@ -12,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/internal/ghosttag"
 	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
@@ -81,6 +83,13 @@ func run() int {
 	rooms := roomParticipants{store: matchmaking.NewRoomStore(rdb, cfg.RoomTTL)}
 	hub := wsgateway.NewHub(log, m, notifier, rooms)
 	hub.SetRelayLimit(cfg.WSRelayRate, cfg.WSRelayBurst)
+	// Validated rooms: a room whose record names a game is run by that game
+	// rather than relayed. The game's parameters are checked once here, not
+	// when the first match starts.
+	game := ghosttag.DefaultConfig()
+	if err := game.Validate(); err != nil {
+		log.Fatal("invalid ghost tag config", zap.Error(err))
+	}
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
 	// Sessions are checked straight against Redis, uncached: once per
 	// connection at the handshake and every sessionSweepInterval afterwards.
@@ -96,6 +105,16 @@ func run() int {
 	ctx, stop := server.ShutdownContext()
 	defer stop()
 	var workers server.Workers
+
+	// Sessions run until the shutdown signal; hub.CloseAll, the shutdown
+	// hook below, stops them before it closes a connection. There is no
+	// score store yet, so every match is reported unranked.
+	hub.SetGames(ctx, gameHost{
+		cfg:    game,
+		scores: nil,
+		events: gameEvents{total: m.WSGameEventsTotal},
+		log:    log,
+	}, cfg.GameStartWindow)
 
 	// Refresh presence TTL for every locally-connected player on a ticker.
 	workers.Go(func() { hub.RunHeartbeat(ctx, cfg.PresenceHeartbeatInterval) })

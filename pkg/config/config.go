@@ -72,6 +72,13 @@ type Config struct {
 	WSRelayRate  float64
 	WSRelayBurst int
 
+	// GameStartWindow is how long after matchmaking created a validated
+	// room its game can still be started by the first player to join.
+	// Matchmaking keeps a room's record for ROOM_TTL, much longer than a
+	// match lasts; without the window a restart of the WebSocket service
+	// would let a rejoining player start a finished match again.
+	GameStartWindow time.Duration
+
 	// TrustedProxies lists the proxies (IPs or CIDRs) whose X-Forwarded-For /
 	// X-Real-IP headers are believed when resolving the client IP that rate
 	// limiting and access logs key on. Empty (the default) trusts no proxy, so
@@ -186,6 +193,8 @@ func Load(serviceName string) *Config {
 
 		WSRelayRate:  getEnvFloat("WS_RELAY_RATE", 60),
 		WSRelayBurst: getEnvInt("WS_RELAY_BURST", 120),
+
+		GameStartWindow: getEnvDuration("GAME_START_WINDOW", time.Minute),
 
 		TrustedProxies: splitCSV(getEnv("TRUSTED_PROXIES", "")),
 

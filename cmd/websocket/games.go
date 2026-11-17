@@ -7,11 +7,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/ghosttag"
+	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/internal/wsgateway"
 )
-
-// modeGhostTag is the mode of a matchmaking room that is a Ghost Tag match.
-const modeGhostTag = "ghosttag"
 
 // gameHost starts the sessions of validated rooms (wsgateway.GameHost). It
 // is where the hub, which knows no game, meets the game, which knows no
@@ -29,7 +27,7 @@ type gameHost struct {
 // Start implements wsgateway.GameHost. It only builds the session; the hub
 // runs it.
 func (h gameHost) Start(room string, spec wsgateway.GameSpec, out wsgateway.GameTransport) (wsgateway.GameSession, error) {
-	if spec.Mode != modeGhostTag {
+	if spec.Mode != matchmaking.ModeGhostTag {
 		return nil, fmt.Errorf("unknown game mode %q", spec.Mode)
 	}
 	s, err := ghosttag.NewSession(h.cfg, ghosttag.Spec{
