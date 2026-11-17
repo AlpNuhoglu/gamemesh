@@ -65,8 +65,13 @@ type Config struct {
 	TCountdown time.Duration
 	// TRoleSwap is the pause between the halves.
 	TRoleSwap time.Duration
-	// TGrace is how long a disconnected player has to come back.
+	// TGrace is how long a disconnected player has to come back, per drop.
 	TGrace time.Duration
+	// TGraceTotal is how long the room waits for one player over a whole
+	// match: a drop's deadline is the lesser of TGrace and what is left of
+	// it, so dropping and returning again and again cannot hold a match
+	// open (section 2).
+	TGraceTotal time.Duration
 	// TJoin is how long the room waits in WAITING for every human player to
 	// connect before it cancels the match.
 	TJoin time.Duration
@@ -166,6 +171,7 @@ func DefaultConfig() Config {
 		TCountdown:          2 * time.Second,
 		TRoleSwap:           3 * time.Second,
 		TGrace:              5 * time.Second,
+		TGraceTotal:         15 * time.Second,
 		TJoin:               10 * time.Second,
 		CaptureWindow:       150 * time.Millisecond,
 		BotSightDelay:       2000 * time.Millisecond,
@@ -225,6 +231,7 @@ func (c Config) Validate() error {
 	check(c.TCountdown >= 0, "TCountdown must be >= 0, got %v", c.TCountdown)
 	check(c.TRoleSwap >= 0, "TRoleSwap must be >= 0, got %v", c.TRoleSwap)
 	check(c.TGrace > 0, "TGrace must be > 0, got %v", c.TGrace)
+	check(c.TGraceTotal >= c.TGrace, "TGraceTotal must be >= TGrace, got %v", c.TGraceTotal)
 	check(c.TJoin > 0, "TJoin must be > 0, got %v", c.TJoin)
 	check(c.CaptureWindow >= 0, "CaptureWindow must be >= 0, got %v", c.CaptureWindow)
 	check(c.BotSightDelay >= 0, "BotSightDelay must be >= 0, got %v", c.BotSightDelay)

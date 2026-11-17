@@ -33,6 +33,7 @@ func TestDefaultConfigIsSection8(t *testing.T) {
 	assert.Equal(t, 2*time.Second, c.TCountdown)
 	assert.Equal(t, 3*time.Second, c.TRoleSwap)
 	assert.Equal(t, 5*time.Second, c.TGrace)
+	assert.Equal(t, 15*time.Second, c.TGraceTotal)
 	assert.Equal(t, 10*time.Second, c.TJoin)
 	assert.Equal(t, 150*time.Millisecond, c.CaptureWindow)
 	assert.Equal(t, 2000*time.Millisecond, c.BotSightDelay)
@@ -70,6 +71,7 @@ func TestConfigValidateRejects(t *testing.T) {
 		"spawns within capture":   func(c *Config) { c.SpawnDistance = c.DCapture / 4 },
 		"ring too small":          func(c *Config) { c.RingSize = 1 },
 		"ring shorter than sight": func(c *Config) { c.RingSize = 50 },
+		"grace total under grace": func(c *Config) { c.TGraceTotal = c.TGrace - time.Millisecond },
 		"inbox zero":              func(c *Config) { c.InboxSize = 0 },
 		"reaction min above max":  func(c *Config) { c.BotReactionMin = c.BotReactionMax + time.Millisecond },
 		"settle timeout zero":     func(c *Config) { c.SettleTimeout = 0 },
