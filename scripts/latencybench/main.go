@@ -8,6 +8,9 @@
 // WebSocket ping RTT on every connection (how much of the number is network)
 // and, with -metrics, the server's own stage histograms over the same window.
 //
+// -mode ghosttag measures a validated Ghost Tag room instead (ghost.go):
+// unranked, local stack only, the message identified by its position.
+//
 // Bench accounts have e-mails bench_<run>_<n>@latencybench.invalid. Sockets
 // are closed, queue tickets withdrawn and tokens logged out at the end of
 // every run. Postgres is touched only with -cleanup-dsn (no default): it
@@ -46,6 +49,7 @@ var processStart = time.Now()
 func mono() time.Duration { return time.Since(processStart) }
 
 type config struct {
+	mode                     string
 	api, ws, metrics, out    string
 	cleanupDSN               string
 	cleanupOnly, cleanupDry  bool
@@ -61,6 +65,7 @@ type config struct {
 
 func parseFlags() (*config, error) {
 	c := &config{}
+	flag.StringVar(&c.mode, "mode", modeRelay, "relay: the opaque relay (the published numbers); ghosttag: a validated Ghost Tag room, unranked, local stack only")
 	flag.StringVar(&c.api, "api", "http://localhost:8080", "HTTP API base URL (gateway)")
 	flag.StringVar(&c.ws, "ws", "ws://localhost:8084", "WebSocket base URL; /ws is appended")
 	flag.StringVar(&c.metrics, "metrics", "", "Prometheus endpoint of the websocket service, e.g. http://localhost:8084/metrics (optional)")
@@ -72,7 +77,7 @@ func parseFlags() (*config, error) {
 	flag.IntVar(&c.pairs, "pairs", 1, "number of concurrent sender/receiver pairs")
 	flag.IntVar(&c.samples, "samples", 550, "messages each sender sends (including warmup)")
 	flag.IntVar(&c.warmup, "warmup", 50, "leading messages per pair excluded from the results")
-	flag.DurationVar(&c.interval, "interval", 50*time.Millisecond, "send interval per sender")
+	flag.DurationVar(&c.interval, "interval", 50*time.Millisecond, "send interval per sender (ghosttag mode: 40ms unless set)")
 	flag.DurationVar(&c.grace, "grace", 2*time.Second, "wait after the last send before unreceived messages count as lost")
 	flag.IntVar(&c.payload, "payload", 120, "size in bytes of the relayed data object (max 1024)")
 	flag.IntVar(&c.pings, "pings", 20, "WebSocket pings per connection, spread over the measured window")
@@ -95,6 +100,17 @@ func parseFlags() (*config, error) {
 	if c.cleanupOnly {
 		return c, nil
 	}
+	switch c.mode {
+	case modeRelay:
+	case modeGhost:
+		explicit := false
+		flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "interval" })
+		if !explicit {
+			c.interval = ghostDefaultInterval
+		}
+	default:
+		return nil, fmt.Errorf("-mode must be %s or %s, got %q", modeRelay, modeGhost, c.mode)
+	}
 	switch {
 	case c.pairs < 1:
 		return nil, errors.New("-pairs must be >= 1")
@@ -114,6 +130,11 @@ func parseFlags() (*config, error) {
 	}
 	if need := 2 * c.pairs * (c.rankWindow + 1); need > maxRank {
 		return nil, fmt.Errorf("-pairs %d with -rank-window %d needs %d distinct ranks; the API allows %d", c.pairs, c.rankWindow, need, maxRank)
+	}
+	if c.mode == modeGhost {
+		if err := checkGhostFlags(c); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }

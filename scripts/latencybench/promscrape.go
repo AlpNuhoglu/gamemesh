@@ -22,7 +22,40 @@ const (
 	relayDropped   = "gamemesh_ws_relay_dropped_total"
 	relayRejected  = "gamemesh_ws_relay_rejected_total"
 	stageLabel     = "stage"
+
+	// The validated rooms' (ghosttag mode). Their inbound messages are
+	// still relays at the door, so relayRejected counts their rejections.
+	gameHistogram = "gamemesh_ws_game_duration_seconds"
+	gameDropped   = "gamemesh_ws_game_dropped_total"
+	gameEvents    = "gamemesh_ws_game_events_total"
 )
+
+// scrapeSpec is what one mode reads from the scrapes.
+type scrapeSpec struct {
+	histogram string
+	counters  []string
+	missing   string // the note when the histogram is not exported
+}
+
+var (
+	relayScrape = scrapeSpec{
+		histogram: relayHistogram,
+		counters:  []string{relayDropped, relayRejected},
+		missing:   relayHistogram + " not exported by this server (relay instrumentation missing or old image)",
+	}
+	gameScrape = scrapeSpec{
+		histogram: gameHistogram,
+		counters:  []string{gameDropped, relayRejected, gameEvents},
+		missing:   gameHistogram + " not exported by this server (no validated rooms in this image)",
+	}
+)
+
+func scrapeFor(mode string) scrapeSpec {
+	if mode == modeGhost {
+		return gameScrape
+	}
+	return relayScrape
+}
 
 // stageOrder is the order stages are printed in; unknown stages follow.
 var stageOrder = []string{"process", "queue", "write", "total"}
@@ -200,14 +233,14 @@ func bucketQuantile(q float64, buckets []bucket) (v float64, overflow bool) {
 	return lower + (upper-lower)*(rank-below)/inBucket, false
 }
 
-// stageHists sums the relay histogram's series per stage label.
-func stageHists(f families) (map[string]histSnap, error) {
-	mf := f.lookup(relayHistogram)
+// stageHists sums the series of histogram name per stage label.
+func stageHists(f families, name string) (map[string]histSnap, error) {
+	mf := f.lookup(name)
 	if mf == nil {
 		return nil, nil
 	}
 	if mf.GetType() != dto.MetricType_HISTOGRAM {
-		return nil, fmt.Errorf("%s is a %s, not a histogram", relayHistogram, mf.GetType())
+		return nil, fmt.Errorf("%s is a %s, not a histogram", name, mf.GetType())
 	}
 	out := map[string]histSnap{}
 	for _, m := range mf.GetMetric() {
@@ -291,6 +324,7 @@ type counterDelta struct {
 // serverReport is the server-side breakdown over the measured window.
 type serverReport struct {
 	MetricsURL string         `json:"metrics_url,omitempty"`
+	Histogram  string         `json:"histogram"` // the one that was read
 	Available  bool           `json:"available"`
 	Note       string         `json:"note,omitempty"`
 	Stages     []stageResult  `json:"stages,omitempty"`
@@ -300,15 +334,20 @@ type serverReport struct {
 // compareScrapes computes the stage table and counter deltas. It never fails:
 // whatever cannot be computed is explained in Note or in a row's Error.
 func compareScrapes(url string, before, after families) serverReport {
-	r := serverReport{MetricsURL: url}
-	hb, errB := stageHists(before)
-	ha, errA := stageHists(after)
+	return compareScrapesFor(relayScrape, url, before, after)
+}
+
+// compareScrapesFor is compareScrapes for the histogram and counters of spec.
+func compareScrapesFor(spec scrapeSpec, url string, before, after families) serverReport {
+	r := serverReport{MetricsURL: url, Histogram: spec.histogram}
+	hb, errB := stageHists(before, spec.histogram)
+	ha, errA := stageHists(after, spec.histogram)
 	var notes []string
 	switch {
 	case errB != nil || errA != nil:
-		notes = append(notes, fmt.Sprintf("cannot read %s: %v", relayHistogram, errors.Join(errB, errA)))
+		notes = append(notes, fmt.Sprintf("cannot read %s: %v", spec.histogram, errors.Join(errB, errA)))
 	case ha == nil:
-		notes = append(notes, relayHistogram+" not exported by this server (relay instrumentation missing or old image)")
+		notes = append(notes, spec.missing)
 	default:
 		r.Available = true
 		stages := make([]string, 0, len(ha))
@@ -337,7 +376,7 @@ func compareScrapes(url string, before, after families) serverReport {
 			r.Stages = append(r.Stages, row)
 		}
 	}
-	for _, name := range []string{relayDropped, relayRejected} {
+	for _, name := range spec.counters {
 		vb, _ := counterValues(before, name)
 		va, ok := counterValues(after, name)
 		if !ok {
