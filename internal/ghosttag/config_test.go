@@ -23,7 +23,7 @@ func TestDefaultConfigIsSection8(t *testing.T) {
 	assert.Equal(t, 280.0, c.RMin)
 	assert.Equal(t, 36.0, c.DCapture)
 	assert.Equal(t, 25.0, c.SlackMax)
-	assert.Equal(t, 20*time.Millisecond, c.DtMin)
+	assert.Equal(t, 1e-3, c.MoveEpsilon)
 	assert.Equal(t, 250*time.Millisecond, c.DtMax)
 	assert.Equal(t, 40*time.Millisecond, c.DtInitial)
 	assert.Equal(t, 60*time.Millisecond, c.ClientRenderDelay)
@@ -33,6 +33,7 @@ func TestDefaultConfigIsSection8(t *testing.T) {
 	assert.Equal(t, 2*time.Second, c.TCountdown)
 	assert.Equal(t, 3*time.Second, c.TRoleSwap)
 	assert.Equal(t, 5*time.Second, c.TGrace)
+	assert.Equal(t, 15*time.Second, c.TGraceTotal)
 	assert.Equal(t, 10*time.Second, c.TJoin)
 	assert.Equal(t, 150*time.Millisecond, c.CaptureWindow)
 	assert.Equal(t, 2000*time.Millisecond, c.BotSightDelay)
@@ -59,7 +60,8 @@ func TestConfigValidateRejects(t *testing.T) {
 		"omega zero":            func(c *Config) { c.OmegaMax = 0 },
 		"capture zero":          func(c *Config) { c.DCapture = 0 },
 		"slack negative":        func(c *Config) { c.SlackMax = -1 },
-		"dtmin above dtmax":     func(c *Config) { c.DtMin = c.DtMax + time.Millisecond },
+		"dtinitial zero":        func(c *Config) { c.DtInitial = 0 },
+		"move epsilon negative": func(c *Config) { c.MoveEpsilon = -1e-3 },
 		"dtinitial above dtmax": func(c *Config) { c.DtInitial = c.DtMax + time.Millisecond },
 		"shrink longer than half": func(c *Config) {
 			c.TShrink = c.THalf + time.Second
@@ -69,6 +71,7 @@ func TestConfigValidateRejects(t *testing.T) {
 		"spawns within capture":   func(c *Config) { c.SpawnDistance = c.DCapture / 4 },
 		"ring too small":          func(c *Config) { c.RingSize = 1 },
 		"ring shorter than sight": func(c *Config) { c.RingSize = 50 },
+		"grace total under grace": func(c *Config) { c.TGraceTotal = c.TGrace - time.Millisecond },
 		"inbox zero":              func(c *Config) { c.InboxSize = 0 },
 		"reaction min above max":  func(c *Config) { c.BotReactionMin = c.BotReactionMax + time.Millisecond },
 		"settle timeout zero":     func(c *Config) { c.SettleTimeout = 0 },

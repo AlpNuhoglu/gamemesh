@@ -237,9 +237,10 @@ func (c *gameClient) otherTypes() []string {
 
 // startSending reports a position every few milliseconds, circling close to
 // where the latest snap put the player, with a ping now and then. The circle
-// is slow enough to be legal for a runner (0.05 rad a packet, under
-// OmegaMax·DtMin), so the pipeline has nothing to correct and the validated
-// path is the reported one.
+// turns 0.005 rad a packet, 1.7 rad/s at the nominal 3 ms, so it stays under
+// the runner's turn limit (OmegaMax·dt) unless the sender's timer bunches
+// two packets within about a millisecond. The test asserts nothing about
+// clamps either way.
 func (c *gameClient) startSending(firstSeq int) {
 	c.stop, c.stopped = make(chan struct{}), make(chan struct{})
 	go func() {
@@ -252,7 +253,7 @@ func (c *gameClient) startSending(firstSeq int) {
 				return
 			case <-tick.C:
 			}
-			a := float64(seq) / 20
+			a := float64(seq) / 200
 			x, y := float64(c.homeX.Load())+8*math.Cos(a), 8*math.Sin(a)
 			c.write(fmt.Sprintf(`{"action":"relay","room":"g1","data":{"t":"pos","seq":%d,"cts":%d,"x":%.2f,"y":%.2f,"vx":10,"vy":10}}`, seq, seq, x, y))
 			if seq%50 == 0 {

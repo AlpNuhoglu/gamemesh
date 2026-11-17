@@ -52,7 +52,7 @@ func TestValidateClipsSpeed(t *testing.T) {
 
 // TestValidateClampsTheTimeStep: a packet 2 s after the previous one gets
 // Δt_max (0.25 s), not 2 s, so a backlog of packets cannot teleport; one
-// 5 ms after gets its real 5 ms, not raised to Δt_min.
+// 5 ms after gets its real 5 ms, not raised to a floor.
 func TestValidateClampsTheTimeStep(t *testing.T) {
 	next, _ := validate(t, moving(0), roleHunter, vec{1000, 0}, 2*time.Second, 500)
 	assert.InDelta(t, 225*0.25+25, next.pos.X, 1e-9)
