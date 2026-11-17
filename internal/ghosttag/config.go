@@ -38,13 +38,16 @@ type Config struct {
 	// any T seconds a player covers at most V·T + SlackMax, whatever the
 	// packet rate.
 	SlackMax float64
-	// DtMax caps the time step of the distance budget, so a backlog of
-	// packets cannot teleport. The distance step is otherwise the real
-	// elapsed time, never raised.
+	// DtMax caps the validation's time step, so a backlog of packets cannot
+	// teleport. The step is otherwise the real elapsed time, never raised,
+	// for the distance budget and the runner's turn limit alike (section
+	// 1.2, step 1): the real intervals of one second add up to one second,
+	// so neither distance nor turn depends on the packet rate.
 	DtMax time.Duration
-	// DtMin is the floor of the time step of the runner's turn limit only,
-	// so packets bunched by the network do not freeze the turn.
-	DtMin time.Duration
+	// MoveEpsilon is ε_hareket: a requested displacement shorter than this
+	// counts as standing still, and no heading is derived from it. The
+	// angle of a sub-millimetre displacement is noise.
+	MoveEpsilon float64
 	// DtInitial is the time step of the first packet after a spawn or a
 	// return from DISCONNECT_GRACE, when there is no previous packet to
 	// measure from.
@@ -62,8 +65,13 @@ type Config struct {
 	TCountdown time.Duration
 	// TRoleSwap is the pause between the halves.
 	TRoleSwap time.Duration
-	// TGrace is how long a disconnected player has to come back.
+	// TGrace is how long a disconnected player has to come back, per drop.
 	TGrace time.Duration
+	// TGraceTotal is how long the room waits for one player over a whole
+	// match: a drop's deadline is the lesser of TGrace and what is left of
+	// it, so dropping and returning again and again cannot hold a match
+	// open (section 2).
+	TGraceTotal time.Duration
 	// TJoin is how long the room waits in WAITING for every human player to
 	// connect before it cancels the match.
 	TJoin time.Duration
@@ -153,7 +161,7 @@ func DefaultConfig() Config {
 		RMin:                280,
 		DCapture:            36,
 		SlackMax:            25,
-		DtMin:               20 * time.Millisecond,
+		MoveEpsilon:         1e-3,
 		DtMax:               250 * time.Millisecond,
 		DtInitial:           40 * time.Millisecond,
 		ClientRenderDelay:   60 * time.Millisecond,
@@ -163,6 +171,7 @@ func DefaultConfig() Config {
 		TCountdown:          2 * time.Second,
 		TRoleSwap:           3 * time.Second,
 		TGrace:              5 * time.Second,
+		TGraceTotal:         15 * time.Second,
 		TJoin:               10 * time.Second,
 		CaptureWindow:       150 * time.Millisecond,
 		BotSightDelay:       2000 * time.Millisecond,
@@ -213,15 +222,16 @@ func (c Config) Validate() error {
 	check(c.RMin > 0 && c.RMin <= c.R0, "need 0 < RMin <= R0, got RMin %v, R0 %v", c.RMin, c.R0)
 	check(c.DCapture > 0, "DCapture must be > 0, got %v", c.DCapture)
 	check(c.SlackMax >= 0, "SlackMax must be >= 0, got %v", c.SlackMax)
-	check(c.DtMin > 0 && c.DtMin <= c.DtMax, "need 0 < DtMin <= DtMax, got %v, %v", c.DtMin, c.DtMax)
-	check(c.DtInitial >= c.DtMin && c.DtInitial <= c.DtMax,
-		"DtInitial must lie in [DtMin, DtMax], got %v", c.DtInitial)
+	check(c.DtMax > 0, "DtMax must be > 0, got %v", c.DtMax)
+	check(c.DtInitial > 0 && c.DtInitial <= c.DtMax, "DtInitial must lie in (0, DtMax], got %v", c.DtInitial)
+	check(c.MoveEpsilon >= 0, "MoveEpsilon must be >= 0, got %v", c.MoveEpsilon)
 	check(c.ClientRenderDelay >= 0 && c.ClientDeadReckoning >= 0, "client delays must be >= 0")
 	check(c.THalf > 0, "THalf must be > 0, got %v", c.THalf)
 	check(c.TShrink >= 0 && c.TShrink <= c.THalf, "TShrink must lie in [0, THalf], got %v", c.TShrink)
 	check(c.TCountdown >= 0, "TCountdown must be >= 0, got %v", c.TCountdown)
 	check(c.TRoleSwap >= 0, "TRoleSwap must be >= 0, got %v", c.TRoleSwap)
 	check(c.TGrace > 0, "TGrace must be > 0, got %v", c.TGrace)
+	check(c.TGraceTotal >= c.TGrace, "TGraceTotal must be >= TGrace, got %v", c.TGraceTotal)
 	check(c.TJoin > 0, "TJoin must be > 0, got %v", c.TJoin)
 	check(c.CaptureWindow >= 0, "CaptureWindow must be >= 0, got %v", c.CaptureWindow)
 	check(c.BotSightDelay >= 0, "BotSightDelay must be >= 0, got %v", c.BotSightDelay)

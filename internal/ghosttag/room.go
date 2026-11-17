@@ -96,6 +96,12 @@ type player struct {
 	// does not undo it.
 	deadline time.Time
 	expired  bool
+	// graceUsed is how long the room has waited for this player over the
+	// match, from the start of each deadline to the return; graceFrom is
+	// when the current wait began. A wait that ends in expiry is not
+	// added: the player has forfeited and their usage no longer matters.
+	graceUsed time.Duration
+	graceFrom time.Time
 
 	tally tally
 }
@@ -440,10 +446,25 @@ func (r *room) enterGrace(at time.Time, halfStarted bool) {
 	r.state, r.since, r.halfStarted = stateGrace, at, halfStarted
 	for _, p := range r.players {
 		if !p.connected {
-			p.deadline = at.Add(r.cfg.TGrace)
+			r.await(p, at)
 		}
 	}
 	r.broadcastSnap(at)
+}
+
+// await starts the room waiting for p at at. Their deadline is TGrace away,
+// or what is left of their TGraceTotal if that is less; with nothing left
+// it is at itself, and advance forfeits them at that instant.
+func (r *room) await(p *player, at time.Time) {
+	left := max(0, min(r.cfg.TGrace, r.cfg.TGraceTotal-p.graceUsed))
+	p.graceFrom, p.deadline = at, at.Add(left)
+}
+
+// returned ends the wait for p, who came back before their deadline, and
+// charges it to their match total.
+func (r *room) returned(p *player, at time.Time) {
+	p.graceUsed += at.Sub(p.graceFrom)
+	p.graceFrom, p.deadline = time.Time{}, time.Time{}
 }
 
 // nextDeadline is the gone player whose grace deadline comes first, or nil.
@@ -570,11 +591,16 @@ func (r *room) setPresence(now time.Time, id string, connected bool) {
 		switch {
 		case p.expired:
 		case !connected && changed:
-			p.deadline = now.Add(r.cfg.TGrace)
-		case connected:
-			p.deadline = time.Time{}
+			r.await(p, now)
+		case connected && !p.deadline.IsZero():
+			r.returned(p, now)
 		}
 		r.settleGrace(now)
+	}
+	if r.state == stateGrace {
+		// A deadline set just now may already be due: a player whose total
+		// is used up forfeits at the instant of the drop.
+		r.advance(now)
 	}
 	switch {
 	case r.state != before:

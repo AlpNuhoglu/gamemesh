@@ -75,29 +75,35 @@ func validateMove(c *Config, m motion, r role, raw vec, now time.Time, radius fl
 		return m, false, errNonFinite
 	}
 
-	// 1. The time steps. dt, of the distance budget, is the real elapsed
-	// time, capped at DtMax so a backlog cannot teleport, and never raised:
-	// raised to DtMin, every packet above 50 Hz would accrue budget it did
-	// not wait for (20 % at 60 Hz). dtTheta, of the turn limit only, is
-	// floored at DtMin so bunched packets do not freeze the turn. The first
-	// packet after a spawn or a return has no previous packet: both are one
+	// 1. The time step: the real elapsed time, capped at DtMax so a backlog
+	// cannot teleport, and never raised. The same dt bounds the distance
+	// budget and the runner's turn: a floor would credit a client with time it
+	// did not wait, more the more packets it sends (with a 20 ms floor, 20 %
+	// more distance at 60 Hz, 5.04 rad of turn a second at 60 Hz and 10.08 at
+	// 120 Hz, against 4.2). There is deliberately no turn credit: packets that
+	// the network bunches may see their turn clipped (section 11). The first
+	// packet after a spawn or a return has no previous packet: it gets one
 	// tick's worth (the implementation note of section 1.2), not DtMax.
-	dt, dtTheta := c.DtInitial.Seconds(), c.DtInitial.Seconds()
+	dt := c.DtInitial.Seconds()
 	if m.hasPrev {
 		dt = math.Max(0, math.Min(c.DtMax.Seconds(), now.Sub(m.ts).Seconds()))
-		dtTheta = math.Max(dt, c.DtMin.Seconds())
 	}
 	base := c.VHunter
 	if r == roleRunner {
 		base = c.VRunner
 	}
 
-	if dist == 0 {
-		// Standing still: there is no direction to derive and the heading is
-		// kept; the unused budget goes into slack, up to the cap. A first
-		// packet that does not move neither starts the motion nor accrues.
-		// The arena still applies: R(t) may have shrunk past a player who
-		// stands still.
+	if dist == 0 || dist < c.MoveEpsilon {
+		// Standing still, or a displacement under MoveEpsilon, whose angle is
+		// noise: no direction is derived, so a jitter of the client's
+		// position cannot throw the runner's heading around and get their
+		// next real step turn-clipped. Position and heading are kept, and the
+		// unused budget goes into slack, up to the cap. What is ignored does
+		// not accumulate: the request is an absolute position, measured from
+		// the validated one, so a client that drifts 1e-3 away is processed
+		// normally. A first packet that does not move neither starts the
+		// motion nor accrues. The arena still applies: R(t) may have shrunk
+		// past a player who stands still.
 		if m.hasPrev {
 			m.ts = now
 			m.slack = math.Min(c.SlackMax, m.slack+base*dt)
@@ -114,7 +120,7 @@ func validateMove(c *Config, m motion, r role, raw vec, now time.Time, radius fl
 	theta := thetaRaw
 	allowed := base
 	if r == roleRunner && m.hasPrev {
-		limit := c.OmegaMax * dtTheta
+		limit := c.OmegaMax * dt
 		turn := math.Max(-limit, math.Min(limit, wrapPi(thetaRaw-m.theta)))
 		theta = wrapPi(m.theta + turn)
 		allowed = c.VRunner * (1 - c.Alpha*math.Abs(turn)/math.Pi)
