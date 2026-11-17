@@ -14,12 +14,12 @@ type Player struct {
 	// "unique" (constraint) rather than "uniqueIndex": GORM names these
 	// uni_players_*, which the SQL migrations mirror so AutoMigrate is a
 	// no-op when the schema was applied via schema.sql first.
-	Username     string       `gorm:"size:32;not null;unique" json:"username"`
-	Email        string       `gorm:"size:255;not null;unique" json:"email"`
-	PasswordHash string       `gorm:"size:255;not null" json:"-"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
-	Stats        *Stats `gorm:"foreignKey:PlayerID;constraint:OnDelete:CASCADE" json:"stats,omitempty"`
+	Username     string    `gorm:"size:32;not null;unique" json:"username"`
+	Email        string    `gorm:"size:255;not null;unique" json:"email"`
+	PasswordHash string    `gorm:"size:255;not null" json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Stats        *Stats    `gorm:"foreignKey:PlayerID;constraint:OnDelete:CASCADE" json:"stats,omitempty"`
 }
 
 // BeforeCreate assigns a UUID client-side so the ID is known before the
