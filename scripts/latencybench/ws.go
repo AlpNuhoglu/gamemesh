@@ -59,8 +59,10 @@ type wsConn struct {
 	ws      *websocket.Conn
 	matches chan<- matchNote // shared by all connections
 	joins   chan joinNote
-	recv    atomic.Pointer[receiver] // set while this connection is a receiver
-	done    chan struct{}            // closed when readLoop returns
+	recv    atomic.Pointer[receiver]      // set while this connection is a receiver
+	ghost   atomic.Pointer[ghostReceiver] // the same, in ghosttag mode
+	games   chan gameNote                 // Game frames other than pos
+	done    chan struct{}                 // closed when readLoop returns
 
 	mu        sync.Mutex
 	readErr   error
@@ -121,6 +123,7 @@ func dial(ctx context.Context, api *apiClient, base string, p *player, matches c
 		ws:      ws,
 		matches: matches,
 		joins:   make(chan joinNote, 16),
+		games:   make(chan gameNote, 64),
 		done:    make(chan struct{}),
 	}
 	ws.SetPongHandler(c.onPong)
@@ -149,6 +152,21 @@ func (c *wsConn) readLoop() {
 		case "Relay":
 			if r := c.recv.Load(); r != nil {
 				r.record(m, now)
+			}
+		case "Game": // only a validated room sends these (ghosttag mode)
+			d, err := decodeGame(m.Data)
+			if err != nil || d.T == "" {
+				continue
+			}
+			if d.T == "pos" {
+				if g := c.ghost.Load(); g != nil {
+					g.record(m.Room, d, now)
+				}
+				continue
+			}
+			select {
+			case c.games <- gameNote{room: m.Room, at: now, data: d}:
+			default:
 			}
 		case "MatchFound":
 			var d struct {
@@ -270,6 +288,46 @@ func (c *wsConn) waitJoined(ctx context.Context, room, playerID string, timeout 
 			return fmt.Errorf("%s: no PlayerJoined for room %s within %s", c.p.username, room, timeout)
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+	}
+}
+
+// waitState waits until this connection sees a snap of state in room, and
+// returns it with the time it was read. Snaps of other states, and other
+// Game frames, are consumed on the way.
+func (c *wsConn) waitState(ctx context.Context, room, state string, timeout time.Duration) (gameData, time.Duration, error) {
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	last := "none"
+	for {
+		select {
+		case n := <-c.games:
+			if n.room != room || n.data.T != "snap" {
+				continue
+			}
+			if n.data.State == state {
+				return n.data, n.at, nil
+			}
+			last = n.data.State
+		case <-c.done:
+			return gameData{}, 0, fmt.Errorf("%s: connection closed while waiting for %s: %v", c.p.username, state, c.err())
+		case <-t.C:
+			return gameData{}, 0, fmt.Errorf("%s: room %s not in %s within %s (last state seen: %s)", c.p.username, room, state, timeout, last)
+		case <-ctx.Done():
+			return gameData{}, 0, ctx.Err()
+		}
+	}
+}
+
+// drainGames returns the Game notes waiting on this connection.
+func (c *wsConn) drainGames() []gameNote {
+	var out []gameNote
+	for {
+		select {
+		case n := <-c.games:
+			out = append(out, n)
+		default:
+			return out
 		}
 	}
 }
