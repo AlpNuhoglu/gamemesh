@@ -260,6 +260,28 @@ olarak ortaya çıkar.
 > eşitlenmelidir; aksi halde bot sistematik olarak avantajlı veya dezavantajlı
 > olur.
 
+**Bot kaçağın duvar kuralı.** Bot, doğrulama hattının düzelteceği bir hedef
+istemez; hat yine de her adımı denetler. Bunun için:
+
+- **Dönüş yarıçapı kadar önce döner.** `turnRadius = V_kaçak / ω_max +
+  tampon` (260 / 4,2 + 15 ≈ 76,9 birim; tampon arenanın daralması içindir).
+  Bot `R(t) − turnRadius` çizgisini geçtiğinde ve dışa yönelmişse ya da
+  dışa kaçmak istiyorsa duvar boyunca, hafif içe dönük (~27°) bir yöne döner.
+  Duvar boyunca hangi yöne: zaten gittiği yöne, böylece duvarda hiç tersine
+  dönmez (tersine dönüş kaçağı çemberin dışına savurur). Duvara tam karşıdan
+  geliyorsa, son gördüğü (`ServerTs − 2000 ms`) avcıdan uzaklaşan yöne.
+- **Bir dönüş yarıçapı içeride kademeli.** Bu çizgiden bir `turnRadius`
+  daha içeride, kaçış yönünün dışa bileşeni kademeli azaltılır; bot çizgiye
+  zaten duvara paralel koşarak varır, çizginin iki yanında zikzak çizmez.
+- **Adımını hattın göreceği `Δt` ile planlar.** Sabit tick süresi değil,
+  son doğrulanmış adımından bu yana geçen gerçek süre. Erken veya geç gelen
+  bir tick botun sınırlarını hattınkiyle aynı biçimde değiştirir.
+- **Son çare: adımı kısaltır.** Hedef yine de arena dışına düşecekse adımı
+  çembere kadar kısaltır; daha az hareket etmek her zaman meşrudur.
+
+Kabul ölçütü: iki tam yarılık bot maçında `bot_clamp == 0`; düzenli ve
+düzensiz tick'lerle, duran, kovalayan ve duvar boyunca kaçan insanla.
+
 ---
 
 ## 2. Bağlantı Kopması ve Yeniden Bağlanma
@@ -645,6 +667,7 @@ ayarlanacaktır.
 | `T_join` | 10 sn | `WAITING` durumunda oyuncuların odaya katılması için süre |
 | Yakalama penceresi | 150 ms | Simetrik kontrol geçmiş penceresi |
 | Bot görüş gecikmesi | 2000 ms | Bot kaçağın avcıyı gördüğü gecikme |
+| Bot duvar tamponu | 15 birim | Bot kaçağın duvara dönmeye başladığı mesafe: `V_kaçak / ω_max` + bu tampon (bölüm 1.5) |
 | Baskı örnekleme aralığı | 200 ms | Beraberlik bozucu tick'i |
 | `clamp` bildirim aralığı | 400 ms | İstemciye kırpma uyarısı kısıtı |
 
@@ -750,14 +773,6 @@ yazma olmaz.
   10 Hz'de 244,36; 25 Hz'de 253,74; 60 Hz'de 257,39; 120 Hz'de 258,70 birim
   (`260 · (1 − α · ω_max / (π · hız))`). Sık gönderen istemci dönerken en
   fazla %6 daha hızlıdır; düz koşuda fark yoktur.
-- **Kaçak bot duvara dönüş sınırını hesaba katmadan yaklaşır.** Duvardan
-  kaçınma kuralı dışa dönük bileşeni duvara yaklaştıkça kademeli kaldırır;
-  bot yönünü `ω_max` hızıyla döndürebildiği için duvara dışa dönük bir yönle
-  varır ve hedefi arena dışına düşer. Doğrulama hattı onu her tick çembere
-  ölçekler, yani fizik ihlali yoktur, ama bot duvar boyunca sürtünür ve
-  `bot_clamp` sayacı dolar: kaçak bot olarak geçen 15 saniyede 375 adımın
-  350'si (düzenli 40 ms tick'le de aynı). Botun hedef seçimi değişmeli
-  (duvara dönüş yarıçapı kadar önce dönmeye başlamak); karar bekliyor.
 - **Spawn sonrası ilk saniye küçük bir pay taşır.** İlk paket gerçek bekleme
   süresi yerine sabit `Δt_initial` (0,04 sn) ile ölçüldüğü için, taze
   spawn'dan sonraki ilk saniyede kat edilebilen mesafe `V + S_max`'i en fazla
@@ -816,4 +831,5 @@ kararlar:
 | Dönüş sınırı | `Δt_min` tabanı tamamen kaldırıldı; ayrı dönüş kredisi yok; `ε_hareket` altında `θ` güncellenmez | 1.2, 8 |
 | Spawn sonrası ilk saniye payı | Olduğu gibi kalır; bilinen sınır | 11 |
 | Toplam grace | Oyuncu başına maç toplamı `T_grace_total` = 15 sn | 2, 8 |
+| Bot kaçak duvarı | Dönüş yarıçapı (`V_kaçak / ω_max` + 15) kadar önce döner; adımını hattın `Δt`'siyle planlar; tam maçta `bot_clamp == 0` | 1.5, 8 |
 
