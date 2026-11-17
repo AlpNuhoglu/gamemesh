@@ -18,6 +18,9 @@ import (
 // maxRank is the highest rank POST /queue accepts.
 const maxRank = 100000
 
+// leadIn is the delay from the start of measure to the first send.
+const leadIn = 300 * time.Millisecond
+
 type bench struct {
 	cfg      *config
 	api      *apiClient
@@ -87,8 +90,8 @@ func (b *bench) logf(format string, args ...any) {
 // run executes the whole benchmark and returns the process exit code.
 func (b *bench) run(ctx context.Context) int {
 	b.started = time.Now()
-	log.Printf("run %s: %d pair(s), %d samples (%d warmup) every %s, api=%s ws=%s",
-		b.runID, b.cfg.pairs, b.cfg.samples, b.cfg.warmup, b.cfg.interval, b.cfg.api, b.cfg.ws)
+	log.Printf("run %s: mode %s, %d pair(s), %d samples (%d warmup) every %s, api=%s ws=%s",
+		b.runID, b.cfg.mode, b.cfg.pairs, b.cfg.samples, b.cfg.warmup, b.cfg.interval, b.cfg.api, b.cfg.ws)
 	if b.cfg.interval < time.Second/60 {
 		b.warnf("-interval %s exceeds the server's 60 msg/s relay limit; messages above it are dropped", b.cfg.interval)
 	}
@@ -125,6 +128,10 @@ func (b *bench) run(ctx context.Context) int {
 		log.Print("FAIL: no samples were collected (is relay implemented by this server?)")
 		exit = 1
 	}
+	if g := rep.Ghost; g != nil && g.Clipped > 0 {
+		log.Printf("FAIL: the server corrected %d position(s); this run did not measure the validated path as intended", g.Clipped)
+		exit = 1
+	}
 	if b.cleanup != nil && b.cleanup.Error != "" {
 		exit = 1
 	}
@@ -143,7 +150,13 @@ func (b *bench) setup(ctx context.Context) error {
 	if err := b.pairUp(ctx); err != nil {
 		return err
 	}
-	return b.joinRooms(ctx)
+	if err := b.joinRooms(ctx); err != nil {
+		return err
+	}
+	if b.cfg.mode == modeGhost {
+		return b.waitActive(ctx)
+	}
+	return nil
 }
 
 // forEach runs fn for every player with bounded concurrency and returns the
@@ -267,7 +280,14 @@ func (b *bench) pairUp(ctx context.Context) error {
 		nextRank += step
 		partner[x], partner[y] = y, x
 		for _, p := range []*player{x, y} {
-			if err := b.api.joinQueue(ctx, p, r); err != nil {
+			if b.cfg.mode == modeGhost {
+				if err := b.api.joinGhostQueue(ctx, p, r); err != nil {
+					if errors.Is(err, errNotUnranked) {
+						p.queued.Store(true) // the ticket exists; teardown withdraws it
+					}
+					return fmt.Errorf("queue %s: %w", p.username, err)
+				}
+			} else if err := b.api.joinQueue(ctx, p, r); err != nil {
 				return fmt.Errorf("queue %s: %w", p.username, err)
 			}
 			p.queued.Store(true)
@@ -308,6 +328,11 @@ func (b *bench) pairUp(ctx context.Context) error {
 			}
 			if len(ours) == 0 {
 				continue
+			}
+			if b.cfg.mode == modeGhost && isBotRoom(n.players, byID) {
+				return fmt.Errorf("room %s pairs %s with the server's bot: its ticket waited past MATCH_BOT_WAIT (5 s) "+
+					"without its partner; refusing to measure against the bot (the bot sends no positions to time)",
+					n.room, ours[0].username)
 			}
 			if len(ours) == 2 && len(n.players) == 2 {
 				slices.SortFunc(ours, func(x, y *player) int { return x.idx - y.idx })
@@ -362,6 +387,9 @@ func (b *bench) joinRooms(ctx context.Context) error {
 					return
 				}
 			}
+			if b.cfg.mode == modeGhost {
+				return // waitActive installs the receiver, once the half has started
+			}
 			p.recv = newReceiver(p.room, p.sender.id, b.cfg.samples, b.cfg.warmup)
 			p.receiver.conn.recv.Store(p.recv)
 		}()
@@ -385,7 +413,7 @@ func (b *bench) joinRooms(ctx context.Context) error {
 func (b *bench) measure(ctx context.Context) {
 	cfg := b.cfg
 	n := len(b.pairs)
-	base := mono() + 300*time.Millisecond
+	base := mono() + leadIn
 	stagger := cfg.interval / 2 / time.Duration(n)
 	countedFrom := base + time.Duration(cfg.warmup)*cfg.interval
 	sendEnd := base + time.Duration(cfg.samples)*cfg.interval
@@ -399,6 +427,10 @@ func (b *bench) measure(ctx context.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if cfg.mode == modeGhost {
+				runGhostSender(ctx, p, cfg, base+time.Duration(i)*stagger)
+				return
+			}
 			runSender(ctx, p, cfg, base+time.Duration(i)*stagger)
 		}()
 	}
@@ -432,6 +464,13 @@ func (b *bench) measure(ctx context.Context) {
 	pingWG.Wait()
 	if cfg.metrics != "" && b.scrapeBefore != nil && ctx.Err() == nil {
 		b.scrape(ctx, false)
+	}
+	if cfg.mode == modeGhost {
+		for _, p := range b.pairs {
+			for _, e := range p.roomEvents() {
+				b.warnf("pair %d: room %s left the measured state: %s", p.idx, p.room, e)
+			}
+		}
 	}
 	for _, p := range b.pairs {
 		if p.sendErr != nil {
