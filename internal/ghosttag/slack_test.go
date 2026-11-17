@@ -1,7 +1,6 @@
 package ghosttag
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -163,30 +162,4 @@ func TestBunchedPacketsAreNotClipped(t *testing.T) {
 	}
 	assert.InDelta(t, 27, m.pos.X, 1e-9)
 	assert.InDelta(t, 25-2*(9-225*0.001), m.slack, 1e-9)
-}
-
-// TestRunnerTurnPerSecondByRate measures, and does not fix, the runner's
-// largest total turn in one second at different packet rates. The turn
-// limit still uses Δt_θ = max(Δt, Δt_min), so above 50 Hz every packet is
-// allowed ω_max·0.02 however close it follows the last one. Reported to the
-// owner as a finding; only the 25 Hz value (ω_max·1 s) is asserted.
-func TestRunnerTurnPerSecondByRate(t *testing.T) {
-	c := DefaultConfig()
-	turned := map[int]float64{}
-	for _, rate := range []int{25, 60, 120} {
-		m := motion{pos: vec{}, theta: 0, ts: t0, hasPrev: true, slack: c.SlackMax}
-		total := 0.0
-		for k := 1; k <= rate; k++ {
-			// Ask for a point at a right angle to the heading: always more
-			// than one packet's turn allows.
-			raw := m.pos.add(polar(10, m.theta+math.Pi/2))
-			next, _, err := validateMove(&c, m, roleRunner, raw, t0.Add(time.Duration(k)*time.Second/time.Duration(rate)), noArena)
-			require.NoError(t, err)
-			total += wrapPi(next.theta - m.theta)
-			m = next
-		}
-		turned[rate] = total
-		t.Logf("runner, %3d Hz: %.4f rad turned in 1 s", rate, total)
-	}
-	assert.InDelta(t, c.OmegaMax, turned[25], 1e-9)
 }

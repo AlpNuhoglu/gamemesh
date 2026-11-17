@@ -23,7 +23,7 @@ func TestDefaultConfigIsSection8(t *testing.T) {
 	assert.Equal(t, 280.0, c.RMin)
 	assert.Equal(t, 36.0, c.DCapture)
 	assert.Equal(t, 25.0, c.SlackMax)
-	assert.Equal(t, 20*time.Millisecond, c.DtMin)
+	assert.Equal(t, 1e-3, c.MoveEpsilon)
 	assert.Equal(t, 250*time.Millisecond, c.DtMax)
 	assert.Equal(t, 40*time.Millisecond, c.DtInitial)
 	assert.Equal(t, 60*time.Millisecond, c.ClientRenderDelay)
@@ -59,7 +59,8 @@ func TestConfigValidateRejects(t *testing.T) {
 		"omega zero":            func(c *Config) { c.OmegaMax = 0 },
 		"capture zero":          func(c *Config) { c.DCapture = 0 },
 		"slack negative":        func(c *Config) { c.SlackMax = -1 },
-		"dtmin above dtmax":     func(c *Config) { c.DtMin = c.DtMax + time.Millisecond },
+		"dtinitial zero":        func(c *Config) { c.DtInitial = 0 },
+		"move epsilon negative": func(c *Config) { c.MoveEpsilon = -1e-3 },
 		"dtinitial above dtmax": func(c *Config) { c.DtInitial = c.DtMax + time.Millisecond },
 		"shrink longer than half": func(c *Config) {
 			c.TShrink = c.THalf + time.Second
