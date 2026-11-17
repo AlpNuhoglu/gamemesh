@@ -86,18 +86,31 @@ Player identity comes from the JWT.
 ### POST /api/v1/queue 🔒
 ```json
 { "rank": 1000 }
+{ "rank": 1000, "mode": "ghosttag" }
+{ "rank": 1000, "mode": "ghosttag", "unranked": true }
 ```
 Idempotent — re-joining refreshes rank and join time.
-**200** → `{ "status": "queued", "rank": 1000 }`
+**200** → `{ "status": "queued", "rank": 1000 }`, plus `"mode"` and `"unranked"` when a mode was given.
+
+Without `mode` the player joins the general queue, whose rooms are
+opaque-relay rooms. `"mode": "ghosttag"` joins the Ghost Tag queue: the same
+rank window, rooms that the WebSocket service runs as Ghost Tag matches, and
+a room with the server's bot for a ticket that has waited 5 s
+(`MATCH_BOT_WAIT`) without a human opponent. `"unranked": true` asks for
+matches that produce no points; such a ticket is paired only with another
+unranked ticket or the bot. A player is in one queue at a time: joining one
+leaves the others. **400** for an unknown mode, or `unranked` without a mode.
 
 ### DELETE /api/v1/queue 🔒
-Leaves the queue. **404** if not queued.
+Leaves whichever queue the player is in. **404** if not queued.
 
 ### GET /api/v1/queue/status 🔒
-**200** → `{ "queued": true, "queue_size": 42 }`
+**200** → `{ "queued": true, "queue_size": 42 }` — the depth of the queue the player is in.
 
 ### GET /api/v1/rooms/:id 🔒
-**200** → `{ "id", "players": ["…"], "ranks": {"…": 1000}, "status": "waiting", "created_at" }`
+**200** → `{ "id", "players": ["…"], "ranks": {"…": 1000}, "status": "waiting", "created_at" }`.
+A Ghost Tag room also has `"mode": "ghosttag"`, and `"bot": true` and
+`"unranked": true` when they apply; a bot room lists its one human player.
 **404** if missing/expired.
 
 ## WebSocket

@@ -37,8 +37,14 @@ func callerID(c *gin.Context) (string, bool) {
 	return id, true
 }
 
+// joinRequest is the body of POST /queue. Without mode it joins the
+// general queue, as it always has. mode "ghosttag" joins the Ghost Tag
+// queue; unranked asks for matches that do not score, which only another
+// unranked ticket (or the bot) is paired with.
 type joinRequest struct {
-	Rank int `json:"rank" binding:"required,min=0,max=100000"`
+	Rank     int    `json:"rank" binding:"required,min=0,max=100000"`
+	Mode     string `json:"mode" binding:"omitempty,oneof=ghosttag"`
+	Unranked bool   `json:"unranked"`
 }
 
 func (h *Handler) join(c *gin.Context) {
@@ -51,11 +57,30 @@ func (h *Handler) join(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if err := h.svc.JoinQueue(c.Request.Context(), playerID, req.Rank); err != nil {
+	if req.Unranked && req.Mode == "" {
+		// Ignoring it would queue the player for matches they asked not to have.
+		httpx.Error(c, http.StatusBadRequest, "invalid request: unranked needs a mode")
+		return
+	}
+	var err error
+	if req.Mode == ModeGhostTag {
+		err = h.svc.JoinGhostTag(c.Request.Context(), playerID, req.Rank, req.Unranked)
+	} else {
+		err = h.svc.JoinQueue(c.Request.Context(), playerID, req.Rank)
+	}
+	switch {
+	case errors.Is(err, ErrModeDisabled):
+		httpx.Error(c, http.StatusBadRequest, ErrModeDisabled.Error())
+		return
+	case err != nil:
 		httpx.Error(c, http.StatusInternalServerError, "failed to join queue")
 		return
 	}
-	httpx.OK(c, gin.H{"status": "queued", "rank": req.Rank})
+	body := gin.H{"status": "queued", "rank": req.Rank}
+	if req.Mode != "" {
+		body["mode"], body["unranked"] = req.Mode, req.Unranked
+	}
+	httpx.OK(c, body)
 }
 
 func (h *Handler) leave(c *gin.Context) {

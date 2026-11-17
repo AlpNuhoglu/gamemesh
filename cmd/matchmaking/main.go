@@ -81,6 +81,11 @@ func run() int {
 			BatchSize:   cfg.MatchBatchSize,
 			MaxQueueAge: cfg.MatchMaxQueueAge,
 			Heartbeat:   loopBeat,
+			// Ghost Tag: its own queues, the same rank window, and a room
+			// with the bot for a ticket left alone for MatchBotWait.
+			GhostTag:         matchmaking.NewModeQueue(rdb, matchmaking.QueueGhostTag),
+			GhostTagUnranked: matchmaking.NewModeQueue(rdb, matchmaking.QueueGhostTagUnranked),
+			BotWait:          cfg.MatchBotWait,
 		},
 	)
 	handler := matchmaking.NewHandler(svc)

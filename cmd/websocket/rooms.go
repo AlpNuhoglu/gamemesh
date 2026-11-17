@@ -24,7 +24,17 @@ func (p roomParticipants) Access(ctx context.Context, room, playerID string) (ws
 	if err != nil {
 		return wsgateway.RoomAccess{}, err
 	}
-	// Matchmaking creates opaque-relay rooms only, so far: no room is a
-	// validated room until its record can say so.
-	return wsgateway.RoomAccess{Participant: r.HasPlayer(playerID)}, nil
+	access := wsgateway.RoomAccess{Participant: r.HasPlayer(playerID)}
+	if r.Mode != "" {
+		// A validated room: the record names its game, and the hub hands
+		// its traffic to that game instead of relaying it.
+		access.Game = &wsgateway.GameSpec{
+			Mode:      r.Mode,
+			Players:   r.Players,
+			Bot:       r.Bot,
+			Unranked:  r.Unranked,
+			CreatedAt: r.CreatedAt,
+		}
+	}
+	return access, nil
 }

@@ -72,6 +72,13 @@ type Config struct {
 	WSRelayRate  float64
 	WSRelayBurst int
 
+	// GameStartWindow is how long after matchmaking created a validated
+	// room its game can still be started by the first player to join.
+	// Matchmaking keeps a room's record for ROOM_TTL, much longer than a
+	// match lasts; without the window a restart of the WebSocket service
+	// would let a rejoining player start a finished match again.
+	GameStartWindow time.Duration
+
 	// TrustedProxies lists the proxies (IPs or CIDRs) whose X-Forwarded-For /
 	// X-Real-IP headers are believed when resolving the client IP that rate
 	// limiting and access logs key on. Empty (the default) trusts no proxy, so
@@ -85,7 +92,10 @@ type Config struct {
 	MatchRankWindow  int
 	MatchBatchSize   int64
 	MatchMaxQueueAge time.Duration
-	RoomTTL          time.Duration
+	// MatchBotWait is how long a Ghost Tag ticket waits for a human
+	// opponent before matchmaking gives it a room with the bot.
+	MatchBotWait time.Duration
+	RoomTTL      time.Duration
 
 	// Presence tuning. PresenceTTL is the expiry on presence:{id}; if heartbeats
 	// stop for longer, the key vanishes and the player is OFFLINE. The heartbeat
@@ -184,6 +194,8 @@ func Load(serviceName string) *Config {
 		WSRelayRate:  getEnvFloat("WS_RELAY_RATE", 60),
 		WSRelayBurst: getEnvInt("WS_RELAY_BURST", 120),
 
+		GameStartWindow: getEnvDuration("GAME_START_WINDOW", time.Minute),
+
 		TrustedProxies: splitCSV(getEnv("TRUSTED_PROXIES", "")),
 
 		AllowedOrigins: splitCSV(getEnv("ALLOWED_ORIGINS", "*")),
@@ -192,6 +204,7 @@ func Load(serviceName string) *Config {
 		MatchRankWindow:  getEnvInt("MATCH_RANK_WINDOW", 100),
 		MatchBatchSize:   int64(getEnvInt("MATCH_BATCH_SIZE", 1000)),
 		MatchMaxQueueAge: getEnvDuration("MATCH_MAX_QUEUE_AGE", 5*time.Minute),
+		MatchBotWait:     getEnvDuration("MATCH_BOT_WAIT", 5*time.Second),
 		RoomTTL:          getEnvDuration("ROOM_TTL", time.Hour),
 
 		PresenceTTL:               getEnvDuration("PRESENCE_TTL", 45*time.Second),
