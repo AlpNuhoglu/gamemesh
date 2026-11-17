@@ -348,6 +348,12 @@ func (b *bench) waitActive(ctx context.Context) error {
 	for _, p := range b.pairs {
 		p.recv = p.ghost.receiver
 		p.receiver.conn.ghost.Store(p.ghost)
+		// What the room said before its half began (the WAITING and
+		// COUNTDOWN_1 snaps, which waitState read only on the sender's
+		// connection) is not a sign of anything; roomEvents reports only
+		// what arrives from here on.
+		p.sender.conn.drainGames()
+		p.receiver.conn.drainGames()
 	}
 	log.Printf("all %d room(s) in %s", n, stateActive)
 	return nil
