@@ -732,10 +732,32 @@ yazma olmaz.
   `match_end` oyun trafiğiyle aynı gönderim kuyruğunu kullanır; kuyruğu dolu
   yavaş bir istemci bunları kaçırabilir. `snap` yeniden bağlanmada tekrar
   gönderilir.
-- **Kümelenmiş paketlerde dönüş kırpılabilir.** Mesafenin slack bütçesi
-  var, dönüşün yok (bilinçli seçim, bölüm 1.2). Paketleri ağda kümelenen ve
-  o sırada en yüksek hızda dönen bir kaçağın kümedeki paketleri yaklaşık
-  sıfır `Δt` görür ve dönüşü kırpılır; istemci `clamp` ile düzeltilir.
+- **Kümelenmiş paketlerde dönüş kırpılır ve fark, istemci düzeltene kadar
+  büyür.** Mesafenin slack bütçesi var, dönüşün yok (bilinçli seçim,
+  bölüm 1.2). Paketleri ağda kümelenen ve o sırada en yüksek hızda dönen bir
+  kaçağın kümedeki paketleri yaklaşık sıfır `Δt` görür ve dönüşü kırpılır.
+  Kaybedilen açı, istemci en yüksek hızda dönmeye devam ettikçe geri
+  kazanılmaz: sonraki zamanında gelen paketler de kırpılır. Ölçülen (25 Hz,
+  80 ms boşluk ardından 1 ms arayla üç paket, sonra üç zamanında paket):
+  sunucu yönü istemcinin 0,17 rad gerisinde kalır; konum farkı kümeden
+  sonra 5,1 birim, üç zamanında paketten sonra 12,1 birimdir ve paket başına
+  2–3 birim büyür. İstemci `clamp` mesajını uygulayınca kapanır; `clamp` en
+  fazla 400 ms'de bir gönderildiği için bu, en kötü durumda ~10 paketlik bir
+  sapmadır.
+- **Dönüş hız cezası paket başına uygulanır.** `V_izin` tek adımın
+  dönüşünden hesaplanır, dolayısıyla en yüksek hızda dönen bir kaçağın
+  1 saniyede kat edebildiği mesafe paket hızına hafifçe bağlıdır. Ölçülen:
+  10 Hz'de 244,36; 25 Hz'de 253,74; 60 Hz'de 257,39; 120 Hz'de 258,70 birim
+  (`260 · (1 − α · ω_max / (π · hız))`). Sık gönderen istemci dönerken en
+  fazla %6 daha hızlıdır; düz koşuda fark yoktur.
+- **Kaçak bot duvara dönüş sınırını hesaba katmadan yaklaşır.** Duvardan
+  kaçınma kuralı dışa dönük bileşeni duvara yaklaştıkça kademeli kaldırır;
+  bot yönünü `ω_max` hızıyla döndürebildiği için duvara dışa dönük bir yönle
+  varır ve hedefi arena dışına düşer. Doğrulama hattı onu her tick çembere
+  ölçekler, yani fizik ihlali yoktur, ama bot duvar boyunca sürtünür ve
+  `bot_clamp` sayacı dolar: kaçak bot olarak geçen 15 saniyede 375 adımın
+  350'si (düzenli 40 ms tick'le de aynı). Botun hedef seçimi değişmeli
+  (duvara dönüş yarıçapı kadar önce dönmeye başlamak); karar bekliyor.
 - **Spawn sonrası ilk saniye küçük bir pay taşır.** İlk paket gerçek bekleme
   süresi yerine sabit `Δt_initial` (0,04 sn) ile ölçüldüğü için, taze
   spawn'dan sonraki ilk saniyede kat edilebilen mesafe `V + S_max`'i en fazla
