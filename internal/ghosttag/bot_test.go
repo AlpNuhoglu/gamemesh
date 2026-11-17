@@ -86,11 +86,11 @@ func hunterTrail(cut time.Duration, late vec) *ring {
 // the hunter ring given, and returns its targets.
 func runnerSteps(cfg *Config, hunter *ring) []vec {
 	b := botRunner{cfg: cfg, rng: rand.New(rand.NewPCG(9, 9))}
-	self := motion{pos: vec{100, 50}, theta: 0, ts: t0.Add(4 * time.Second), hasPrev: true}
+	self := motion{pos: vec{100, 50}, theta: 0, ts: t0.Add(4*time.Second - cfg.Tick), hasPrev: true}
 	var out []vec
 	for i := 0; i < 10; i++ {
 		now := t0.Add(4*time.Second + time.Duration(i)*cfg.Tick)
-		target := b.next(self, 500, delayedSight(hunter, now, cfg.BotSightDelay, vec{-225, 0}))
+		target := b.next(self, now, 500, delayedSight(hunter, now, cfg.BotSightDelay, vec{-225, 0}))
 		out = append(out, target)
 		self = motion{pos: target, theta: self.theta, ts: now, hasPrev: true}
 	}
@@ -121,9 +121,9 @@ func TestBotRunnerReactionDelay(t *testing.T) {
 	c := DefaultConfig()
 	b := botRunner{cfg: &c, rng: rand.New(rand.NewPCG(3, 4))}
 	seen := map[time.Duration]bool{}
-	self := motion{pos: vec{100, 0}, hasPrev: true}
+	self := motion{pos: vec{100, 0}, ts: t0, hasPrev: true}
 	for i := 0; i < 200; i++ {
-		b.next(self, 500, func(extra time.Duration) vec {
+		b.next(self, t0.Add(c.Tick), 500, func(extra time.Duration) vec {
 			assert.GreaterOrEqual(t, extra, c.BotReactionMin)
 			assert.LessOrEqual(t, extra, c.BotReactionMax)
 			seen[extra] = true
@@ -153,21 +153,51 @@ func TestBotRunnerFleesAndAvoidsTheWall(t *testing.T) {
 	b := botRunner{cfg: &c, rng: rand.New(rand.NewPCG(1, 1))}
 	see := func(time.Duration) vec { return vec{-100, 0} }
 
-	open := b.next(motion{pos: vec{0, 0}, hasPrev: false}, 500, see)
+	open := b.next(motion{pos: vec{0, 0}, hasPrev: false}, t0, 500, see)
 	assert.Greater(t, open.X, 0.0, "flees from the hunter")
 
 	// Running along the wall with the hunter behind it on the far side, it
 	// bends inwards instead of being pushed out onto the edge.
-	self := motion{pos: vec{495, 0}, theta: math.Pi / 2, hasPrev: true}
-	edge := b.next(self, 500, see)
+	self := motion{pos: vec{495, 0}, theta: math.Pi / 2, ts: t0, hasPrev: true}
+	edge := b.next(self, t0.Add(c.Tick), 500, see)
 	assert.Less(t, edge.norm(), self.pos.norm())
+}
 
-	// Without the wall rule it would have turned outwards, away from the
-	// hunter, and reached the edge.
-	b.cfg = &Config{}
-	*b.cfg = c
-	b.cfg.BotWallMargin = 0
-	assert.Greater(t, b.next(self, 500, see).norm(), self.pos.norm())
+// TestBotRunnerTurnsBeforeTheWall: a bot runner heading straight at the
+// wall, fleeing a hunter behind it, starts turning botTurnRadius from the
+// edge and runs along it without ever having its step cut short: every
+// step is the full one the pipeline allows for its turn, and every target
+// is inside the arena. Turning only at the wall, the step has to be
+// shortened (insideStep) and the bot stalls against the edge.
+func TestBotRunnerTurnsBeforeTheWall(t *testing.T) {
+	c := DefaultConfig()
+	assert.InDelta(t, 260/4.2+15, botTurnRadius(&c), 1e-9)
+	b := botRunner{cfg: &c, rng: rand.New(rand.NewPCG(5, 5))}
+	see := func(time.Duration) vec { return vec{-300, 0} } // behind it, on the far side
+
+	self := motion{pos: vec{300, 0}, theta: 0, ts: t0, hasPrev: true} // heading straight out
+	for i := 1; i <= 100; i++ {
+		now := t0.Add(time.Duration(i) * c.Tick)
+		target := b.next(self, now, 500, see)
+		next, clipped, err := validateMove(&c, self, roleRunner, target, now, 500)
+		require.NoError(t, err)
+		require.False(t, clipped, "step %d: the pipeline corrected the bot", i)
+		turn := math.Abs(wrapPi(next.theta - self.theta))
+		full := c.VRunner * (1 - c.Alpha*turn/math.Pi) * c.Tick.Seconds()
+		require.InDelta(t, full, next.pos.dist(self.pos), 1e-9, "step %d at %.1f from the centre: cut short", i, self.pos.norm())
+		self = next
+	}
+	assert.Greater(t, math.Abs(self.pos.Y), 100.0, "it went along the wall, not into it")
+}
+
+// TestInsideStep: the last resort keeps a step inside the arena, and only
+// shortens it when it would leave.
+func TestInsideStep(t *testing.T) {
+	assert.Equal(t, 10.0, insideStep(vec{0, 0}, 0, 10, 500))
+	s := insideStep(vec{495, 0}, 0, 10, 500)
+	assert.InDelta(t, 5, s, 1e-6)
+	assert.LessOrEqual(t, vec{495 + s, 0}.norm(), 500.0)
+	assert.Equal(t, 0.0, insideStep(vec{500, 0}, 0, 10, 500))
 }
 
 // TestBotHunterLeadsTheRunner: the bot hunter aims ahead of a moving
@@ -177,12 +207,12 @@ func TestBotHunterLeadsTheRunner(t *testing.T) {
 	b := botHunter{cfg: &c}
 	self := motion{pos: vec{-200, 0}}
 
-	still := b.next(self, 500, vec{200, 0}, vec{})
-	moving := b.next(self, 500, vec{200, 0}, vec{0, 200})
+	still := b.next(self, t0, 500, vec{200, 0}, vec{})
+	moving := b.next(self, t0, 500, vec{200, 0}, vec{0, 200})
 	assert.Greater(t, moving.Y, still.Y, "leads a runner moving up")
 	assert.InDelta(t, 225*0.04, still.dist(self.pos), 1e-9, "one tick at top speed")
 
-	near := b.next(self, 500, vec{-195, 0}, vec{})
+	near := b.next(self, t0, 500, vec{-195, 0}, vec{})
 	assert.Equal(t, vec{-195, 0}, near, "within one step it goes straight at the runner")
 }
 
@@ -194,4 +224,63 @@ func TestLiveView(t *testing.T) {
 	assert.Equal(t, vec{4, 8}, pos)
 	assert.InDelta(t, 100, vel.X, 1e-9)
 	assert.InDelta(t, 200, vel.Y, 1e-9)
+}
+
+// TestBotMatchHasNoClamp is the owner's acceptance test for the bot: a whole
+// bot match, both halves to the end, and the pipeline never corrects the
+// bot (bot_clamp == 0). The bot hunts in the first half and runs in the
+// second, through the shrinking arena of both. It is played with steady
+// ticks and with uneven ones, and against a human hunter who stands still
+// (so the bot runner plays out the whole half, shrink included) and one
+// who chases the bot's position at top speed.
+func TestBotMatchHasNoClamp(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		gaps  []time.Duration
+		chase bool // in the second half the human hunter chases the bot
+		flee  bool // in the first half the human runner circles along the wall
+	}{
+		{"steady ticks, still human", []time.Duration{40 * time.Millisecond}, false, false},
+		{"uneven ticks, still human", []time.Duration{25 * time.Millisecond, 55 * time.Millisecond}, false, false},
+		{"very uneven ticks, still human", []time.Duration{10 * time.Millisecond, 70 * time.Millisecond}, false, false},
+		{"steady ticks, chasing hunter", []time.Duration{40 * time.Millisecond}, true, false},
+		{"uneven ticks, chasing hunter", []time.Duration{25 * time.Millisecond, 55 * time.Millisecond}, true, false},
+		{"steady ticks, runner along the wall", []time.Duration{40 * time.Millisecond}, false, true},
+		{"uneven ticks, runner along the wall", []time.Duration{25 * time.Millisecond, 55 * time.Millisecond}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, now := botMatch(t, DefaultConfig())
+			human := h.r.byID["human"]
+			var runnerSteps int
+			for i := 0; !h.r.finished(); i++ {
+				now = now.Add(tc.gaps[i%len(tc.gaps)])
+				if tc.chase && h.r.state == stateHalf2 {
+					h.send(now, human, h.r.bot.mot.pos.X, h.r.bot.mot.pos.Y)
+				}
+				if tc.flee && h.r.state == stateHalf1 {
+					// A point a little ahead along the wall, just inside the
+					// arena as it shrinks: the bot hunter has to follow it to
+					// the edge.
+					p := human.mot.pos
+					a := math.Atan2(p.Y, p.X) + 0.06
+					edge := h.r.radius(now) - 5
+					h.send(now, human, edge*math.Cos(a), edge*math.Sin(a))
+				}
+				if h.r.state == stateHalf2 {
+					runnerSteps++
+				}
+				h.r.tick(now)
+				require.Less(t, i, 10000, "the match did not end")
+			}
+			ends := h.out.ofType("half_end")
+			require.Len(t, ends, 2, "both halves were played")
+			assert.Zero(t, h.obs[EventBotClamp], "the pipeline never corrected the bot")
+			if !tc.chase {
+				assert.Equal(t, "TIMEOUT", ends[1].body["reason"], "the bot ran out the whole second half")
+				assert.Greater(t, runnerSteps, 500, "with the arena shrinking in its last 15 s")
+			}
+			t.Logf("first half: %s after %v ms; second half: %s after %v ms, %d bot runner ticks",
+				ends[0].body["reason"], ends[0].body["dur_ms"], ends[1].body["reason"], ends[1].body["dur_ms"], runnerSteps)
+		})
+	}
 }

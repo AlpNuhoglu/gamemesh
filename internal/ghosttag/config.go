@@ -111,9 +111,11 @@ type Config struct {
 	// BotReactionMin and BotReactionMax bound the bot's reaction delay,
 	// drawn afresh on every step, on top of BotSightDelay.
 	BotReactionMin, BotReactionMax time.Duration
-	// BotWallMargin is how close to the arena edge a bot runner starts
-	// turning away from it.
-	BotWallMargin float64
+	// BotTurnBuffer is added to a runner's tightest turning radius
+	// (VRunner/OmegaMax) to give how close to the arena edge the bot runner
+	// starts turning along it, so the arena shrinking meanwhile does not
+	// catch it still heading out.
+	BotTurnBuffer float64
 	// BotLeadMax caps how far ahead a bot hunter predicts the runner.
 	BotLeadMax time.Duration
 	// BotPinOffset is how far inside the runner (towards the centre) a bot
@@ -188,7 +190,7 @@ func DefaultConfig() Config {
 		SettleTimeout:  3 * time.Second,
 		BotReactionMin: 180 * time.Millisecond,
 		BotReactionMax: 260 * time.Millisecond,
-		BotWallMargin:  60,
+		BotTurnBuffer:  15,
 		BotLeadMax:     time.Second,
 		BotPinOffset:   40,
 
@@ -253,8 +255,8 @@ func (c Config) Validate() error {
 	check(c.SettleTimeout > 0, "SettleTimeout must be > 0, got %v", c.SettleTimeout)
 	check(c.BotReactionMin >= 0 && c.BotReactionMin <= c.BotReactionMax,
 		"need 0 <= BotReactionMin <= BotReactionMax, got %v, %v", c.BotReactionMin, c.BotReactionMax)
-	check(c.BotWallMargin >= 0 && c.BotWallMargin < c.RMin,
-		"BotWallMargin must lie in [0, RMin), got %v", c.BotWallMargin)
+	check(c.BotTurnBuffer >= 0 && c.VRunner/c.OmegaMax+c.BotTurnBuffer < c.RMin,
+		"need BotTurnBuffer >= 0 and VRunner/OmegaMax + BotTurnBuffer < RMin, got %v", c.BotTurnBuffer)
 	check(c.BotLeadMax >= 0, "BotLeadMax must be >= 0, got %v", c.BotLeadMax)
 	check(c.BotPinOffset >= 0, "BotPinOffset must be >= 0, got %v", c.BotPinOffset)
 	check(c.DrawTolerance >= 0, "DrawTolerance must be >= 0, got %v", c.DrawTolerance)

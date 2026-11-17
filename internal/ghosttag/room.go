@@ -278,12 +278,15 @@ func (r *room) stepBot(now time.Time) {
 	var target vec
 	if b.role == roleRunner {
 		spawn := vec{-r.cfg.SpawnDistance, 0} // where every hunter starts
-		target = r.botRunner.next(b.mot, radius, delayedSight(&opp.hist, now, r.cfg.BotSightDelay, spawn))
+		target = r.botRunner.next(b.mot, now, radius, delayedSight(&opp.hist, now, r.cfg.BotSightDelay, spawn))
 	} else {
 		pos, vel := liveView(&opp.hist)
-		target = r.botHunter.next(b.mot, radius, pos, vel)
+		target = r.botHunter.next(b.mot, now, radius, pos, vel)
 	}
-	hint := target.sub(b.mot.pos).scale(1 / r.cfg.Tick.Seconds())
+	var hint vec // the dead-reckoning hint: the bot's velocity in this step
+	if dt := botDt(r.cfg, b.mot, now); dt > 0 {
+		hint = target.sub(b.mot.pos).scale(1 / dt)
+	}
 	r.move(now, b, target, hint, time.Time{})
 }
 
