@@ -16,6 +16,7 @@ import (
 // tables can be generated from it. Durations are milliseconds.
 type report struct {
 	Tool        string    `json:"tool"`
+	Mode        string    `json:"mode"`
 	RunID       string    `json:"run_id"`
 	StartedAt   time.Time `json:"started_at"`
 	DurationS   float64   `json:"duration_s"`
@@ -35,7 +36,7 @@ type report struct {
 		Warmup           int     `json:"warmup"`
 		IntervalMs       float64 `json:"interval_ms"`
 		GraceMs          float64 `json:"grace_ms"`
-		PayloadBytes     int     `json:"payload_bytes"`
+		PayloadBytes     int     `json:"payload_bytes,omitempty"` // relay mode; ghosttag sends pos
 		PingsPerConn     int     `json:"pings_per_connection"`
 		RankWindow       int     `json:"rank_window"`
 		PercentileMethod string  `json:"percentile_method"`
@@ -46,6 +47,7 @@ type report struct {
 	PerPair     []pairReport `json:"per_pair"`
 	Ping        pingStats    `json:"ping_rtt"`
 	Server      serverReport `json:"server"`
+	Ghost       *ghostReport `json:"ghosttag,omitempty"`
 
 	Teardown teardownResult `json:"teardown"`
 	Cleanup  *cleanupResult `json:"cleanup,omitempty"`
@@ -84,6 +86,23 @@ type pairReport struct {
 	MaxMs      float64 `json:"max_ms"`
 }
 
+// ghostReport is what only the ghosttag mode has.
+type ghostReport struct {
+	// Clipped counts received positions that map to no message sent: the
+	// server corrected them. It must be 0.
+	Clipped   int         `json:"clipped"`
+	StepUnits float64     `json:"step_units"` // per message, along +y
+	PerPair   []ghostPair `json:"per_pair"`
+}
+
+type ghostPair struct {
+	Pair       int     `json:"pair"`
+	SenderRole string  `json:"sender_role"`
+	SpawnX     float64 `json:"spawn_x"`
+	SpawnY     float64 `json:"spawn_y"`
+	Clipped    int     `json:"clipped"`
+}
+
 type pingStats struct {
 	Connections int     `json:"connections"`
 	Sent        int     `json:"sent"`
@@ -98,6 +117,7 @@ func (b *bench) buildReport(setupErr error) *report {
 	cfg := b.cfg
 	r := &report{
 		Tool:        "latencybench",
+		Mode:        cfg.mode,
 		RunID:       b.runID,
 		StartedAt:   b.started.UTC(),
 		DurationS:   time.Since(b.started).Round(time.Millisecond).Seconds(),
@@ -116,6 +136,20 @@ func (b *bench) buildReport(setupErr error) *report {
 	r.Params.Pairs, r.Params.Samples, r.Params.Warmup = cfg.pairs, cfg.samples, cfg.warmup
 	r.Params.IntervalMs, r.Params.GraceMs = ms(cfg.interval), ms(cfg.grace)
 	r.Params.PayloadBytes, r.Params.PingsPerConn, r.Params.RankWindow = cfg.payload, cfg.pings, cfg.rankWindow
+	if cfg.mode == modeGhost {
+		r.Params.PayloadBytes = 0 // -payload does not apply: the sender sends pos
+		r.Ghost = &ghostReport{StepUnits: ghostStep}
+		for _, p := range b.pairs {
+			if p.ghost == nil {
+				continue
+			}
+			c := p.ghost.clippedCount()
+			r.Ghost.Clipped += c
+			r.Ghost.PerPair = append(r.Ghost.PerPair, ghostPair{
+				Pair: p.idx, SenderRole: p.ghostRole, SpawnX: p.ghost.x0, SpawnY: p.ghost.y0, Clipped: c,
+			})
+		}
+	}
 	r.Params.PercentileMethod = "exact nearest-rank over all counted samples (sorted)"
 
 	var all []time.Duration
@@ -161,17 +195,18 @@ func (b *bench) buildReport(setupErr error) *report {
 	r.Ping.Received = pd.N
 	r.Ping.P50Ms, r.Ping.P95Ms, r.Ping.MaxMs, r.Ping.MeanMs = ms(pd.P50), ms(pd.P95), ms(pd.Max), ms(pd.Mean)
 
+	spec := scrapeFor(cfg.mode)
 	switch {
 	case cfg.metrics == "":
-		r.Server = serverReport{Note: "no -metrics URL given; server stage breakdown skipped"}
+		r.Server = serverReport{Histogram: spec.histogram, Note: "no -metrics URL given; server stage breakdown skipped"}
 	case b.scrapeBefore == nil || b.scrapeAfter == nil:
 		note := "metrics not scraped before and after the measured window"
 		if len(b.scrapeErr) > 0 {
 			note += ": " + strings.Join(b.scrapeErr, "; ")
 		}
-		r.Server = serverReport{MetricsURL: cfg.metrics, Note: note}
+		r.Server = serverReport{MetricsURL: cfg.metrics, Histogram: spec.histogram, Note: note}
 	default:
-		r.Server = compareScrapes(cfg.metrics, b.scrapeBefore, b.scrapeAfter)
+		r.Server = compareScrapesFor(spec, cfg.metrics, b.scrapeBefore, b.scrapeAfter)
 	}
 	return r
 }
@@ -198,10 +233,14 @@ func (p *printer) f(format string, args ...any) {
 
 func (r *report) print(out io.Writer) error {
 	w := &printer{w: out}
-	w.f("\n=== latencybench run %s  %s  (%s, %s)\n", r.RunID, r.StartedAt.Format(time.RFC3339), r.GoVersion, r.OS)
+	w.f("\n=== latencybench run %s  mode=%s  %s  (%s, %s)\n", r.RunID, r.Mode, r.StartedAt.Format(time.RFC3339), r.GoVersion, r.OS)
 	w.f("target  api=%s  ws=%s\n", r.Targets.API, r.Targets.WS)
-	w.f("params  pairs=%d (formed %d)  samples=%d  warmup=%d  interval=%gms  payload=%dB  grace=%gms\n",
-		r.Params.Pairs, r.PairsFormed, r.Params.Samples, r.Params.Warmup, r.Params.IntervalMs, r.Params.PayloadBytes, r.Params.GraceMs)
+	payload := fmt.Sprintf("%dB", r.Params.PayloadBytes)
+	if r.Ghost != nil {
+		payload = fmt.Sprintf("pos (+%g units/msg along y)", r.Ghost.StepUnits)
+	}
+	w.f("params  pairs=%d (formed %d)  samples=%d  warmup=%d  interval=%gms  payload=%s  grace=%gms\n",
+		r.Params.Pairs, r.PairsFormed, r.Params.Samples, r.Params.Warmup, r.Params.IntervalMs, payload, r.Params.GraceMs)
 	if r.SetupError != "" {
 		w.f("SETUP FAILED: %s\n", r.SetupError)
 	}
@@ -210,7 +249,11 @@ func (r *report) print(out io.Writer) error {
 	}
 
 	e := r.EndToEnd
-	w.f("\nEnd-to-end, player -> player (monotonic clock, exact percentiles, all pairs pooled)\n")
+	path := "player -> player"
+	if r.Ghost != nil {
+		path = "player -> validated room -> player"
+	}
+	w.f("\nEnd-to-end, %s (monotonic clock, exact percentiles, all pairs pooled)\n", path)
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', tabwriter.AlignRight)
 	tp := &printer{w: tw}
 	tp.f("samples\tlost\tp50\tp95\tp99\tmax\tmean\t\n")
@@ -235,6 +278,9 @@ func (r *report) print(out io.Writer) error {
 		}
 		w.f("  per-pair p95 ranges %.3fms (pair %d) .. %.3fms (pair %d); see -out for every pair\n", lo.P95Ms, lo.Pair, hi.P95Ms, hi.Pair)
 	}
+	if g := r.Ghost; g != nil {
+		w.f("  clipped=%d  (positions the server corrected; must be 0)\n", g.Clipped)
+	}
 
 	p := r.Ping
 	w.f("\nNetwork: WebSocket ping -> pong RTT (%d connections, %d/%d pongs)\n", p.Connections, p.Received, p.Sent)
@@ -242,7 +288,7 @@ func (r *report) print(out io.Writer) error {
 	w.f("  (one-way network ~ RTT/2 per hop; end-to-end crosses two hops: sender -> server -> receiver)\n")
 
 	s := r.Server
-	w.f("\nServer stages: %s, delta over the counted window (BUCKET ESTIMATES)\n", relayHistogram)
+	w.f("\nServer stages: %s, delta over the counted window (BUCKET ESTIMATES)\n", s.Histogram)
 	if len(s.Stages) > 0 {
 		tw = tabwriter.NewWriter(out, 0, 0, 2, ' ', tabwriter.AlignRight)
 		tp = &printer{w: tw}

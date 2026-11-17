@@ -180,6 +180,32 @@ func (a *apiClient) joinQueue(ctx context.Context, p *player, rank int) error {
 	return a.do(ctx, http.MethodPost, "/api/v1/queue", p.token, map[string]int{"rank": rank}, nil)
 }
 
+// joinGhostQueue queues the player for Ghost Tag, unranked, always: bench
+// matches must never score. The server echoes mode and unranked; a 2xx
+// without both is errNotUnranked, and the ticket is then in a queue.
+func (a *apiClient) joinGhostQueue(ctx context.Context, p *player, rank int) error {
+	var out struct {
+		Mode     string `json:"mode"`
+		Unranked bool   `json:"unranked"`
+	}
+	if err := a.do(ctx, http.MethodPost, "/api/v1/queue", p.token, ghostQueueBody(rank), &out); err != nil {
+		return err
+	}
+	if out.Mode != modeGhost || !out.Unranked {
+		return errNotUnranked
+	}
+	return nil
+}
+
+// ghostQueueBody is the body of a ghosttag POST /queue.
+func ghostQueueBody(rank int) any {
+	return struct {
+		Rank     int    `json:"rank"`
+		Mode     string `json:"mode"`
+		Unranked bool   `json:"unranked"`
+	}{rank, modeGhost, true}
+}
+
 // leaveQueue withdraws the player's ticket. removed is false (and err nil)
 // when the player was not queued, e.g. because the matcher took it first.
 func (a *apiClient) leaveQueue(ctx context.Context, p *player) (removed bool, err error) {

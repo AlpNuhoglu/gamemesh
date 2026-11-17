@@ -18,6 +18,10 @@ type pair struct {
 	receiver *player
 	recv     *receiver
 
+	// ghosttag mode: recv is ghost.receiver.
+	ghost     *ghostReceiver
+	ghostRole string // the sender's role in the first half
+
 	sent    int // messages written by the sender
 	sendErr error
 }
@@ -73,28 +77,34 @@ func (r *receiver) record(m serverMsg, now time.Duration) {
 		r.foreign++
 		return
 	}
+	r.storeLocked(d.S, now-time.Duration(d.T))
+}
+
+// storeLocked stores the arrival of sequence number seq, which is in range,
+// with latency lat. The caller holds mu.
+func (r *receiver) storeLocked(seq int, lat time.Duration) {
 	if r.stopped {
 		r.late++
 		return
 	}
 	// Duplicates and reordering are counted, like loss, over the counted
 	// range only; a warmup message still advances maxSeq.
-	counted := d.S >= r.warmup
-	if r.got[d.S] {
+	counted := seq >= r.warmup
+	if r.got[seq] {
 		if counted {
 			r.dup++
 		}
 		return
 	}
-	if d.S < r.maxSeq {
+	if seq < r.maxSeq {
 		if counted {
 			r.ooo++
 		}
 	} else {
-		r.maxSeq = d.S
+		r.maxSeq = seq
 	}
-	r.got[d.S] = true
-	r.lat[d.S] = now - time.Duration(d.T)
+	r.got[seq] = true
+	r.lat[seq] = lat
 }
 
 func (r *receiver) stop() {
