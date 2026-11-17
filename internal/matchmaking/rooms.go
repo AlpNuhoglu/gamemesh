@@ -13,14 +13,31 @@ import (
 // ErrRoomNotFound is returned for missing or expired rooms.
 var ErrRoomNotFound = errors.New("room not found")
 
+// ModeGhostTag is the Mode of a room that is a Ghost Tag match.
+const ModeGhostTag = "ghosttag"
+
 // Room is a created match. Stored as JSON in Redis with a TTL so abandoned
 // rooms clean themselves up.
+//
+// Mode, Bot and Unranked describe a validated room: one whose traffic the
+// WebSocket service reads and whose game it runs. A room without a Mode is
+// an opaque-relay room, as every room was before these fields existed; they
+// are omitted when empty, so such a room's record is unchanged. The record
+// is the only thing that decides what kind of room it is: a client cannot.
 type Room struct {
 	ID        string         `json:"id"`
 	Players   []string       `json:"players"`
 	Ranks     map[string]int `json:"ranks"`
 	Status    string         `json:"status"`
 	CreatedAt time.Time      `json:"created_at"`
+	// Mode names the game of a validated room (ModeGhostTag), empty for an
+	// opaque-relay room.
+	Mode string `json:"mode,omitempty"`
+	// Bot says the room has one human player and the server's bot plays
+	// the other part.
+	Bot bool `json:"bot,omitempty"`
+	// Unranked says the match must not produce points (bench rooms).
+	Unranked bool `json:"unranked,omitempty"`
 }
 
 // HasPlayer reports whether playerID is one of the room's players.

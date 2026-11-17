@@ -85,7 +85,10 @@ type Config struct {
 	MatchRankWindow  int
 	MatchBatchSize   int64
 	MatchMaxQueueAge time.Duration
-	RoomTTL          time.Duration
+	// MatchBotWait is how long a Ghost Tag ticket waits for a human
+	// opponent before matchmaking gives it a room with the bot.
+	MatchBotWait time.Duration
+	RoomTTL      time.Duration
 
 	// Presence tuning. PresenceTTL is the expiry on presence:{id}; if heartbeats
 	// stop for longer, the key vanishes and the player is OFFLINE. The heartbeat
@@ -192,6 +195,7 @@ func Load(serviceName string) *Config {
 		MatchRankWindow:  getEnvInt("MATCH_RANK_WINDOW", 100),
 		MatchBatchSize:   int64(getEnvInt("MATCH_BATCH_SIZE", 1000)),
 		MatchMaxQueueAge: getEnvDuration("MATCH_MAX_QUEUE_AGE", 5*time.Minute),
+		MatchBotWait:     getEnvDuration("MATCH_BOT_WAIT", 5*time.Second),
 		RoomTTL:          getEnvDuration("ROOM_TTL", time.Hour),
 
 		PresenceTTL:               getEnvDuration("PRESENCE_TTL", 45*time.Second),
