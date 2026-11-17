@@ -350,13 +350,114 @@ the read side allocates for every message.
 
 | Class | Messages | Path | Guarantee |
 |---|---|---|---|
-| Ephemeral | `relay` (movement, position, input) | client → hub → clients, in memory | At-most-once; shed for a slow receiver; one replica only |
+| Ephemeral | `relay` in an opaque-relay room (movement, position, input) | client → hub → clients, in memory, unread | At-most-once; shed for a slow receiver; one replica only |
+| Ephemeral | `relay` in a validated room (Ghost Tag `pos`, `ping`), and the room's answers as `Game` frames | client → hub → the room's game → clients, in memory | Same |
 | Ephemeral | `PlayerJoined`, `PlayerLeft`, `JoinRejected` (room notices) | hub → clients | Same |
 | Durable | `MatchFound`, `LeaderboardUpdated`, presence | service → JetStream → websocket bridge | At-least-once |
 | Durable | `PlayerRegistered`, `PlayerUpdated`, `SessionRevoked` | Postgres outbox → relay → JetStream | Never lost once committed |
 
-Anything that must not be lost (a match result, a score) goes through the REST
-API and the durable path, never through `relay`.
+Anything that must not be lost goes through a durable path, never through
+`relay`. Until Ghost Tag that meant the REST API. A validated room produces its
+match result on the server, and a ranked result is written to Redis by the
+WebSocket service in one transaction keyed by the room (design doc, section 4);
+what reaches the players about it (`match_end`) is still an ephemeral `Game`
+frame. That store is not built yet: every match is unranked so far.
+
+## Validated rooms (Ghost Tag), measured 2026-11-17
+
+Ghost Tag adds a second mode to the room. An **opaque-relay** room is what the
+sections above measure: the server passes the data on unread. In a
+**validated room** the server opens each position packet, validates it
+(speed, turn, arena), checks for a capture, and broadcasts a `pos` of its own;
+the client's packet never reaches the other player (`internal/wsgateway/game.go`,
+`internal/ghosttag`). The design rule (Ghost Tag design doc, section 9, Note B) is
+that what this costs is measured, not assumed. Three measurements answer it.
+
+All runs: local stack (`docker compose`), Docker Desktop on an M4 Pro,
+10 pairs, 500 counted messages per pair, every 50 ms, the same session.
+`scripts/latencybench -mode ghosttag` drives a validated room (it is local
+only and refuses any non-loopback address); its matches are unranked.
+
+### 1. The opaque relay, before and after this work
+
+Adding validated rooms changed the relay's own path in one place: the frame is
+now built under the hub's read lock, after a lookup that the room is not a
+validated room. The WebSocket container was switched between the image built
+at `b58b893` (before) and at the Ghost Tag branch (after), the rest of the
+stack unchanged, in the order before, after, before, after, before, after.
+Payload 120 bytes, as in the earlier runs.
+
+| Run | Image | End-to-end p50 | p95 | Server `process` mean (exact) | `process` p95 (estimate) | Server `total` mean |
+|---|---|---|---|---|---|---|
+| 1 | before | 0.546 ms | 1.154 ms | 0.025 ms | 0.053 ms | 0.060 ms |
+| 2 | after | 0.543 ms | 1.194 ms | 0.025 ms | 0.061 ms | 0.062 ms |
+| 3 | before | 0.542 ms | 1.282 ms | 0.024 ms | 0.050 ms | 0.060 ms |
+| 4 | after | 0.563 ms | 1.262 ms | 0.026 ms | 0.063 ms | 0.063 ms |
+| 5 | before | 0.562 ms | 1.266 ms | 0.025 ms | 0.057 ms | 0.064 ms |
+| 6 | after | 0.558 ms | 1.364 ms | 0.026 ms | 0.061 ms | 0.062 ms |
+
+End to end there is no difference: the before and after p50s overlap
+(0.542–0.562 ms against 0.543–0.563 ms). Inside the server there is a small,
+consistent one: the exact `process` mean goes from 0.0247 to 0.0257 ms on
+average (+1 µs), and the `process` p95 of every "after" run is above that of
+every "before" run (about +8 µs; a bucket estimate, the buckets there are 25,
+50 and 100 µs). The README's 0.02–0.20 ms for the server's share still holds.
+
+### 2. Opaque relay against validated room
+
+The same image (after), alternating the two modes: relay, validated, relay,
+validated, relay, validated. To compare the path and nothing else, both send
+every 50 ms and the relay's payload is cut to 65 bytes, the size of a Ghost
+Tag `pos`. Every validated run: 0 lost, 0 positions corrected by the server
+(`clipped=0`), no warning.
+
+| Run | Mode | End-to-end p50 | p95 | `process` mean (exact) | `process` p95 (estimate) | `queue` mean | `total` mean |
+|---|---|---|---|---|---|---|---|
+| 1 | relay | 0.583 ms | 1.453 ms | 0.028 ms | 0.074 ms | 0.017 ms | 0.068 ms |
+| 2 | validated | 0.540 ms | 1.121 ms | 0.038 ms | 0.093 ms | 0.007 ms | 0.073 ms |
+| 3 | relay | 0.538 ms | 1.194 ms | 0.024 ms | 0.060 ms | 0.015 ms | 0.059 ms |
+| 4 | validated | 0.534 ms | 1.122 ms | 0.037 ms | 0.092 ms | 0.007 ms | 0.071 ms |
+| 5 | relay | 0.505 ms | 1.090 ms | 0.023 ms | 0.049 ms | 0.015 ms | 0.057 ms |
+| 6 | validated | 0.530 ms | 1.106 ms | 0.039 ms | 0.094 ms | 0.008 ms | 0.075 ms |
+
+The relay's stages are read from `gamemesh_ws_relay_duration_seconds`, the
+validated room's from `gamemesh_ws_game_duration_seconds`; both have the same
+four stages, measured at the same points (read from the socket, queued for the
+receiver, written).
+
+- **`process` is about 13 µs longer** in a validated room: 0.038 ms on average
+  against 0.025 ms. It is the stage that does the extra work: the packet is
+  handed to the room's goroutine, decoded, validated, written to the ring,
+  checked for a capture, and a new `pos` is encoded.
+- **`queue` is about 8 µs shorter**, and the server's `total` ends up 12 µs
+  longer: 0.073 ms against 0.061 ms. Why `queue` is shorter was not
+  investigated; it is reported as measured.
+- **End to end there is no difference** at this resolution: 0.530–0.540 ms
+  against 0.505–0.583 ms. The 12 µs is 0.03 % of the 40 ms a message takes in
+  production.
+
+### 3. The per-packet work alone
+
+`go test -bench` on the Ghost Tag package, ten runs each, same machine:
+
+| Benchmark | What it covers | Median | Range | Allocations |
+|---|---|---|---|---|
+| `BenchmarkPacketCore` | validate + ring write + capture check | 75.2 ns | 74.6–78.8 ns | 0 |
+| `BenchmarkHandlePos` | the room's whole handling of a decoded packet, including encoding the outbound `pos` | 239.5 ns | 234.7–247.8 ns | 1 (126 B) |
+| `BenchmarkDecodePos` | decoding the inbound JSON | 478.8 ns | 474.7–483.3 ns | 1 (64 B) |
+
+The validation itself is under 0.1 µs, and decoding plus handling under 1 µs.
+Against the 13 µs that `process` grew by, this says the time is not in the
+game's arithmetic. The rest is most likely the hand-off from the connection's
+goroutine to the room's through a channel; that is an inference from the two
+measurements, not a third one.
+
+### Reading it
+
+Validation is not free inside the server, and it is not visible outside it.
+Its cost is about 12 µs per message, against 0.06 ms the server spent on the
+relay and 40 ms end to end in production. Nothing was optimised: the
+measurement is the result.
 
 ## Not done
 
@@ -390,7 +491,9 @@ Done after these numbers were taken (#133, 2026-11-14), and not re-measured:
   player's connections, shared with joins.
 
 Both are outside the relay's path once a player is in the room, so the numbers
-above should stand; that is an expectation, not a measurement.
+above should stand. That was an expectation; the measurement of 2026-11-17
+("Validated rooms" below) took the relay before and after the later change to
+its own path and found the server's share within 1 µs on the mean.
 
 ## For the game client (phase 3)
 
