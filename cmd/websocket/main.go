@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/ghosttag"
+	"github.com/alpnuhoglu/gamemesh/internal/leaderboard"
 	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/internal/presence"
@@ -106,16 +107,6 @@ func run() int {
 	defer stop()
 	var workers server.Workers
 
-	// Sessions run until the shutdown signal; hub.CloseAll, the shutdown
-	// hook below, stops them before it closes a connection. There is no
-	// score store yet, so every match is reported unranked.
-	hub.SetGames(ctx, gameHost{
-		cfg:    game,
-		scores: nil,
-		events: gameEvents{total: m.WSGameEventsTotal},
-		log:    log,
-	}, cfg.GameStartWindow)
-
 	// Refresh presence TTL for every locally-connected player on a ticker.
 	workers.Go(func() { hub.RunHeartbeat(ctx, cfg.PresenceHeartbeatInterval) })
 	// Close connections whose session was revoked or whose JWT expired.
@@ -133,6 +124,21 @@ func run() int {
 	}
 	defer func() { _ = bus.Close() }()
 	bridge := wsgateway.NewBridge(hub, bus, log)
+
+	// Sessions run until the shutdown signal; hub.CloseAll, the shutdown
+	// hook below, stops them before it closes a connection. A ranked match
+	// is settled in Redis and then announced on the bus.
+	hub.SetGames(ctx, gameHost{
+		cfg: game,
+		scores: gameScores{
+			store: leaderboard.NewGhostTagStore(rdb),
+			pub:   bus,
+			log:   log,
+			later: func(f func()) { go f() },
+		},
+		events: gameEvents{total: m.WSGameEventsTotal},
+		log:    log,
+	}, cfg.GameStartWindow)
 	workers.Go(func() {
 		if err := bridge.Run(ctx); err != nil {
 			log.Fatal("event bridge failed", zap.Error(err))

@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/ghosttag"
+	"github.com/alpnuhoglu/gamemesh/internal/leaderboard"
 	"github.com/alpnuhoglu/gamemesh/internal/matchmaking"
 	"github.com/alpnuhoglu/gamemesh/internal/wsgateway"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
@@ -52,13 +53,16 @@ type allSessions struct{}
 
 func (allSessions) Exists(context.Context, string) (bool, error) { return true, nil }
 
-// countingStore is a ScoreStore that applies the game's rule to players
-// without a streak and counts how often it is asked.
-type countingStore struct{ calls atomic.Int32 }
+// countingStore is the service's real score store (gameScores, on a
+// miniredis) behind a counter of how often the game asks it.
+type countingStore struct {
+	calls atomic.Int32
+	real  gameScores
+}
 
-func (s *countingStore) Settle(_ context.Context, _ ghosttag.Match, score func(map[string]ghosttag.Standing) map[string]ghosttag.Award) (ghosttag.Settlement, error) {
+func (s *countingStore) Settle(ctx context.Context, m ghosttag.Match, score func(map[string]ghosttag.Standing) map[string]ghosttag.Award) (ghosttag.Settlement, error) {
 	s.calls.Add(1)
-	return ghosttag.Settlement{Ranked: true, Awards: score(map[string]ghosttag.Standing{})}, nil
+	return s.real.Settle(ctx, m, score)
 }
 
 type eventCounts struct {
@@ -276,7 +280,8 @@ func (c *gameClient) stopSending() {
 func TestGhostTagMatchOverRealSockets(t *testing.T) {
 	alice, bob := uuid.New(), uuid.New()
 	ids := []string{alice.String(), bob.String()}
-	store := &countingStore{}
+	scores, mr, announced := newGameScores(t)
+	store := &countingStore{real: scores}
 	events := &eventCounts{n: map[string]int{}}
 
 	hub := wsgateway.NewHub(zap.NewNop(), metrics.New("ws-game-test"), nil, gameRooms{players: ids})
@@ -361,6 +366,13 @@ func TestGhostTagMatchOverRealSockets(t *testing.T) {
 	assert.Contains(t, deltas, ids[0])
 	assert.Contains(t, deltas, ids[1])
 	assert.Equal(t, int32(1), store.calls.Load(), "the match was settled exactly once")
+	// What the players were shown is what was written, and announced.
+	for _, id := range ids {
+		written, err := mr.ZScore(leaderboard.GhostTagAllTimeKey, id)
+		require.NoError(t, err, "%s is on the Ghost Tag board", id)
+		assert.Equal(t, deltas[id], written, "%s: match_end shows what Redis holds", id)
+	}
+	assert.Len(t, announced.payloads(t), 2, "each player's standing was announced")
 	assert.Equal(t, 1, events.get(ghosttag.EventMatchCompleted))
 	assert.Zero(t, events.get(ghosttag.EventRoomPanic))
 	assert.NotEmpty(t, a.all("pong"), "a ping is answered")

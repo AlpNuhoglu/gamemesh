@@ -452,6 +452,36 @@ bitiminde seri durumu **senkron** okunmak zorundadır.
   `LeaderboardUpdated` yayınlanır; aksi halde diğer istemcilerin skor tablosu
   bayat kalır. Bu olayın artık iki üreticisi vardır, bkz. bölüm 11.
 
+**Uygulama (`internal/leaderboard/ghosttag.go`).**
+
+| Anahtar | Tür | Ömür | İçerik |
+|---|---|---|---|
+| `lb:ghosttag:alltime` | ZSET | kalıcı | Genel Ghost Tag sıralaması |
+| `lb:ghosttag:daily:YYYY-MM-DD` | ZSET | 8 gün | O UTC gününün sıralaması |
+| `player:stats:{player_id}` | HASH | kalıcı | `wins`, `win_streak`, `fastest_capture_ms` |
+| `ghosttag:settled:{room}` | STRING (JSON) | 7 gün | Odanın yerleşim sonucu; aynı odanın yeniden denenmesine aynı cevap |
+| `ghosttag:pair:{gün}:{a}:{b}` | STRING | 48 saat | İki oyuncu o gün puanlı bir maç yerleştirdi (oyuncular sıralı, sıra fark etmez) |
+
+- **İyimser işlem.** Tek `WATCH/MULTI/EXEC`: oda kaydı, çift anahtarı ve iki
+  oyuncunun `player:stats`'ı izlenir. Seri, puanı yazan işlemin içinde okunur;
+  aynı oyuncunun aynı anda biten iki maçı aynı seriye bina edemez.
+- **Çakışmada yeniden deneme.** İzlenen anahtar değişmişse işlem en fazla 5
+  kez yeniden denenir. Puan kuralı saf olduğu için her denemede yeniden
+  çağrılabilir.
+- **Puansız cevap da hatırlanır.** Aynı çiftin aynı gündeki ikinci maçı hiçbir
+  şey yazmaz ama oda kaydına "puansız" yazılır; çift anahtarının süresi dolsa
+  bile o odanın tekrar denenmesi puanlı olmaz.
+- **Olay hangi tabloya ait.** `LeaderboardUpdated` olayına isteğe bağlı
+  `board` alanı eklendi: Ghost Tag olayları `"board":"ghosttag"` taşır ve
+  sıra/puan Ghost Tag genel tablosundandır. Alan yoksa olay eskisi gibi
+  leaderboard servisinin genel tablosunu anlatır. Olaylar oda cevabını
+  beklemez; `match_end`'i geciktirmezler.
+- **Takma ad yazılmaz.** `player:stats`'ın takma ad alanı bu adımda yok: maçı
+  yerleştiren WebSocket servisi oyuncuyu yalnızca `player_id` ile tanır.
+- **Redis Cluster ile uyumsuz.** İşlem farklı slotlara düşen anahtarları
+  birlikte izler; tek düğümlü Redis'te (bugünkü kurulum) çalışır, Cluster'a
+  geçişte anahtarlara ortak hash tag gerekir.
+
 **Hesap yükseltme uyumu.** Skorlar `player_id` (JWT `sub`) anahtarına
 yazıldığı için misafir oturumu ileride kalıcı hesaba bağlandığında puan ve
 seri kayıpsız devreder.

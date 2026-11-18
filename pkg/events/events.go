@@ -88,7 +88,14 @@ type LeaderboardUpdatedPayload struct {
 	PlayerID string  `json:"player_id"`
 	Score    float64 `json:"score"`
 	Rank     int64   `json:"rank"`
+	// Board names the board Score and Rank are on. Empty is the global
+	// board (the leaderboard service); "ghosttag" is Ghost Tag's all-time
+	// board, written by the WebSocket service when a ranked match settles.
+	Board string `json:"board,omitempty"`
 }
+
+// BoardGhostTag is the Board of a Ghost Tag LeaderboardUpdated.
+const BoardGhostTag = "ghosttag"
 
 // PlayerRegisteredPayload is emitted when a new player is created. Written to
 // the outbox atomically with the players/player_stats rows.

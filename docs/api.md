@@ -143,7 +143,7 @@ gets `401`, and `503` means the session store did not answer (retry later).
 | `PlayerJoined` | someone joins a room you're in | `{ "player_id" }` |
 | `PlayerLeft` | someone leaves / disconnects | `{ "player_id" }` |
 | `MatchFound` | matchmaking paired you | `{ "room_id", "players": […] }` (sent directly to both players) |
-| `LeaderboardUpdated` | any score change | `{ "player_id", "score", "rank" }` (broadcast) |
+| `LeaderboardUpdated` | any score change | `{ "player_id", "score", "rank" }` (broadcast); a ranked Ghost Tag match adds `"board": "ghosttag"`, and score and rank are then on the Ghost Tag all-time board |
 
 ## Operational endpoints (every service)
 
