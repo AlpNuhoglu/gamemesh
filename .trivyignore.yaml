@@ -219,19 +219,23 @@ vulnerabilities:
   # 12.4 is 12.x's last minor, supported until 2027-05-24; 13.3.0 had 39
   # findings, mostly in bundled plugins. Short expiry: Grafana publishes a
   # patch release about every two weeks, and Dependabot proposes it.
+  # 2026-11-21, three days before they expired: 12.4.15 is still the newest
+  # 12.4 release and both are still reported for it. Their reason still holds
+  # (datasources.yaml provisions Prometheus only), so both are renewed once,
+  # to 2026-12-05.
   - id: CVE-2026-21728
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
       Tempo's query code, compiled into Grafana for its Tempo data source.
       There is none (one provisioned data source, Prometheus; no one but the
       admin can add another).
-    expired_at: 2026-11-24
+    expired_at: 2026-12-05
   - id: CVE-2026-28377
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
       Tempo's status config endpoint, compiled into Grafana for its Tempo data
       source. There is none, and Grafana serves no Tempo endpoint.
-    expired_at: 2026-11-24
+    expired_at: 2026-12-05
   # CVE-2026-97054 in Grafana (Go 1.26.10; fixed in 1.26.11). An HTTP/1 server
   # that limits a request body with MaxBytesReader can crash when the limit is
   # exceeded. There is no 12.4 release built with the fix yet (12.4.15 is the
