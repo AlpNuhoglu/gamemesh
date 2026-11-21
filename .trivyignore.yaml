@@ -188,6 +188,31 @@ vulnerabilities:
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
+  - id: CVE-2026-97054
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  # libxml2 in postgres:16.16-alpine (nightly scan red on 2026-11-21). Alpine
+  # 3.24 has the fix (2.13.9-r3), but the image has not been rebuilt with it:
+  # both the pinned build (2026-11-12) and the newest (2026-11-18) still have
+  # r2, so there is no digest to move to. Scoped to that package version: the
+  # exception stops matching the day the image carries r3. A package scope
+  # is not an image scope: it would also hide the finding in another scanned
+  # image with libxml2 2.13.9-r2, and on 2026-11-21 there is none (the nightly
+  # run failed on this image only). Short expiry, so that the image is looked
+  # at again rather than the finding forgotten.
+  - id: CVE-2026-86144
+    purls: ["pkg:apk/alpine/libxml2@2.13.9-r2"]
+    statement: >-
+      The flaw is in libxml2's XInclude processing (xmlXIncludeProcess*). In
+      this image neither the postgres binary nor pgxml.so refers to any
+      xmlXInclude symbol; only libxslt.so does, and it is loaded only by the
+      xml2 extension, which this database does not create (pgcrypto is the
+      only one). No query of the services uses an XML function.
+    expired_at: 2026-12-05
   # Grafana 12.4.15 (phase 2, G5; finding #94): 12.4.14's exceptions for
   # go-jose (CVE-2026-116587) and x/net (CVE-2026-78661) went with the upgrade
   # (the scan of 12.4.15 no longer reports them); the two Tempo ones remain.
