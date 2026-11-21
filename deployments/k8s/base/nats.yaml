@@ -60,7 +60,7 @@ spec:
         - name: nats
           # Same version as docker-compose; tag for people, digest for the
           # runtime (the tag can be republished, the digest cannot).
-          image: nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f
+          image: nats:2.15.3-alpine@sha256:558394a23dd3c36f2d3a64b51865fd09908010e80a542cea5e75c2af543ed62a
           # Flags only, as in docker-compose: the image's default config file
           # (a sample cluster block with a placeholder password) is not loaded.
           args: ["-js", "-sd", "/data", "-m", "8222"]
