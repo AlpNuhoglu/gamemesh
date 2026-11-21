@@ -188,25 +188,79 @@ vulnerabilities:
       runs gosu when started as root; the manifest starts it as uid 70, so the
       binary is never executed.
     expired_at: 2027-01-18
+  - id: CVE-2026-97054
+    paths: ["usr/local/bin/gosu"]
+    statement: >-
+      postgres:16.16-alpine ships gosu built with go1.24.6. Its entrypoint only
+      runs gosu when started as root; the manifest starts it as uid 70, so the
+      binary is never executed.
+    expired_at: 2027-01-18
+  # libxml2 in postgres:16.16-alpine (nightly scan red on 2026-11-21). Alpine
+  # 3.24 has the fix (2.13.9-r3), but the image has not been rebuilt with it:
+  # both the pinned build (2026-11-12) and the newest (2026-11-18) still have
+  # r2, so there is no digest to move to. Scoped to that package version: the
+  # exception stops matching the day the image carries r3. A package scope
+  # is not an image scope: it would also hide the finding in another scanned
+  # image with libxml2 2.13.9-r2, and on 2026-11-21 there is none (the nightly
+  # run failed on this image only). Short expiry, so that the image is looked
+  # at again rather than the finding forgotten.
+  - id: CVE-2026-86144
+    purls: ["pkg:apk/alpine/libxml2@2.13.9-r2"]
+    statement: >-
+      The flaw is in libxml2's XInclude processing (xmlXIncludeProcess*). In
+      this image neither the postgres binary nor pgxml.so refers to any
+      xmlXInclude symbol; only libxslt.so does, and it is loaded only by the
+      xml2 extension, which this database does not create (pgcrypto is the
+      only one). No query of the services uses an XML function.
+    expired_at: 2026-12-05
   # Grafana 12.4.15 (phase 2, G5; finding #94): 12.4.14's exceptions for
   # go-jose (CVE-2026-116587) and x/net (CVE-2026-78661) went with the upgrade
   # (the scan of 12.4.15 no longer reports them); the two Tempo ones remain.
   # 12.4 is 12.x's last minor, supported until 2027-05-24; 13.3.0 had 39
   # findings, mostly in bundled plugins. Short expiry: Grafana publishes a
   # patch release about every two weeks, and Dependabot proposes it.
+  # 2026-11-21, three days before they expired: 12.4.15 is still the newest
+  # 12.4 release and both are still reported for it. Their reason still holds
+  # (datasources.yaml provisions Prometheus only), so both are renewed once,
+  # to 2026-12-05.
   - id: CVE-2026-21728
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
       Tempo's query code, compiled into Grafana for its Tempo data source.
       There is none (one provisioned data source, Prometheus; no one but the
       admin can add another).
-    expired_at: 2026-11-24
+    expired_at: 2026-12-05
   - id: CVE-2026-28377
     paths: ["usr/share/grafana/bin/grafana"]
     statement: >-
       Tempo's status config endpoint, compiled into Grafana for its Tempo data
       source. There is none, and Grafana serves no Tempo endpoint.
-    expired_at: 2026-11-24
+    expired_at: 2026-12-05
+  # CVE-2026-97054 in Grafana (Go 1.26.10; fixed in 1.26.11). An HTTP/1 server
+  # that limits a request body with MaxBytesReader can crash when the limit is
+  # exceeded. There is no 12.4 release built with the fix yet (12.4.15 is the
+  # newest; checked 2026-11-21). Accepted by the owner on 2026-11-21 as a risk,
+  # not as unreachable: see the first entry. Short expiry, as for the Tempo
+  # ones: until Grafana's next patch release.
+  - id: CVE-2026-97054
+    paths: ["usr/share/grafana/bin/grafana"]
+    statement: >-
+      ACCEPTED RISK, reachable. The affected code is linked into this binary
+      (go tool nm: net/http.(*maxBytesReader).Read), and Grafana is reachable
+      from the internet through the status page's routed paths
+      (status.gamemesh.app, monitoring/status.yaml). Whether one of those
+      paths can trigger the race was not established. The effect is a crash
+      of the Grafana process, which Kubernetes restarts: the status page and
+      the dashboards are gone for the restart; no data is exposed or changed.
+      The page's Ingress limits each client to 10 requests a second.
+    expired_at: 2026-12-05
+  - id: CVE-2026-97054
+    paths: ["usr/share/grafana/bin/grafana-server", "usr/share/grafana/bin/grafana-cli"]
+    statement: >-
+      Not affected: these two are small launchers built with the same Go, and
+      contain no net/http code at all (go tool nm finds no net/http symbol in
+      either; the grafana binary beside them has 2354).
+    expired_at: 2026-12-05
   # Prometheus 3.16.0 (phase 2, G4). The finding came along from 3.15.1: it
   # is built with x/net 0.61.0, and the fix is in 0.62.0.
   - id: CVE-2026-78661
@@ -219,6 +273,20 @@ vulnerabilities:
       on 3.15.1 and was not run again on 3.16.0. Expires after the next minor
       release, due about 2026-12-16.
     expired_at: 2026-12-16
+  # CVE-2026-97054 in Prometheus (Go 1.27.3; fixed in 1.27.4), the same flaw
+  # as in Grafana above. v3.16.0 is the newest release (checked 2026-11-21).
+  # Accepted by the owner on 2026-11-21 as a risk, not as unreachable.
+  - id: CVE-2026-97054
+    paths: ["usr/bin/prometheus", "usr/bin/promtool"]
+    statement: >-
+      ACCEPTED RISK. The affected code is linked into both binaries (go tool
+      nm: net/http.(*maxBytesReader).Read). The server is reachable only
+      from inside the cluster: its Service is ClusterIP and no Ingress routes
+      to it; people reach it by port-forward. Any pod in the cluster can,
+      since there is no NetworkPolicy. The effect is a crash of the process,
+      which Kubernetes restarts, with a gap in the scraped metrics. promtool
+      is a command-line tool and serves nothing.
+    expired_at: 2026-12-05
 # Accepted misconfiguration findings, same rules: scoped to one file, with a
 # reason and an expiry.
 misconfigurations:
