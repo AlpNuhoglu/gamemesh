@@ -2,6 +2,8 @@ package player
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,25 +23,77 @@ type SessionStore interface {
 	// ExistsMany reports, in order, whether each session exists, in one round
 	// trip. The WebSocket service uses it to re-check every open connection.
 	ExistsMany(ctx context.Context, jtis []string) ([]bool, error)
+	// DeleteAll revokes every session of a player and returns their JTIs. It
+	// is what makes deleting an account final: without it the account's other
+	// tokens would stay valid until they expire.
+	DeleteAll(ctx context.Context, playerID string) ([]string, error)
 }
 
 type redisSessionStore struct {
 	rdb *redis.Client
+	now func() time.Time
 }
 
 // NewSessionStore returns the Redis-backed session cache.
 func NewSessionStore(rdb *redis.Client) SessionStore {
-	return &redisSessionStore{rdb: rdb}
+	return &redisSessionStore{rdb: rdb, now: time.Now}
 }
 
 func sessionKey(jti string) string { return "session:" + jti }
 
+// playerSessionsKey is the index of a player's sessions: a sorted set of
+// JTIs scored by the Unix second each session expires. A session key is
+// found by its JTI only, so without the index "every session of this player"
+// would be a scan of the whole keyspace.
+func playerSessionsKey(playerID string) string { return "sessions:" + playerID }
+
+// Save stores the session and lists it in the player's index.
+//
+// The index is kept bounded by dropping, on every save, the entries whose
+// session has already expired, and it outlives its longest session: its own
+// expiry is only ever moved later (NX sets it when the key is new, GT when
+// the new session ends after the ones already listed).
 func (s *redisSessionStore) Save(ctx context.Context, jti, playerID string, ttl time.Duration) error {
-	return s.rdb.Set(ctx, sessionKey(jti), playerID, ttl).Err()
+	now := s.now()
+	index := playerSessionsKey(playerID)
+	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, sessionKey(jti), playerID, ttl)
+		p.ZRemRangeByScore(ctx, index, "-inf", strconv.FormatInt(now.Unix(), 10))
+		p.ZAdd(ctx, index, redis.Z{Score: float64(now.Add(ttl).Unix()), Member: jti})
+		p.ExpireNX(ctx, index, ttl)
+		p.ExpireGT(ctx, index, ttl)
+		return nil
+	})
+	return err
 }
 
+// Delete revokes one session and takes it out of its player's index.
 func (s *redisSessionStore) Delete(ctx context.Context, jti string) error {
-	return s.rdb.Del(ctx, sessionKey(jti)).Err()
+	playerID, err := s.rdb.GetDel(ctx, sessionKey(jti)).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil // already gone: expired, or revoked before
+	}
+	if err != nil {
+		return err
+	}
+	return s.rdb.ZRem(ctx, playerSessionsKey(playerID), jti).Err()
+}
+
+func (s *redisSessionStore) DeleteAll(ctx context.Context, playerID string) ([]string, error) {
+	index := playerSessionsKey(playerID)
+	jtis, err := s.rdb.ZRange(ctx, index, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(jtis)+1)
+	for _, jti := range jtis {
+		keys = append(keys, sessionKey(jti))
+	}
+	keys = append(keys, index)
+	if err := s.rdb.Del(ctx, keys...).Err(); err != nil {
+		return nil, err
+	}
+	return jtis, nil
 }
 
 func (s *redisSessionStore) Exists(ctx context.Context, jti string) (bool, error) {
@@ -137,6 +191,16 @@ func (c *cachedSessionStore) Exists(ctx context.Context, jti string) (bool, erro
 	}
 	c.set(jti, exists)
 	return exists, nil
+}
+
+// DeleteAll revokes the player's sessions in Redis and evicts them here, so
+// on this replica they stop working at once.
+func (c *cachedSessionStore) DeleteAll(ctx context.Context, playerID string) ([]string, error) {
+	jtis, err := c.inner.DeleteAll(ctx, playerID)
+	for _, jti := range jtis {
+		c.evict(jti)
+	}
+	return jtis, err
 }
 
 // ExistsMany bypasses the cache: a batch re-check wants Redis' current view.

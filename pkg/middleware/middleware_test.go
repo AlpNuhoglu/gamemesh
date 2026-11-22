@@ -273,6 +273,45 @@ func TestRateLimitRejectsBurstOverflow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// An hourly allowance must not be renewed by waiting ten minutes: the limiter
+// forgot an idle client after ten minutes whatever its limit, and the next
+// request found a new, full bucket.
+func TestRateLimitKeepsABucketUntilItHasRefilled(t *testing.T) {
+	const ip = "203.0.113.7"
+	l := newIPLimiter(2.0/3600, 2) // two an hour
+
+	assert.True(t, l.get(ip).Allow())
+	assert.True(t, l.get(ip).Allow())
+	assert.False(t, l.get(ip).Allow(), "the third request of the hour")
+
+	l.evictIdle(time.Now().Add(11 * time.Minute))
+	assert.False(t, l.get(ip).Allow(), "eleven idle minutes gave the client a fresh burst")
+
+	// Once the bucket would be full again, the entry is only memory.
+	l.evictIdle(time.Now().Add(61 * time.Minute))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	assert.Empty(t, l.limiters, "an entry idle for longer than its refill time is still kept")
+}
+
+// The global limit refills in two seconds, so its entries still go after ten
+// idle minutes; the map stays bounded.
+func TestRateLimitForgetsIdleClients(t *testing.T) {
+	l := newIPLimiter(50, 100)
+	l.get("203.0.113.7")
+
+	l.evictIdle(time.Now().Add(9 * time.Minute))
+	l.mu.Lock()
+	kept := len(l.limiters)
+	l.mu.Unlock()
+	assert.Equal(t, 1, kept, "an entry was forgotten before ten idle minutes")
+
+	l.evictIdle(time.Now().Add(11 * time.Minute))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	assert.Empty(t, l.limiters, "an entry idle for eleven minutes is still kept")
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	tm := auth.NewTokenManager("test-secret", time.Hour, "gamemesh")
 	playerID := uuid.New()
@@ -325,6 +364,31 @@ type stubSessions struct {
 }
 
 func (s stubSessions) Exists(context.Context, string) (bool, error) { return s.active, s.err }
+
+func TestDenyGuests(t *testing.T) {
+	tm := auth.NewTokenManager("test-secret", time.Hour, "gamemesh")
+	registered, _, err := tm.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	guest, err := tm.GenerateGuest(uuid.New(), "SwiftFox4821", time.Hour)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(Auth(tm, nil))
+	r.GET("/open", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	r.GET("/members", DenyGuests(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	status := func(path, token string) int {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	assert.Equal(t, http.StatusNoContent, status("/open", guest.Token), "a guest on a route open to guests")
+	assert.Equal(t, http.StatusForbidden, status("/members", guest.Token), "a guest on a route closed to guests")
+	assert.Equal(t, http.StatusNoContent, status("/members", registered), "a registered player on the same route")
+}
 
 func TestAuthMiddlewareRevocation(t *testing.T) {
 	tm := auth.NewTokenManager("test-secret", time.Hour, "gamemesh")

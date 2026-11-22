@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,73 @@ type mockRepository struct {
 	players    map[uuid.UUID]*Player
 	events     []events.Event
 	publishErr error
+	touchErr   error
+	createErr  error
+	sweepErr   error
+	// sweeps records each DeleteSwept call; swept, when set, is told too.
+	sweeps []sweepCall
+	swept  chan sweepCall
+}
+
+type sweepCall struct {
+	rule   SweepRule
+	cutoff time.Time
+	limit  int
+}
+
+func (r *mockRepository) DeleteWithOutbox(_ context.Context, id uuid.UUID, e events.Event, _ string) error {
+	if _, ok := r.players[id]; !ok {
+		return ErrNotFound
+	}
+	delete(r.players, id)
+	r.events = append(r.events, e)
+	return nil
+}
+
+// DeleteSwept applies the same rules as the SQL (which the integration tests
+// check against Postgres), oldest first, up to limit.
+func (r *mockRepository) DeleteSwept(_ context.Context, rule SweepRule, cutoff time.Time, limit int, _ string, event func(uuid.UUID) (events.Event, error)) ([]uuid.UUID, error) {
+	call := sweepCall{rule: rule, cutoff: cutoff, limit: limit}
+	r.sweeps = append(r.sweeps, call)
+	if r.swept != nil {
+		r.swept <- call
+	}
+	if r.sweepErr != nil {
+		return nil, r.sweepErr
+	}
+	var matched []*Player
+	for _, p := range r.players {
+		seen := p.CreatedAt
+		if p.LastSeenAt != nil {
+			seen = *p.LastSeenAt
+		}
+		switch rule {
+		case SweepInactiveGuests:
+			if p.IsGuest && seen.Before(cutoff) {
+				matched = append(matched, p)
+			}
+		case SweepBenchAccounts:
+			if !p.IsGuest && strings.HasSuffix(p.Email, "@latencybench.invalid") &&
+				strings.HasPrefix(p.Username, "bench") && p.CreatedAt.Before(cutoff) {
+				matched = append(matched, p)
+			}
+		}
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].CreatedAt.Before(matched[j].CreatedAt) })
+	var ids []uuid.UUID
+	for _, p := range matched {
+		if len(ids) == limit {
+			break
+		}
+		e, err := event(p.ID)
+		if err != nil {
+			return nil, err
+		}
+		r.events = append(r.events, e)
+		delete(r.players, p.ID)
+		ids = append(ids, p.ID)
+	}
+	return ids, nil
 }
 
 func (r *mockRepository) PublishEvent(_ context.Context, e events.Event, _ string) error {
@@ -38,6 +107,9 @@ func newMockRepository() *mockRepository {
 }
 
 func (r *mockRepository) Create(_ context.Context, p *Player) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
 	for _, existing := range r.players {
 		if existing.Username == p.Username || existing.Email == p.Email {
 			return ErrDuplicate
@@ -75,6 +147,18 @@ func (r *mockRepository) GetByEmail(_ context.Context, email string) (*Player, e
 	return nil, ErrNotFound
 }
 
+func (r *mockRepository) TouchLastSeen(_ context.Context, id uuid.UUID, at time.Time) error {
+	if r.touchErr != nil {
+		return r.touchErr
+	}
+	p, ok := r.players[id]
+	if !ok {
+		return ErrNotFound
+	}
+	p.LastSeenAt = &at
+	return nil
+}
+
 func (r *mockRepository) Update(_ context.Context, p *Player) error {
 	if _, ok := r.players[p.ID]; !ok {
 		return ErrNotFound
@@ -101,16 +185,20 @@ func (r *mockRepository) UpdateWithOutbox(ctx context.Context, p *Player, e even
 
 // fakeSessions records session operations.
 type fakeSessions struct {
-	saved   map[string]string
-	deleted []string
+	saved        map[string]string
+	deleted      []string
+	deletedAll   []string
+	ttls         map[string]time.Duration
+	deleteAllErr error
 }
 
 func newFakeSessions() *fakeSessions {
-	return &fakeSessions{saved: make(map[string]string)}
+	return &fakeSessions{saved: make(map[string]string), ttls: make(map[string]time.Duration)}
 }
 
-func (s *fakeSessions) Save(_ context.Context, jti, playerID string, _ time.Duration) error {
+func (s *fakeSessions) Save(_ context.Context, jti, playerID string, ttl time.Duration) error {
 	s.saved[jti] = playerID
+	s.ttls[jti] = ttl
 	return nil
 }
 
@@ -118,6 +206,21 @@ func (s *fakeSessions) Delete(_ context.Context, jti string) error {
 	s.deleted = append(s.deleted, jti)
 	delete(s.saved, jti)
 	return nil
+}
+
+func (s *fakeSessions) DeleteAll(_ context.Context, playerID string) ([]string, error) {
+	if s.deleteAllErr != nil {
+		return nil, s.deleteAllErr
+	}
+	var jtis []string
+	for jti, owner := range s.saved {
+		if owner == playerID {
+			jtis = append(jtis, jti)
+			delete(s.saved, jti)
+		}
+	}
+	s.deletedAll = append(s.deletedAll, playerID)
+	return jtis, nil
 }
 
 func (s *fakeSessions) Exists(_ context.Context, jti string) (bool, error) {
@@ -189,14 +292,14 @@ func TestLoginSuccessCachesSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// By username.
-	token, p, err := svc.Login(ctx, "alice", "password123")
+	session, err := svc.Login(ctx, "alice", "password123")
 	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-	assert.Equal(t, registered.ID, p.ID)
+	assert.NotEmpty(t, session.Token)
+	assert.Equal(t, registered.ID, session.Player.ID)
 	assert.Len(t, sessions.saved, 1)
 
 	// By email.
-	_, _, err = svc.Login(ctx, "alice@example.com", "password123")
+	_, err = svc.Login(ctx, "alice@example.com", "password123")
 	require.NoError(t, err)
 	assert.Len(t, sessions.saved, 2)
 }
@@ -208,8 +311,8 @@ func TestLoginFailuresAreIndistinguishable(t *testing.T) {
 	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
 	require.NoError(t, err)
 
-	_, _, errWrongPassword := svc.Login(ctx, "alice", "wrong-password")
-	_, _, errNoUser := svc.Login(ctx, "nobody", "password123")
+	_, errWrongPassword := svc.Login(ctx, "alice", "wrong-password")
+	_, errNoUser := svc.Login(ctx, "nobody", "password123")
 
 	// Same error for both prevents user enumeration.
 	assert.ErrorIs(t, errWrongPassword, ErrInvalidCredentials)
@@ -222,7 +325,7 @@ func TestLogoutDeletesSession(t *testing.T) {
 
 	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
 	require.NoError(t, err)
-	_, _, err = svc.Login(ctx, "alice", "password123")
+	_, err = svc.Login(ctx, "alice", "password123")
 	require.NoError(t, err)
 
 	var jti string
@@ -256,7 +359,7 @@ func loginJTI(t *testing.T, svc *Service, sessions *fakeSessions) string {
 	ctx := context.Background()
 	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
 	require.NoError(t, err)
-	_, _, err = svc.Login(ctx, "alice", "password123")
+	_, err = svc.Login(ctx, "alice", "password123")
 	require.NoError(t, err)
 	for jti := range sessions.saved {
 		return jti

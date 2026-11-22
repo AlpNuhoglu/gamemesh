@@ -77,8 +77,33 @@ func run() int {
 		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
 
-	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
-		log.Error("server exited", zap.Error(err))
+	// A deleted account is taken off the boards when its PlayerDeleted event
+	// arrives. Accounts are only deleted with the release flag on, so the
+	// consumer (a new durable consumer on the player stream) is only started
+	// with it.
+	ctx, stop := server.ShutdownContext()
+	defer stop()
+	var workers server.Workers
+	if cfg.GameClientEnabled {
+		remover := leaderboard.NewPlayerRemover(rdb, log)
+		workers.Go(func() {
+			if err := events.Consume(ctx, bus, remover.Handle, events.TopicPlayer); err != nil {
+				// Not fatal: the boards keep working, and a deleted player
+				// stays on them until the consumer is back.
+				log.Error("player event consumer stopped", zap.Error(err))
+			}
+		})
+	}
+
+	runErr := server.Run(engine, cfg.HTTPPort, log)
+	stop() // also stops the workers if Run failed without a signal
+	if workers.Wait(server.WorkerShutdownTimeout) {
+		log.Info("background workers stopped")
+	} else {
+		log.Warn("background workers still running at exit", zap.Duration("waited", server.WorkerShutdownTimeout))
+	}
+	if runErr != nil {
+		log.Error("server exited", zap.Error(runErr))
 		return 1
 	}
 	return 0

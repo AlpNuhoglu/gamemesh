@@ -64,3 +64,34 @@ func TestValidateGarbage(t *testing.T) {
 		assert.ErrorIs(t, err, ErrInvalidToken)
 	}
 }
+
+func TestGenerateGuest(t *testing.T) {
+	// The manager's own lifetime is a day; a guest token must not get it.
+	tm := NewTokenManager("test-secret", 24*time.Hour, "gamemesh")
+	playerID := uuid.New()
+
+	before := time.Now()
+	out, err := tm.GenerateGuest(playerID, "SwiftFox4821", 2*time.Hour)
+	require.NoError(t, err)
+
+	claims, err := tm.Validate(out.Token)
+	require.NoError(t, err)
+	assert.True(t, claims.Guest, "a guest token without the guest claim")
+	assert.Equal(t, playerID.String(), claims.PlayerID)
+	assert.Equal(t, "SwiftFox4821", claims.Username)
+	assert.Equal(t, out.JTI, claims.ID)
+	assert.WithinDuration(t, before.Add(2*time.Hour), claims.ExpiresAt.Time, 5*time.Second,
+		"a guest token lives for the guest lifetime")
+	assert.WithinDuration(t, claims.ExpiresAt.Time, out.ExpiresAt, time.Second,
+		"the expiry reported to the caller is the token's")
+}
+
+func TestGenerateIsNotAGuestToken(t *testing.T) {
+	tm := NewTokenManager("test-secret", time.Hour, "gamemesh")
+	token, _, err := tm.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+
+	claims, err := tm.Validate(token)
+	require.NoError(t, err)
+	assert.False(t, claims.Guest, "a registered player's token carries the guest claim")
+}

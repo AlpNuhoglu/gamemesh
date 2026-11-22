@@ -30,6 +30,8 @@ const (
 	CtxUserID    = "user_id"
 	CtxUsername  = "username"
 	CtxTokenJTI  = "token_jti"
+	// CtxGuest is true when the caller's token is a guest's.
+	CtxGuest = "guest"
 
 	HeaderRequestID = "X-Request-ID"
 	HeaderUserID    = "X-User-ID"
@@ -227,20 +229,47 @@ func CORS(origins *OriginMatcher) gin.HandlerFunc {
 	}
 }
 
-// ipLimiter tracks a token bucket per client IP. Entries idle for more than
-// ten minutes are evicted by a background janitor to bound memory. For
-// multi-replica gateways this would move to a Redis-based limiter; the
-// interface boundary (gin.HandlerFunc) stays the same.
+// ipLimiter tracks a token bucket per client IP. Idle entries are evicted by
+// a background janitor to bound memory. For multi-replica gateways this would
+// move to a Redis-based limiter; the interface boundary (gin.HandlerFunc)
+// stays the same.
 type ipLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*ipEntry
 	rps      rate.Limit
 	burst    int
+	// idle is how long an entry must go unused before it is forgotten.
+	idle time.Duration
 }
 
 type ipEntry struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
+}
+
+// minLimiterIdle is the shortest time an unused entry is kept.
+const minLimiterIdle = 10 * time.Minute
+
+// newIPLimiter builds a limiter of rps tokens a second up to burst, per IP.
+//
+// An entry may be forgotten only once its bucket would be full again:
+// forgetting it earlier hands the client a fresh burst. With a fixed
+// ten-minute eviction that was true for any limit that takes longer than ten
+// minutes to refill, so an hourly allowance was renewed six times an hour by
+// waiting. The idle time is therefore never shorter than the refill time.
+func newIPLimiter(rps float64, burst int) *ipLimiter {
+	l := &ipLimiter{
+		limiters: make(map[string]*ipEntry),
+		rps:      rate.Limit(rps),
+		burst:    burst,
+		idle:     minLimiterIdle,
+	}
+	if rps > 0 {
+		if refill := time.Duration(float64(burst) / rps * float64(time.Second)); refill > l.idle {
+			l.idle = refill
+		}
+	}
+	return l
 }
 
 func (l *ipLimiter) get(ip string) *rate.Limiter {
@@ -255,26 +284,27 @@ func (l *ipLimiter) get(ip string) *rate.Limiter {
 	return e.limiter
 }
 
-func (l *ipLimiter) janitor() {
-	for range time.Tick(time.Minute) {
-		l.mu.Lock()
-		for ip, e := range l.limiters {
-			if time.Since(e.lastSeen) > 10*time.Minute {
-				delete(l.limiters, ip)
-			}
+// evictIdle forgets the entries unused for longer than l.idle as of now.
+func (l *ipLimiter) evictIdle(now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for ip, e := range l.limiters {
+		if now.Sub(e.lastSeen) > l.idle {
+			delete(l.limiters, ip)
 		}
-		l.mu.Unlock()
+	}
+}
+
+func (l *ipLimiter) janitor() {
+	for now := range time.Tick(time.Minute) {
+		l.evictIdle(now)
 	}
 }
 
 // RateLimit rejects clients exceeding rps (with the given burst) per IP.
 // Internal probe paths are exempt.
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
-	l := &ipLimiter{
-		limiters: make(map[string]*ipEntry),
-		rps:      rate.Limit(rps),
-		burst:    burst,
-	}
+	l := newIPLimiter(rps, burst)
 	go l.janitor()
 
 	return func(c *gin.Context) {
@@ -345,6 +375,19 @@ func Auth(tm *auth.TokenManager, sessions SessionChecker) gin.HandlerFunc {
 		c.Set(CtxUserID, claims.PlayerID)
 		c.Set(CtxUsername, claims.Username)
 		c.Set(CtxTokenJTI, claims.ID)
+		c.Set(CtxGuest, claims.Guest)
+		c.Next()
+	}
+}
+
+// DenyGuests refuses a caller whose token is a guest's with 403. It runs
+// after Auth, on the routes a guest account may not use.
+func DenyGuests() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetBool(CtxGuest) {
+			httpx.Error(c, http.StatusForbidden, "not available to guest accounts")
+			return
+		}
 		c.Next()
 	}
 }

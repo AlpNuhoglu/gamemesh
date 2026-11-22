@@ -3,6 +3,8 @@ package player
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,6 +40,38 @@ type Repository interface {
 	// PublishEvent writes an event to the outbox on its own, for events with no
 	// accompanying row change (a logout).
 	PublishEvent(ctx context.Context, e events.Event, topic string) error
+	// TouchLastSeen records that the player took a token at the given time.
+	TouchLastSeen(ctx context.Context, id uuid.UUID, at time.Time) error
+	// DeleteWithOutbox deletes the player, stats included, and writes the
+	// event in the same transaction. ErrNotFound if there is no such player.
+	DeleteWithOutbox(ctx context.Context, id uuid.UUID, e events.Event, topic string) error
+	// DeleteSwept deletes at most limit accounts that rule selects as of
+	// cutoff, oldest first, and writes event(id) to the outbox for each, all
+	// in one transaction. It returns the ids it deleted. A limit of zero or
+	// less deletes nothing.
+	DeleteSwept(ctx context.Context, rule SweepRule, cutoff time.Time, limit int, topic string, event func(uuid.UUID) (events.Event, error)) ([]uuid.UUID, error)
+}
+
+// SweepRule names a set of accounts the sweep may delete. The rule is a
+// fixed predicate in the repository, never a caller's condition: what the
+// sweep can reach is readable in one place.
+type SweepRule int
+
+const (
+	// SweepInactiveGuests selects guest accounts whose last token was taken before
+	// the cutoff.
+	SweepInactiveGuests SweepRule = iota + 1
+	// SweepBenchAccounts selects accounts latencybench registered and left behind,
+	// created before the cutoff. Both conditions of its own clean-up apply:
+	// the e-mail is under latencybench.invalid (a reserved TLD, RFC 2606, so
+	// no real player has one) and the username starts with "bench".
+	SweepBenchAccounts
+)
+
+// sweepPredicates are the WHERE clauses of the rules; $1 is the cutoff.
+var sweepPredicates = map[SweepRule]string{
+	SweepInactiveGuests: `is_guest AND COALESCE(last_seen_at, created_at) < ?`,
+	SweepBenchAccounts:  `NOT is_guest AND email LIKE '%@latencybench.invalid' AND username LIKE 'bench%' AND created_at < ?`,
 }
 
 type gormRepository struct {
@@ -106,6 +140,72 @@ func (r *gormRepository) GetByEmail(ctx context.Context, email string) (*Player,
 		return nil, translate(err)
 	}
 	return &p, nil
+}
+
+// TouchLastSeen sets last_seen_at alone: it is not a profile change, so
+// updated_at stays what it was.
+func (r *gormRepository) TouchLastSeen(ctx context.Context, id uuid.UUID, at time.Time) error {
+	res := r.db.WithContext(ctx).Model(&Player{}).Where("id = ?", id).UpdateColumn("last_seen_at", at)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *gormRepository) DeleteWithOutbox(ctx context.Context, id uuid.UUID, e events.Event, topic string) error {
+	return translate(r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// player_stats goes with the row: its foreign key cascades.
+		res := tx.Where("id = ?", id).Delete(&Player{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return r.out.WithTx(tx).Publish(ctx, topic, e)
+	}))
+}
+
+// DeleteSwept selects and deletes in one statement, so an account is judged
+// by the rule at the moment it is deleted (a guest who renews between a
+// separate select and delete would otherwise lose the account), and the
+// LIMIT is in the statement itself. SKIP LOCKED lets two replicas sweep at
+// once without waiting on each other's rows.
+func (r *gormRepository) DeleteSwept(ctx context.Context, rule SweepRule, cutoff time.Time, limit int, topic string, event func(uuid.UUID) (events.Event, error)) ([]uuid.UUID, error) {
+	predicate, ok := sweepPredicates[rule]
+	if !ok {
+		return nil, fmt.Errorf("unknown sweep rule %d", rule)
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	var ids []uuid.UUID
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := `DELETE FROM players WHERE id IN (
+			SELECT id FROM players WHERE ` + predicate + `
+			ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED
+		) RETURNING id`
+		if err := tx.Raw(query, cutoff, limit).Scan(&ids).Error; err != nil {
+			return err
+		}
+		for _, id := range ids {
+			e, err := event(id)
+			if err != nil {
+				return err
+			}
+			if err := r.out.WithTx(tx).Publish(ctx, topic, e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, translate(err)
+	}
+	return ids, nil
 }
 
 func (r *gormRepository) Update(ctx context.Context, p *Player) error {

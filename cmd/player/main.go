@@ -88,7 +88,13 @@ func run() int {
 	outboxPub := outbox.NewPublisher(outbox.NewStore(db))
 	repo := player.NewRepository(db, outboxPub)
 	sessions := player.NewSessionStore(rdb)
-	svc := player.NewService(repo, sessions, tokens, log)
+	// Guest accounts exist only with the release flag on: without the option
+	// none can be created and none can log in.
+	var opts []player.Option
+	if cfg.GameClientEnabled {
+		opts = append(opts, player.WithGuests(cfg.JWTGuestExpiry))
+	}
+	svc := player.NewService(repo, sessions, tokens, log, opts...)
 	handler := player.NewHandler(svc)
 
 	m := metrics.New(cfg.ServiceName)
@@ -96,9 +102,25 @@ func run() int {
 		server.WithReadiness("postgres", sqlDB.PingContext),
 		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
+	// The account sweep deletes rows, so it is part of what the release flag
+	// holds back: with the flag off this service deletes nothing on its own.
+	ctx, stop := server.ShutdownContext()
+	defer stop()
+	var workers server.Workers
+	if cfg.GameClientEnabled {
+		handler.RegisterGameClientRoutes(engine)
+		workers.Go(func() { svc.RunSweep(ctx, cfg.SweepInterval, cfg.GuestRetention, cfg.SweepMaxPerRun) })
+	}
 
-	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
-		log.Error("server exited", zap.Error(err))
+	runErr := server.Run(engine, cfg.HTTPPort, log)
+	stop() // also stops the workers if Run failed without a signal
+	if workers.Wait(server.WorkerShutdownTimeout) {
+		log.Info("background workers stopped")
+	} else {
+		log.Warn("background workers still running at exit", zap.Duration("waited", server.WorkerShutdownTimeout))
+	}
+	if runErr != nil {
+		log.Error("server exited", zap.Error(runErr))
 		return 1
 	}
 	return 0
