@@ -1,0 +1,18 @@
+{
+  "name": "ghosttag-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Ghost Tag browser client. Built by Vite into internal/gateway/webui/embedded/app and served by the gateway under /play/.",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit && vite build"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
+  }
+}
