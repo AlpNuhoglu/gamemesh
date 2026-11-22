@@ -49,6 +49,18 @@ describe("Predictor", () => {
     expect(p.x).toBeCloseTo((2 * cfg!.v_hunter * 40) / 1000, 9);
   });
 
+  test("predicts with no slack: a turning runner gets only the penalised budget", () => {
+    const p = new Predictor();
+    p.reset(0, 0, 0);
+    // A hard turn: the request is v * dt long, the turn penalty lowers the
+    // budget below it, and with no slack the step is that budget exactly.
+    p.step(cfg!, { dx: 0, dy: 1, throttle: 1 }, 40, "RUNNER", cfg!.r0);
+    const turn = cfg!.omega_max * 0.04;
+    const budget = cfg!.v_runner * (1 - (cfg!.alpha * turn) / Math.PI) * 0.04;
+    expect(Math.hypot(p.x, p.y)).toBeCloseTo(budget, 9);
+    expect(p.theta).toBeCloseTo(turn, 9);
+  });
+
   test("a clamp moves the state at once and the drawing smoothly", () => {
     const p = new Predictor();
     p.reset(10, 0, 0);
