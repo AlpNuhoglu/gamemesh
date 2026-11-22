@@ -102,7 +102,9 @@ const BoardGhostTag = "ghosttag"
 type PlayerRegisteredPayload struct {
 	PlayerID string `json:"player_id"`
 	Username string `json:"username"`
-	Email    string `json:"email"`
+	// Email is empty for a guest account: a guest has none.
+	Email string `json:"email"`
+	Guest bool   `json:"guest,omitempty"`
 }
 
 // PlayerUpdatedPayload is emitted when a player edits their profile.

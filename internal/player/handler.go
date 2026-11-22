@@ -3,6 +3,7 @@ package player
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -36,6 +37,12 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.PUT("/players/:id", h.updateProfile)
 }
 
+// RegisterGameClientRoutes mounts what exists only with the release flag
+// (GAME_CLIENT_ENABLED) on.
+func (h *Handler) RegisterGameClientRoutes(r *gin.Engine) {
+	r.POST("/auth/guest", h.createGuest)
+}
+
 type registerRequest struct {
 	Username string `json:"username" binding:"required,alphanum,min=3,max=32"`
 	Email    string `json:"email" binding:"required,email,max=255"`
@@ -67,8 +74,15 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token  string  `json:"token"`
-	Player *Player `json:"player"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Player    *Player   `json:"player"`
+}
+
+// guestResponse is a login answer plus the secret, which is given once.
+type guestResponse struct {
+	loginResponse
+	Secret string `json:"secret"`
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -77,7 +91,7 @@ func (h *Handler) login(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	token, p, err := h.svc.Login(c.Request.Context(), req.Identifier, req.Password)
+	session, err := h.svc.Login(c.Request.Context(), req.Identifier, req.Password)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
 			httpx.Error(c, http.StatusUnauthorized, ErrInvalidCredentials.Error())
@@ -86,7 +100,30 @@ func (h *Handler) login(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "login failed")
 		return
 	}
-	httpx.OK(c, loginResponse{Token: token, Player: p})
+	httpx.OK(c, loginAnswer(session))
+}
+
+func loginAnswer(s *Session) loginResponse {
+	return loginResponse{Token: s.Token, ExpiresAt: s.ExpiresAt, Player: view(s.Player, true)}
+}
+
+// createGuest makes a guest account: no body, no form. The per-IP hourly
+// limit on it lives at the gateway, which is where the client's address is
+// known.
+func (h *Handler) createGuest(c *gin.Context) {
+	guest, err := h.svc.CreateGuest(c.Request.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrGuestsDisabled):
+			httpx.Error(c, http.StatusNotFound, "not found")
+		case errors.Is(err, ErrGuestName):
+			httpx.Error(c, http.StatusServiceUnavailable, "could not create a guest account, try again")
+		default:
+			httpx.Error(c, http.StatusInternalServerError, "could not create a guest account")
+		}
+		return
+	}
+	httpx.Created(c, guestResponse{loginResponse: loginAnswer(&guest.Session), Secret: guest.Secret})
 }
 
 func (h *Handler) logout(c *gin.Context) {
@@ -131,17 +168,18 @@ func (h *Handler) getProfile(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "failed to fetch profile")
 		return
 	}
-	if c.GetHeader(middleware.HeaderUserID) != p.ID.String() {
-		p = withoutPrivate(p)
-	}
-	httpx.OK(c, p)
+	httpx.OK(c, view(p, c.GetHeader(middleware.HeaderUserID) == p.ID.String()))
 }
 
-// withoutPrivate is the player as someone else may see them: everything but
-// the e-mail address. Any signed-in caller can ask for any player's profile,
-// and player ids are not secret (a match shows both players theirs), so the
-// address used to be readable by whoever a player had been matched with.
-func withoutPrivate(p *Player) *Player {
+// view is the player as the API shows them. The e-mail address is shown to
+// its owner only: any signed-in caller can ask for any player's profile, and
+// player ids are not secret (a match shows both players theirs), so the
+// address used to be readable by whoever a player had been matched with. A
+// guest has no address at all; the placeholder in its row is never shown.
+func view(p *Player, own bool) *Player {
+	if own && !p.IsGuest {
+		return p
+	}
 	public := *p
 	public.Email = ""
 	return &public
@@ -172,6 +210,8 @@ func (h *Handler) updateProfile(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			httpx.Error(c, http.StatusNotFound, ErrNotFound.Error())
+		case errors.Is(err, ErrGuestProfile):
+			httpx.Error(c, http.StatusForbidden, ErrGuestProfile.Error())
 		case errors.Is(err, ErrDuplicate):
 			httpx.Error(c, http.StatusConflict, ErrDuplicate.Error())
 		default:
@@ -179,5 +219,5 @@ func (h *Handler) updateProfile(c *gin.Context) {
 		}
 		return
 	}
-	httpx.OK(c, p)
+	httpx.OK(c, view(p, true))
 }

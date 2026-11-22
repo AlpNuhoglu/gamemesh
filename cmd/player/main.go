@@ -88,7 +88,13 @@ func run() int {
 	outboxPub := outbox.NewPublisher(outbox.NewStore(db))
 	repo := player.NewRepository(db, outboxPub)
 	sessions := player.NewSessionStore(rdb)
-	svc := player.NewService(repo, sessions, tokens, log)
+	// Guest accounts exist only with the release flag on: without the option
+	// none can be created and none can log in.
+	var opts []player.Option
+	if cfg.GameClientEnabled {
+		opts = append(opts, player.WithGuests(cfg.JWTGuestExpiry))
+	}
+	svc := player.NewService(repo, sessions, tokens, log, opts...)
 	handler := player.NewHandler(svc)
 
 	m := metrics.New(cfg.ServiceName)
@@ -96,6 +102,9 @@ func run() int {
 		server.WithReadiness("postgres", sqlDB.PingContext),
 		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
+	if cfg.GameClientEnabled {
+		handler.RegisterGameClientRoutes(engine)
+	}
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
 		log.Error("server exited", zap.Error(err))

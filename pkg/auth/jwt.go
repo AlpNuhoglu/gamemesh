@@ -53,6 +53,11 @@ func (m *TokenManager) Generate(playerID uuid.UUID, username string) (token, jti
 	return out.Token, out.JTI, err
 }
 
+// Issue is Generate with the token's expiry reported as well.
+func (m *TokenManager) Issue(playerID uuid.UUID, username string) (Issued, error) {
+	return m.issue(playerID, username, false, m.expiry)
+}
+
 // GenerateGuest returns a token for a guest account: it carries the guest
 // claim and lives for ttl instead of the manager's own lifetime.
 func (m *TokenManager) GenerateGuest(playerID uuid.UUID, username string, ttl time.Duration) (Issued, error) {

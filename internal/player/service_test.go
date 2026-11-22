@@ -23,6 +23,8 @@ type mockRepository struct {
 	players    map[uuid.UUID]*Player
 	events     []events.Event
 	publishErr error
+	touchErr   error
+	createErr  error
 }
 
 func (r *mockRepository) PublishEvent(_ context.Context, e events.Event, _ string) error {
@@ -38,6 +40,9 @@ func newMockRepository() *mockRepository {
 }
 
 func (r *mockRepository) Create(_ context.Context, p *Player) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
 	for _, existing := range r.players {
 		if existing.Username == p.Username || existing.Email == p.Email {
 			return ErrDuplicate
@@ -73,6 +78,18 @@ func (r *mockRepository) GetByEmail(_ context.Context, email string) (*Player, e
 		}
 	}
 	return nil, ErrNotFound
+}
+
+func (r *mockRepository) TouchLastSeen(_ context.Context, id uuid.UUID, at time.Time) error {
+	if r.touchErr != nil {
+		return r.touchErr
+	}
+	p, ok := r.players[id]
+	if !ok {
+		return ErrNotFound
+	}
+	p.LastSeenAt = &at
+	return nil
 }
 
 func (r *mockRepository) Update(_ context.Context, p *Player) error {
@@ -204,14 +221,14 @@ func TestLoginSuccessCachesSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// By username.
-	token, p, err := svc.Login(ctx, "alice", "password123")
+	session, err := svc.Login(ctx, "alice", "password123")
 	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-	assert.Equal(t, registered.ID, p.ID)
+	assert.NotEmpty(t, session.Token)
+	assert.Equal(t, registered.ID, session.Player.ID)
 	assert.Len(t, sessions.saved, 1)
 
 	// By email.
-	_, _, err = svc.Login(ctx, "alice@example.com", "password123")
+	_, err = svc.Login(ctx, "alice@example.com", "password123")
 	require.NoError(t, err)
 	assert.Len(t, sessions.saved, 2)
 }
@@ -223,8 +240,8 @@ func TestLoginFailuresAreIndistinguishable(t *testing.T) {
 	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
 	require.NoError(t, err)
 
-	_, _, errWrongPassword := svc.Login(ctx, "alice", "wrong-password")
-	_, _, errNoUser := svc.Login(ctx, "nobody", "password123")
+	_, errWrongPassword := svc.Login(ctx, "alice", "wrong-password")
+	_, errNoUser := svc.Login(ctx, "nobody", "password123")
 
 	// Same error for both prevents user enumeration.
 	assert.ErrorIs(t, errWrongPassword, ErrInvalidCredentials)
@@ -237,7 +254,7 @@ func TestLogoutDeletesSession(t *testing.T) {
 
 	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
 	require.NoError(t, err)
-	_, _, err = svc.Login(ctx, "alice", "password123")
+	_, err = svc.Login(ctx, "alice", "password123")
 	require.NoError(t, err)
 
 	var jti string
@@ -271,7 +288,7 @@ func loginJTI(t *testing.T, svc *Service, sessions *fakeSessions) string {
 	ctx := context.Background()
 	_, err := svc.Register(ctx, RegisterInput{Username: "alice", Email: "alice@example.com", Password: "password123"})
 	require.NoError(t, err)
-	_, _, err = svc.Login(ctx, "alice", "password123")
+	_, err = svc.Login(ctx, "alice", "password123")
 	require.NoError(t, err)
 	for jti := range sessions.saved {
 		return jti

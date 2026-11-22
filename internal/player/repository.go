@@ -3,6 +3,7 @@ package player
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,6 +39,8 @@ type Repository interface {
 	// PublishEvent writes an event to the outbox on its own, for events with no
 	// accompanying row change (a logout).
 	PublishEvent(ctx context.Context, e events.Event, topic string) error
+	// TouchLastSeen records that the player took a token at the given time.
+	TouchLastSeen(ctx context.Context, id uuid.UUID, at time.Time) error
 }
 
 type gormRepository struct {
@@ -106,6 +109,19 @@ func (r *gormRepository) GetByEmail(ctx context.Context, email string) (*Player,
 		return nil, translate(err)
 	}
 	return &p, nil
+}
+
+// TouchLastSeen sets last_seen_at alone: it is not a profile change, so
+// updated_at stays what it was.
+func (r *gormRepository) TouchLastSeen(ctx context.Context, id uuid.UUID, at time.Time) error {
+	res := r.db.WithContext(ctx).Model(&Player{}).Where("id = ?", id).UpdateColumn("last_seen_at", at)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *gormRepository) Update(ctx context.Context, p *Player) error {
