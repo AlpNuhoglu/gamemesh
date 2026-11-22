@@ -8,6 +8,13 @@
 !cmd/
 !internal/
 !pkg/
+# The client's source, for the gateway image's Node stage. Its dependencies are
+# installed there (npm ci), never copied from a checkout, and a local build
+# output is never taken: the image always builds its own.
+!web/
+web/node_modules
+web/dist
+internal/gateway/webui/embedded/app
 
 # Tests are never compiled into a service binary; keeping them out means a
 # test-only change does not invalidate the `COPY . .` layer and rebuild images.
