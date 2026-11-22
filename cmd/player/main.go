@@ -102,12 +102,25 @@ func run() int {
 		server.WithReadiness("postgres", sqlDB.PingContext),
 		server.WithReadiness("redis", func(ctx context.Context) error { return rdb.Ping(ctx).Err() }))
 	handler.RegisterRoutes(engine)
+	// The account sweep deletes rows, so it is part of what the release flag
+	// holds back: with the flag off this service deletes nothing on its own.
+	ctx, stop := server.ShutdownContext()
+	defer stop()
+	var workers server.Workers
 	if cfg.GameClientEnabled {
 		handler.RegisterGameClientRoutes(engine)
+		workers.Go(func() { svc.RunSweep(ctx, cfg.SweepInterval, cfg.GuestRetention, cfg.SweepMaxPerRun) })
 	}
 
-	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
-		log.Error("server exited", zap.Error(err))
+	runErr := server.Run(engine, cfg.HTTPPort, log)
+	stop() // also stops the workers if Run failed without a signal
+	if workers.Wait(server.WorkerShutdownTimeout) {
+		log.Info("background workers stopped")
+	} else {
+		log.Warn("background workers still running at exit", zap.Duration("waited", server.WorkerShutdownTimeout))
+	}
+	if runErr != nil {
+		log.Error("server exited", zap.Error(runErr))
 		return 1
 	}
 	return 0
