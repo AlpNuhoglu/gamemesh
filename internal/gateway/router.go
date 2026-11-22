@@ -1,11 +1,13 @@
 package gateway
 
 import (
+	"io/fs"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/alpnuhoglu/gamemesh/internal/gateway/webui"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
 	"github.com/alpnuhoglu/gamemesh/pkg/middleware"
@@ -34,7 +36,11 @@ type index struct {
 // sessions enforces server-side revocation on protected routes; pass a
 // cache-backed checker so the per-request check stays off the Redis hot path. A
 // nil sessions disables revocation (JWT-only) — handy for tests.
-func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager, sessions middleware.SessionChecker, log *zap.Logger) {
+//
+// app is the browser client's files (webui.App), served under /play/ only when
+// cfg.GameClientEnabled is on; nil means the client was not built, and /play/
+// then says so with a 503.
+func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager, sessions middleware.SessionChecker, app fs.FS, log *zap.Logger) {
 	playerProxy := newProxy(cfg.PlayerServiceURL, log)
 	matchProxy := newProxy(cfg.MatchmakingServiceURL, log)
 	lbProxy := newProxy(cfg.LeaderboardServiceURL, log)
@@ -95,6 +101,7 @@ func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager
 		guestLimit := middleware.RateLimit(float64(cfg.GuestCreatePerHour)/3600, cfg.GuestCreatePerHour)
 		v1.POST("/auth/guest", guestLimit, playerProxy)
 		protected.DELETE("/players/:id", playerProxy) // own account only; the player service checks
+		webui.Register(r, app)
 	}
 	protected.POST("/queue", matchProxy)
 	protected.DELETE("/queue", matchProxy)

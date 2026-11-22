@@ -60,7 +60,7 @@ func newGatewayWithTrustedProxies(t *testing.T, upstreamURL string, trustedProxi
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(trustedProxies))
 	r.Use(middleware.RequestID())
-	RegisterRoutes(r, cfg, tokens, nil, zap.NewNop()) // nil sessions → JWT-only
+	RegisterRoutes(r, cfg, tokens, nil, nil, zap.NewNop()) // nil sessions → JWT-only
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
@@ -350,7 +350,7 @@ func TestClientCancelIsNotAServerError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) { c.Next(); recorded <- c.Writer.Status() })
-	RegisterRoutes(r, cfg, auth.NewTokenManager("gw-test-secret", time.Hour, "gamemesh"), nil, zap.NewNop())
+	RegisterRoutes(r, cfg, auth.NewTokenManager("gw-test-secret", time.Hour, "gamemesh"), nil, nil, zap.NewNop())
 	gw := httptest.NewServer(r)
 	t.Cleanup(gw.Close)
 
@@ -408,7 +408,7 @@ func TestProxiedResponseCarriesCORSOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.CORS(origins)) // as server.NewEngine does for every service
-	RegisterRoutes(r, cfg, auth.NewTokenManager("gw-test-secret", time.Hour, "gamemesh"), nil, zap.NewNop())
+	RegisterRoutes(r, cfg, auth.NewTokenManager("gw-test-secret", time.Hour, "gamemesh"), nil, nil, zap.NewNop())
 	gw := httptest.NewServer(r)
 	t.Cleanup(gw.Close)
 
