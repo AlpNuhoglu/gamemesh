@@ -5,6 +5,7 @@ import { defineConfig } from "@playwright/test";
 // on 127.0.0.1:8080. They need that stack and are not part of npm test.
 export default defineConfig({
   testDir: "e2e",
+  globalSetup: "./e2e/warmup.ts",
   timeout: 240_000,
   fullyParallel: false,
   workers: 1,
