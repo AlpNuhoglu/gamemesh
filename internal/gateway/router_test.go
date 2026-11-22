@@ -436,3 +436,22 @@ func TestProxiedResponseCarriesCORSOnce(t *testing.T) {
 	assert.Empty(t, refused.Header.Values("Access-Control-Allow-Origin"),
 		"the upstream's * must not stand in for the gateway's refusal")
 }
+
+// The Ghost Tag board is public: it is what the client shows before anyone
+// has an identity. It must reach the leaderboard service without a token,
+// with the query intact.
+func TestGhostTagBoardIsPublic(t *testing.T) {
+	var gotQuery atomic.Value
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery.Store(r.URL.Path + "?" + r.URL.RawQuery)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	gw, _ := newGatewayUnderTest(t, upstream.URL)
+
+	resp, err := http.Get(gw.URL + "/api/v1/leaderboard/ghosttag?board=daily&limit=5")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "/leaderboard/ghosttag?board=daily&limit=5", gotQuery.Load())
+}
