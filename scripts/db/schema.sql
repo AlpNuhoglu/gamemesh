@@ -9,12 +9,16 @@ CREATE TABLE IF NOT EXISTS players (
     username      VARCHAR(32)  NOT NULL,
     email         VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    is_guest      BOOLEAN      NOT NULL DEFAULT false,
+    last_seen_at  TIMESTAMPTZ,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     CONSTRAINT uni_players_username UNIQUE (username),
     CONSTRAINT uni_players_email    UNIQUE (email),
     CONSTRAINT ck_players_username_len CHECK (char_length(username) >= 3)
 );
+
+CREATE INDEX IF NOT EXISTS idx_players_guest_last_seen ON players (is_guest, last_seen_at);
 
 CREATE TABLE IF NOT EXISTS player_stats (
     player_id    UUID PRIMARY KEY REFERENCES players (id) ON DELETE CASCADE,

@@ -58,6 +58,30 @@ type Config struct {
 	JWTExpiry time.Duration
 	JWTIssuer string
 
+	// GameClientEnabled turns on what the browser client adds: guest accounts,
+	// account deletion, the account sweep and the client itself under /play.
+	// Unset is off, and with it off none of those exist, so the code can be
+	// merged (which deploys it) without being released. Turning it on in
+	// production is the release.
+	GameClientEnabled bool
+	// JWTGuestExpiry is the lifetime of a guest's token. It is short because
+	// a browser sends the token in the WebSocket URL, where proxies may log
+	// it; the guest renews it with a secret that only travels in a request
+	// body.
+	JWTGuestExpiry time.Duration
+	// GuestCreatePerHour is how many guest accounts one IP may create in an
+	// hour. A local stack needs it wide: two browser tabs are two accounts
+	// from one address.
+	GuestCreatePerHour int
+	// GuestRetention is how long a guest account that has not taken a token
+	// is kept before the sweep deletes it.
+	GuestRetention time.Duration
+	// SweepInterval is the pause between two runs of the account sweep, and
+	// SweepMaxPerRun the most accounts one run may delete: a wrong rule must
+	// not be able to empty the table in one pass.
+	SweepInterval  time.Duration
+	SweepMaxPerRun int
+
 	PlayerServiceURL      string
 	MatchmakingServiceURL string
 	LeaderboardServiceURL string
@@ -181,6 +205,13 @@ func Load(serviceName string) *Config {
 		JWTSecret: getEnv("JWT_SECRET", "insecure-dev-secret-do-not-use-in-prod"),
 		JWTExpiry: getEnvDuration("JWT_EXPIRY", 24*time.Hour),
 		JWTIssuer: getEnv("JWT_ISSUER", "gamemesh"),
+
+		GameClientEnabled:  getEnvBool("GAME_CLIENT_ENABLED", false),
+		JWTGuestExpiry:     getEnvDuration("JWT_GUEST_EXPIRY", 2*time.Hour),
+		GuestCreatePerHour: getEnvInt("GUEST_CREATE_PER_HOUR", 20),
+		GuestRetention:     getEnvDuration("GUEST_RETENTION", 30*24*time.Hour),
+		SweepInterval:      getEnvDuration("SWEEP_INTERVAL", time.Hour),
+		SweepMaxPerRun:     getEnvInt("SWEEP_MAX_PER_RUN", 500),
 
 		PlayerServiceURL:      getEnv("PLAYER_SERVICE_URL", "http://localhost:8081"),
 		MatchmakingServiceURL: getEnv("MATCHMAKING_SERVICE_URL", "http://localhost:8082"),

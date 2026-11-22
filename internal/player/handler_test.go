@@ -88,14 +88,29 @@ func TestProfileEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	id := p.ID.String()
 
-	// GET by id.
+	// GET by id, as someone else: the profile without the e-mail address.
+	const stranger = "00000000-0000-0000-0000-000000000999"
+	w = doReq(r, http.MethodGet, "/players/"+id, "", map[string]string{middleware.HeaderUserID: stranger})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"alice"`)
+	assert.NotContains(t, w.Body.String(), "alice@example.com", "another player was shown the e-mail address")
+	assert.NotContains(t, w.Body.String(), `"email"`)
+
+	// The same without any caller identity (a direct, in-cluster call).
 	w = doReq(r, http.MethodGet, "/players/"+id, "", nil)
 	require.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Body.String(), "alice@example.com")
 
-	// GET "me" resolves via the gateway-forwarded header.
+	// GET "me" resolves via the gateway-forwarded header; the owner sees it.
 	w = doReq(r, http.MethodGet, "/players/me", "", map[string]string{middleware.HeaderUserID: id})
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), `"alice"`)
+	assert.Contains(t, w.Body.String(), `"email":"alice@example.com"`)
+
+	// By their own id as well.
+	w = doReq(r, http.MethodGet, "/players/"+id, "", map[string]string{middleware.HeaderUserID: id})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"email":"alice@example.com"`)
 
 	// Invalid UUID → 400.
 	w = doReq(r, http.MethodGet, "/players/not-a-uuid", "", nil)

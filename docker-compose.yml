@@ -29,6 +29,14 @@ x-service-env: &service-env
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
   # Empty = trust no proxy's X-Forwarded-For; the gateway is the edge here.
   TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+  # The browser client's release flag: guest accounts, account deletion and
+  # the account sweep. On for a local stack. Production leaves it unset (off)
+  # until the release, which is the change that sets it in config.env.
+  GAME_CLIENT_ENABLED: ${GAME_CLIENT_ENABLED:-true}
+  # Guest accounts one address may create in an hour. Wide here: two browser
+  # tabs are two accounts from 127.0.0.1, and a session of local testing is
+  # many more. Production keeps the default of 20.
+  GUEST_CREATE_PER_HOUR: ${GUEST_CREATE_PER_HOUR:-600}
   # Event transport. Redis stays the system of record (sessions, queue,
   # leaderboard, room cache); NATS JetStream carries inter-service events with
   # durability, replay and at-least-once delivery. Set EVENT_BUS=redis to fall

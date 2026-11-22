@@ -178,3 +178,26 @@ func TestDSNPassword(t *testing.T) {
 	assert.Equal(t, "s3cret", dsnPassword("postgres://u:s3cret@db:5432/x?sslmode=disable"))
 	assert.Equal(t, "", dsnPassword("host=db user=u dbname=x"))
 }
+
+// The release flag: merging deploys the code, so the code must stay off
+// until the flag is set on purpose. Unset, empty and unreadable are all off.
+func TestGameClientIsOffUnlessSet(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		t.Setenv("GAME_CLIENT_ENABLED", "")
+		assert.False(t, Load("gateway").GameClientEnabled)
+	})
+	t.Run("unreadable", func(t *testing.T) {
+		t.Setenv("GAME_CLIENT_ENABLED", "yes please")
+		assert.False(t, Load("gateway").GameClientEnabled)
+	})
+	t.Run("set", func(t *testing.T) {
+		t.Setenv("GAME_CLIENT_ENABLED", "true")
+		cfg := Load("gateway")
+		assert.True(t, cfg.GameClientEnabled)
+		assert.Equal(t, 2*time.Hour, cfg.JWTGuestExpiry)
+		assert.Equal(t, 20, cfg.GuestCreatePerHour)
+		assert.Equal(t, 30*24*time.Hour, cfg.GuestRetention)
+		assert.Equal(t, time.Hour, cfg.SweepInterval)
+		assert.Equal(t, 500, cfg.SweepMaxPerRun)
+	})
+}
