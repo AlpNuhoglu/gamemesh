@@ -748,6 +748,7 @@ func (r *room) snap(now time.Time) []byte {
 		RemMs:   max(0, rem).Milliseconds(),
 		R:       round2(r.radius(now)),
 		Players: make([]snapPlayer, 0, len(r.players)),
+		Cfg:     clientConfigOf(r.cfg),
 	}
 	for _, p := range r.players {
 		m.Players = append(m.Players, snapPlayer{

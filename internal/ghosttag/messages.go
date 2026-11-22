@@ -26,6 +26,7 @@ import (
 	"errors"
 	"math"
 	"strconv"
+	"time"
 )
 
 // Inbound message types.
@@ -155,7 +156,65 @@ type snapMsg struct {
 	RemMs   int64        `json:"rem_ms"`
 	R       float64      `json:"r"`
 	Players []snapPlayer `json:"players"`
+	Cfg     clientConfig `json:"cfg"`
 }
+
+// clientConfig is snap.cfg (section 6): every constant the client needs,
+// so that it carries none of its own (section 3.5). The movement constants
+// let it predict its own motion with the validation's formula, the arena
+// ones compute R(t) between two snaps, the rest pace and draw. The golden
+// vectors of the validation carry the same object (validate_vectors.json).
+//
+// Durations are milliseconds. They are floats so a sub-millisecond Config
+// value is not truncated; a whole number of milliseconds encodes as an
+// integer.
+type clientConfig struct {
+	VRunner   float64 `json:"v_runner"`
+	VHunter   float64 `json:"v_hunter"`
+	OmegaMax  float64 `json:"omega_max"`
+	Alpha     float64 `json:"alpha"`
+	R0        float64 `json:"r0"`
+	RMin      float64 `json:"r_min"`
+	DCapture  float64 `json:"d_capture"`
+	SlackMax  float64 `json:"slack_max"`
+	MoveEps   float64 `json:"move_eps"`
+	DtMaxMs   float64 `json:"dt_max_ms"`
+	THalfMs   float64 `json:"t_half_ms"`
+	TShrinkMs float64 `json:"t_shrink_ms"`
+	SendMs    float64 `json:"send_ms"`
+	TrailMs   float64 `json:"trail_ms"`
+	InterpMs  float64 `json:"interp_ms"`
+	DrMs      float64 `json:"dr_ms"`
+}
+
+// clientConfigOf is the one place snap.cfg is made from a Config.
+//
+// send_ms is Config.Tick: the room's tick is the bot's packet interval,
+// and it must equal the client's for the bot to be neither faster nor
+// slower than a human (section 1.5), so the client is told to send at it.
+func clientConfigOf(c *Config) clientConfig {
+	return clientConfig{
+		VRunner:   c.VRunner,
+		VHunter:   c.VHunter,
+		OmegaMax:  c.OmegaMax,
+		Alpha:     c.Alpha,
+		R0:        c.R0,
+		RMin:      c.RMin,
+		DCapture:  c.DCapture,
+		SlackMax:  c.SlackMax,
+		MoveEps:   c.MoveEpsilon,
+		DtMaxMs:   millis(c.DtMax),
+		THalfMs:   millis(c.THalf),
+		TShrinkMs: millis(c.TShrink),
+		SendMs:    millis(c.Tick),
+		TrailMs:   millis(c.TrailDelay),
+		InterpMs:  millis(c.ClientRenderDelay),
+		DrMs:      millis(c.ClientDeadReckoning),
+	}
+}
+
+// millis is d in milliseconds.
+func millis(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
 type halfEndMsg struct {
 	T      string `json:"t"`
