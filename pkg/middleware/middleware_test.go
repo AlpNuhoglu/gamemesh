@@ -365,6 +365,31 @@ type stubSessions struct {
 
 func (s stubSessions) Exists(context.Context, string) (bool, error) { return s.active, s.err }
 
+func TestDenyGuests(t *testing.T) {
+	tm := auth.NewTokenManager("test-secret", time.Hour, "gamemesh")
+	registered, _, err := tm.Generate(uuid.New(), "alice")
+	require.NoError(t, err)
+	guest, err := tm.GenerateGuest(uuid.New(), "SwiftFox4821", time.Hour)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(Auth(tm, nil))
+	r.GET("/open", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	r.GET("/members", DenyGuests(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	status := func(path, token string) int {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	assert.Equal(t, http.StatusNoContent, status("/open", guest.Token), "a guest on a route open to guests")
+	assert.Equal(t, http.StatusForbidden, status("/members", guest.Token), "a guest on a route closed to guests")
+	assert.Equal(t, http.StatusNoContent, status("/members", registered), "a registered player on the same route")
+}
+
 func TestAuthMiddlewareRevocation(t *testing.T) {
 	tm := auth.NewTokenManager("test-secret", time.Hour, "gamemesh")
 	token, _, err := tm.Generate(uuid.New(), "alice")

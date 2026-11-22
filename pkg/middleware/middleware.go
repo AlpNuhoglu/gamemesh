@@ -30,6 +30,8 @@ const (
 	CtxUserID    = "user_id"
 	CtxUsername  = "username"
 	CtxTokenJTI  = "token_jti"
+	// CtxGuest is true when the caller's token is a guest's.
+	CtxGuest = "guest"
 
 	HeaderRequestID = "X-Request-ID"
 	HeaderUserID    = "X-User-ID"
@@ -373,6 +375,19 @@ func Auth(tm *auth.TokenManager, sessions SessionChecker) gin.HandlerFunc {
 		c.Set(CtxUserID, claims.PlayerID)
 		c.Set(CtxUsername, claims.Username)
 		c.Set(CtxTokenJTI, claims.ID)
+		c.Set(CtxGuest, claims.Guest)
+		c.Next()
+	}
+}
+
+// DenyGuests refuses a caller whose token is a guest's with 403. It runs
+// after Auth, on the routes a guest account may not use.
+func DenyGuests() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetBool(CtxGuest) {
+			httpx.Error(c, http.StatusForbidden, "not available to guest accounts")
+			return
+		}
 		c.Next()
 	}
 }
