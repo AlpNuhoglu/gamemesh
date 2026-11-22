@@ -125,6 +125,20 @@ Player identity comes from the JWT.
 ### GET /api/v1/leaderboard/rank/:player_id
 **200** → `{ "player_id", "score", "rank" }`. **404** if unranked.
 
+### GET /api/v1/leaderboard/ghosttag?board=alltime&limit=10
+The Ghost Tag board, best first. `board` is `alltime` (the default) or
+`daily`, the board of the current UTC day; `limit` is between 1 and 50,
+10 by default.
+**200** → `{ "board": "alltime", "entries": [{ "name": "SwiftFox4821", "score": 61, "rank": 1 }] }`.
+**400** for another `board` or a `limit` outside 1–50.
+
+A row is a name, a score and a rank, nothing else: no player ID, no e-mail,
+no date. The name is the username the player's last ranked match was
+settled with; a player with none stored shows as `"Player"`. A registered
+player's username therefore becomes public once they are on the board.
+Only the server writes these boards (a ranked Ghost Tag match);
+`POST /score` does not reach them.
+
 ## Matchmaking
 
 ### POST /api/v1/queue 🔒

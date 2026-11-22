@@ -4,7 +4,7 @@
 // symmetric capture check, the bot and the scoring.
 //
 // The package knows nothing about WebSockets, Redis or the event bus. It
-// reaches the outside through the three interfaces in this file, which the
+// reaches the outside through the interfaces in this file, which the
 // WebSocket service implements, and it must not import a transport, a store
 // client, pkg/events or internal/wsgateway (boundary_test.go checks).
 //
@@ -45,6 +45,10 @@ type Transport interface {
 	// room at this moment. It is the truth about presence: Session.Notify
 	// only says that the answer may have changed.
 	Connected(playerID string) bool
+	// Name is the player's display name as their connection in the room
+	// says it, "" if it does not know one. To the game a name is an opaque
+	// string it shows in snap and hands the score layer (Match.Names).
+	Name(playerID string) string
 }
 
 // Match identifies a finished match to the score layer.
@@ -53,6 +57,10 @@ type Match struct {
 	RoomID string
 	// Players are the human players, in no particular order.
 	Players []string
+	// Names are the human players' display names by ID, as the room last
+	// learned them; a player whose name it never learned is absent. The
+	// store keeps them with the player's stats, for the board.
+	Names map[string]string
 	// EndedAt decides the UTC day of the daily board and of the same-pair
 	// rule.
 	EndedAt time.Time
@@ -114,6 +122,22 @@ type ScoreStore interface {
 // room or a player, so they are safe as a metric label.
 type Observer interface {
 	Count(event string)
+}
+
+// Turnout is told which human players started a match and which completed
+// one: the per-player rates of section 5 (the second round, the D1
+// return) need to know who, and a counter cannot carry a player. The bot is
+// never among the players; the human of a bot match is.
+//
+// Started is called when a match leaves WAITING, Completed when both halves
+// have been played: the moments EventMatchStarted and EventMatchCompleted
+// are counted. at is that moment, from the room's clock (the core reads
+// none of its own). The calls come from the room's goroutine and must not
+// block; what an implementation does with them cannot affect the match.
+// players is the implementation's to keep.
+type Turnout interface {
+	Started(players []string, at time.Time)
+	Completed(players []string, at time.Time)
 }
 
 // Events every implementation of the core reports. The core may define more

@@ -78,6 +78,43 @@ func TestGhostTagSettleWrites(t *testing.T) {
 	assert.True(t, mr.Exists("ghosttag:settled:r1"))
 }
 
+// TestGhostTagSettleWritesNames: a ranked settlement writes each player's
+// name into their stats with the rest of the match. A retry of the room and
+// an unranked match write nothing, so their names do not either; a player
+// whose name the match does not know keeps the stored one.
+func TestGhostTagSettleWritesNames(t *testing.T) {
+	s, mr := newGhostStore(t)
+	rule := &alicePlus{}
+	ctx := context.Background()
+	named := func(room string, at time.Time, names map[string]string) GhostTagMatch {
+		m := match(room, at)
+		m.Names = names
+		return m
+	}
+
+	_, err := s.Settle(ctx, named("r1", day1, map[string]string{"alice": "SwiftFox4821", "bob": "bob"}), rule.score)
+	require.NoError(t, err)
+	assert.Equal(t, "SwiftFox4821", mr.HGet("player:stats:alice", "name"))
+	assert.Equal(t, "bob", mr.HGet("player:stats:bob", "name"))
+
+	_, err = s.Settle(ctx, named("r1", day1, map[string]string{"alice": "Retry"}), rule.score)
+	require.NoError(t, err)
+	assert.Equal(t, "SwiftFox4821", mr.HGet("player:stats:alice", "name"), "a retry of the room writes nothing")
+
+	st, err := s.Settle(ctx, named("r2", day1.Add(time.Hour), map[string]string{"alice": "SamePair"}), rule.score)
+	require.NoError(t, err)
+	require.False(t, st.Ranked)
+	assert.Equal(t, "SwiftFox4821", mr.HGet("player:stats:alice", "name"), "an unranked match writes nothing")
+
+	_, err = s.Settle(ctx, named("r3", day1.Add(24*time.Hour), nil), rule.score)
+	require.NoError(t, err)
+	assert.Equal(t, "SwiftFox4821", mr.HGet("player:stats:alice", "name"), "an unknown name keeps the stored one")
+
+	_, err = s.Settle(ctx, named("r4", day1.Add(48*time.Hour), map[string]string{"alice": "Trinity"}), rule.score)
+	require.NoError(t, err)
+	assert.Equal(t, "Trinity", mr.HGet("player:stats:alice", "name"), "a new name replaces the old")
+}
+
 // TestGhostTagSettleReadsTheStreak: the rule gets the streaks as they are in
 // Redis, so the bonus builds on the stored streak.
 func TestGhostTagSettleReadsTheStreak(t *testing.T) {

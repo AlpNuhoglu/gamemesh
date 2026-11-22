@@ -74,6 +74,9 @@ type player struct {
 	id     string
 	quoted []byte // id as a JSON string, for the outbound pos
 	bot    bool
+	// name is the display name snap shows: BotName for the bot, the one
+	// the session last learned from the transport for a human, "" before.
+	name string
 
 	role      role
 	connected bool // as the session last learned it; a bot always is
@@ -115,6 +118,7 @@ type room struct {
 	roomID  string
 	out     sender
 	obs     Observer
+	turnout Turnout
 	rng     *rand.Rand // the bot's; the roles do not come from it
 	created time.Time  // sts counts from here; T_join too
 
@@ -154,6 +158,7 @@ func newRoom(cfg *Config, roomID string, humans []string, botID string, out send
 		roomID:  roomID,
 		out:     out,
 		obs:     obs,
+		turnout: nopTurnout{},
 		rng:     rng,
 		created: created,
 		byID:    make(map[string]*player),
@@ -163,6 +168,9 @@ func newRoom(cfg *Config, roomID string, humans []string, botID string, out send
 	}
 	add := func(id string, bot bool) {
 		p := &player{id: id, quoted: quoteID(id), bot: bot, connected: bot, hist: newRing(cfg.RingSize)}
+		if bot {
+			p.name = BotName
+		}
 		p.tally.id = id
 		r.players = append(r.players, p)
 		r.byID[id] = p
@@ -239,6 +247,17 @@ func (r *room) opponent(p *player) *player {
 		}
 	}
 	return nil
+}
+
+// humanIDs are the human players, a new slice each call.
+func (r *room) humanIDs() []string {
+	ids := make([]string, 0, len(r.players))
+	for _, p := range r.players {
+		if !p.bot {
+			ids = append(ids, p.id)
+		}
+	}
+	return ids
 }
 
 func (r *room) allConnected() bool {
@@ -364,6 +383,7 @@ func (r *room) enterCountdown(now time.Time) {
 	r.placeAtSpawn(now, false)
 	r.state, r.since, r.half = stateCountdown, now, 1
 	r.obs.Count(EventMatchStarted)
+	r.turnout.Started(r.humanIDs(), now)
 	r.broadcastSnap(now)
 }
 
@@ -418,6 +438,7 @@ func (r *room) endHalf(at time.Time, reason string, durMs int) {
 	if r.half == 2 {
 		r.played += at.Sub(r.resumed)
 		r.obs.Count(EventMatchCompleted)
+		r.turnout.Completed(r.humanIDs(), at)
 		r.finish(at, outcomeCompleted, "")
 		r.countRoleOrder()
 		return
@@ -558,6 +579,26 @@ func (r *room) finish(at time.Time, o outcome, leaver string) {
 	for _, p := range r.players {
 		r.result.players = append(r.result.players, p.tally)
 	}
+}
+
+// setName records a human's display name. An empty name changes nothing:
+// a name once learned stays until another replaces it. The next snap shows
+// it.
+func (r *room) setName(id, name string) {
+	if p := r.byID[id]; p != nil && !p.bot && name != "" {
+		p.name = name
+	}
+}
+
+// names are the humans' names that the room knows, by ID.
+func (r *room) names() map[string]string {
+	out := make(map[string]string, len(r.players))
+	for _, p := range r.players {
+		if !p.bot && p.name != "" {
+			out[p.id] = p.name
+		}
+	}
+	return out
 }
 
 // setPresence applies what the session learned from Transport.Connected
@@ -748,10 +789,11 @@ func (r *room) snap(now time.Time) []byte {
 		RemMs:   max(0, rem).Milliseconds(),
 		R:       round2(r.radius(now)),
 		Players: make([]snapPlayer, 0, len(r.players)),
+		Cfg:     clientConfigOf(r.cfg),
 	}
 	for _, p := range r.players {
 		m.Players = append(m.Players, snapPlayer{
-			ID: p.id, Role: p.role.String(),
+			ID: p.id, Name: p.name, Role: p.role.String(),
 			X: round2(p.mot.pos.X), Y: round2(p.mot.pos.Y), Theta: round4(p.mot.theta),
 			Connected: p.connected,
 		})

@@ -56,6 +56,11 @@ type Config struct {
 	// interpolation delay and dead-reckoning limit. The server does not use
 	// them; they are here so that section 8 has one home.
 	ClientRenderDelay, ClientDeadReckoning time.Duration
+	// TrailDelay is how far behind the runner's client draws the hunter, as
+	// a fading trail (section 3.3). The delay is the client's, applied to
+	// its own receive times; the server only tells it the value, in
+	// snap.cfg.
+	TrailDelay time.Duration
 	// THalf is the length of a half (T_half). The speed bonus counts from it.
 	THalf time.Duration
 	// TShrink is the closing part of a half in which the arena shrinks
@@ -168,6 +173,7 @@ func DefaultConfig() Config {
 		DtInitial:           40 * time.Millisecond,
 		ClientRenderDelay:   60 * time.Millisecond,
 		ClientDeadReckoning: 80 * time.Millisecond,
+		TrailDelay:          2000 * time.Millisecond,
 		THalf:               45 * time.Second,
 		TShrink:             15 * time.Second,
 		TCountdown:          2 * time.Second,
@@ -228,6 +234,7 @@ func (c Config) Validate() error {
 	check(c.DtInitial > 0 && c.DtInitial <= c.DtMax, "DtInitial must lie in (0, DtMax], got %v", c.DtInitial)
 	check(c.MoveEpsilon >= 0, "MoveEpsilon must be >= 0, got %v", c.MoveEpsilon)
 	check(c.ClientRenderDelay >= 0 && c.ClientDeadReckoning >= 0, "client delays must be >= 0")
+	check(c.TrailDelay > 0, "TrailDelay must be > 0, got %v", c.TrailDelay)
 	check(c.THalf > 0, "THalf must be > 0, got %v", c.THalf)
 	check(c.TShrink >= 0 && c.TShrink <= c.THalf, "TShrink must lie in [0, THalf], got %v", c.TShrink)
 	check(c.TCountdown >= 0, "TCountdown must be >= 0, got %v", c.TCountdown)

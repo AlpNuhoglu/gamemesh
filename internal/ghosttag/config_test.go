@@ -28,6 +28,7 @@ func TestDefaultConfigIsSection8(t *testing.T) {
 	assert.Equal(t, 40*time.Millisecond, c.DtInitial)
 	assert.Equal(t, 60*time.Millisecond, c.ClientRenderDelay)
 	assert.Equal(t, 80*time.Millisecond, c.ClientDeadReckoning)
+	assert.Equal(t, 2000*time.Millisecond, c.TrailDelay)
 	assert.Equal(t, 45*time.Second, c.THalf)
 	assert.Equal(t, 15*time.Second, c.TShrink)
 	assert.Equal(t, 2*time.Second, c.TCountdown)
@@ -75,6 +76,7 @@ func TestConfigValidateRejects(t *testing.T) {
 		"inbox zero":              func(c *Config) { c.InboxSize = 0 },
 		"reaction min above max":  func(c *Config) { c.BotReactionMin = c.BotReactionMax + time.Millisecond },
 		"settle timeout zero":     func(c *Config) { c.SettleTimeout = 0 },
+		"trail delay zero":        func(c *Config) { c.TrailDelay = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

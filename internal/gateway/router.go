@@ -72,6 +72,7 @@ func RegisterRoutes(r *gin.Engine, cfg *config.Config, tokens *auth.TokenManager
 	v1.GET("/leaderboard", lbProxy)
 	v1.GET("/leaderboard/top/:n", lbProxy)
 	v1.GET("/leaderboard/rank/:player_id", lbProxy)
+	v1.GET("/leaderboard/ghosttag", lbProxy)
 
 	// Protected — require a valid JWT.
 	protected := v1.Group("", authRequired)

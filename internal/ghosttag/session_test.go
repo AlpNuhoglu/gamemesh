@@ -60,6 +60,7 @@ type fakeTransport struct {
 	mu        sync.Mutex
 	msgs      []sent
 	connected map[string]bool
+	names     map[string]string
 	changed   signal
 	sendCalls int
 
@@ -70,7 +71,7 @@ type fakeTransport struct {
 }
 
 func newFakeTransport(connected ...string) *fakeTransport {
-	f := &fakeTransport{connected: map[string]bool{}, changed: make(signal, 1)}
+	f := &fakeTransport{connected: map[string]bool{}, names: map[string]string{}, changed: make(signal, 1)}
 	for _, id := range connected {
 		f.connected[id] = true
 	}
@@ -106,6 +107,18 @@ func (f *fakeTransport) Connected(id string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.connected[id]
+}
+
+func (f *fakeTransport) Name(id string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.names[id]
+}
+
+func (f *fakeTransport) setName(id, name string) {
+	f.mu.Lock()
+	f.names[id] = name
+	f.mu.Unlock()
 }
 
 func (f *fakeTransport) setConnected(id string, c bool) {

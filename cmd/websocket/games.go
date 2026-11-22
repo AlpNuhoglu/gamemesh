@@ -21,7 +21,10 @@ type gameHost struct {
 	// scores settles ranked matches. Nil means every match is unranked.
 	scores ghosttag.ScoreStore
 	events ghosttag.Observer
-	log    *zap.Logger
+	// turnout is told who started and who completed a match, for the
+	// per-player rates. Nil reports nothing.
+	turnout ghosttag.Turnout
+	log     *zap.Logger
 }
 
 // Start implements wsgateway.GameHost. It only builds the session; the hub
@@ -36,6 +39,7 @@ func (h gameHost) Start(room string, spec wsgateway.GameSpec, out wsgateway.Game
 		Bot:      spec.Bot,
 		Unranked: spec.Unranked,
 		Logf:     h.log.Sugar().Warnf, // rare events only: a failed settle, a cancellation, a panic
+		Turnout:  h.turnout,
 	}, out, h.scores, h.events)
 	if err != nil {
 		return nil, err // not a nil *Session inside a non-nil interface

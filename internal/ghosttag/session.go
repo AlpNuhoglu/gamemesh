@@ -12,8 +12,9 @@ import (
 
 // Events the session reports besides those of ports.go and room.go.
 const (
-	// EventRanked: a match was settled and produced points. With
-	// EventMatchStarted it gives ranked_match_ratio of section 5.
+	// EventRanked: a match was settled and produced points. Over the
+	// decided matches (EventMatchCompleted plus EventForfeit: a forfeit is
+	// settled too) it gives ranked_match_ratio of section 5.
 	EventRanked = "ranked"
 	// EventRoomPanic: the room's goroutine panicked. The match was ended as
 	// void and unranked and the store was not called (Session.Run).
@@ -22,6 +23,9 @@ const (
 
 // DefaultBotID is the bot's player ID when Spec.BotID is empty.
 const DefaultBotID = "bot"
+
+// BotName is the bot's display name in snap (section 6: a fixed name).
+const BotName = "Bot"
 
 // Spec describes one room, from matchmaking's record.
 type Spec struct {
@@ -44,6 +48,8 @@ type Spec struct {
 	// failure with the full result, a cancellation, a panic. Never a
 	// packet.
 	Logf func(format string, args ...any)
+	// Turnout, if set, is told who started and who completed the match.
+	Turnout Turnout
 }
 
 // inboxItem is one payload Post handed the session.
@@ -139,12 +145,20 @@ func NewSession(cfg Config, spec Spec, t Transport, s ScoreStore, o Observer) (*
 	}
 	s2.last = s2.created
 	s2.room = newRoom(&s2.cfg, spec.RoomID, s2.humans, spec.BotID, t, o, spec.Rand, s2.created)
+	if spec.Turnout != nil {
+		s2.room.turnout = spec.Turnout
+	}
 	return s2, nil
 }
 
 type nopObserver struct{}
 
 func (nopObserver) Count(string) {}
+
+type nopTurnout struct{}
+
+func (nopTurnout) Started([]string, time.Time)   {}
+func (nopTurnout) Completed([]string, time.Time) {}
 
 // Done is closed when Run has returned.
 func (s *Session) Done() <-chan struct{} { return s.done }
@@ -260,7 +274,11 @@ func (s *Session) presenceChanged(id string) {
 		return
 	}
 	now := s.clock(time.Now())
-	s.room.setPresence(now, id, s.t.Connected(id))
+	connected := s.t.Connected(id)
+	if connected {
+		s.room.setName(id, s.t.Name(id))
+	}
+	s.room.setPresence(now, id, connected)
 }
 
 func (s *Session) handle(in inboxItem) {
@@ -301,7 +319,7 @@ func (s *Session) finish(ctx context.Context) {
 	deltas := s.zeroDeltas()
 	if s.ranks() {
 		sctx, cancel := context.WithTimeout(ctx, s.cfg.SettleTimeout)
-		st, err := s.store.Settle(sctx, Match{RoomID: s.spec.RoomID, Players: s.humans, EndedAt: s.room.endedAt}, scorer(&s.cfg, res))
+		st, err := s.store.Settle(sctx, Match{RoomID: s.spec.RoomID, Players: s.humans, Names: s.room.names(), EndedAt: s.room.endedAt}, scorer(&s.cfg, res))
 		cancel()
 		switch {
 		case err != nil && ctx.Err() != nil:

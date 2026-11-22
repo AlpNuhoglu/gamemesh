@@ -4,7 +4,8 @@ package leaderboard
 //
 //	GhostTagAllTimeKey               sorted set, the all-time board
 //	lb:ghosttag:daily:YYYY-MM-DD     sorted set, one board per UTC day
-//	player:stats:{player_id}         hash: wins, win_streak, fastest_capture_ms
+//	player:stats:{player_id}         hash: name, wins, win_streak,
+//	                                 fastest_capture_ms
 //	ghosttag:settled:{room}          the settlement of a room, so a retry of
 //	                                 the same room writes nothing twice
 //	ghosttag:pair:{day}:{a}:{b}      the two players already settled a match
@@ -39,6 +40,7 @@ const (
 	ghostSettledPrefix = "ghosttag:settled:"
 	ghostPairPrefix    = "ghosttag:pair:"
 
+	statName      = "name"
 	statWins      = "wins"
 	statStreak    = "win_streak"
 	statFastestMs = "fastest_capture_ms"
@@ -53,6 +55,10 @@ const (
 type GhostTagMatch struct {
 	RoomID  string
 	Players []string
+	// Names are the players' display names by ID. A ranked settlement
+	// writes each into the player's stats, for the board; a player absent
+	// here keeps the name stored before.
+	Names   map[string]string
 	EndedAt time.Time
 }
 
@@ -114,8 +120,8 @@ var ErrGhostTagContention = errors.New("ghost tag settlement: too much contentio
 
 // Settle applies the match once and atomically. It reads every player's
 // current win streak, calls score with them, and writes what score returns:
-// the delta to the all-time and the day's board, and the streak, wins and
-// fastest capture to the player's stats.
+// the delta to the all-time and the day's board, and the name, streak,
+// wins and fastest capture to the player's stats.
 //
 // A second Settle of the same room writes nothing and returns the first
 // one's settlement, without calling score. If the same two players already
@@ -177,6 +183,9 @@ func (s *GhostTagStore) Settle(ctx context.Context, m GhostTagMatch, score func(
 				pipe.ZIncrBy(ctx, GhostTagAllTimeKey, float64(a.Delta), id)
 				pipe.ZIncrBy(ctx, day, float64(a.Delta), id)
 				stats := GhostTagStatsKey(id)
+				if name := m.Names[id]; name != "" {
+					pipe.HSet(ctx, stats, statName, name)
+				}
 				pipe.HSet(ctx, stats, statStreak, a.WinStreak)
 				if a.Win {
 					pipe.HIncrBy(ctx, stats, statWins, 1)
@@ -235,6 +244,58 @@ func (s *GhostTagStore) GhostTagRank(ctx context.Context, playerID string) (Entr
 		return Entry{}, err
 	}
 	return Entry{PlayerID: playerID, Score: score, Rank: rank + 1}, nil
+}
+
+// GhostTagRow is one row of a Ghost Tag board as the public read endpoint
+// shows it: a name, a score and a rank, and nothing else. No player ID, no
+// e-mail, no date (design doc, section 4).
+type GhostTagRow struct {
+	Name  string  `json:"name"`
+	Score float64 `json:"score"`
+	Rank  int64   `json:"rank"`
+}
+
+// GhostTagUnnamed is the name a row shows for a player whose stats hold
+// none: one whose matches were all settled before names were stored.
+const GhostTagUnnamed = "Player"
+
+// GhostTagTop returns the limit best rows of a Ghost Tag board: the
+// all-time board, or the day's when daily is set (the board of the UTC day
+// of day). Ranks are 1-based. A board nobody has scored on is empty.
+func (s *GhostTagStore) GhostTagTop(ctx context.Context, daily bool, day time.Time, limit int64) ([]GhostTagRow, error) {
+	key := GhostTagAllTimeKey
+	if daily {
+		key = GhostTagDailyKey(day)
+	}
+	zs, err := s.rdb.ZRevRangeWithScores(ctx, key, 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]GhostTagRow, len(zs))
+	if len(zs) == 0 {
+		return rows, nil
+	}
+	// One round trip for the names. A player without one answers
+	// redis.Nil, which is not an error here.
+	names := make([]*redis.StringCmd, len(zs))
+	_, _ = s.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for i, z := range zs {
+			id, _ := z.Member.(string)
+			names[i] = pipe.HGet(ctx, GhostTagStatsKey(id), statName)
+		}
+		return nil
+	})
+	for i, z := range zs {
+		name, err := names[i].Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if name == "" {
+			name = GhostTagUnnamed
+		}
+		rows[i] = GhostTagRow{Name: name, Score: z.Score, Rank: int64(i) + 1}
+	}
+	return rows, nil
 }
 
 // hashInt reads an integer field of HMGET, 0 for a missing or unreadable one.

@@ -44,7 +44,7 @@ func newTestRouter(t *testing.T) (*gin.Engine, *nopPublisher) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	NewHandler(svc).RegisterRoutes(r)
+	NewHandler(svc, NewGhostTagStore(rdb)).RegisterRoutes(r)
 	return r, pub
 }
 

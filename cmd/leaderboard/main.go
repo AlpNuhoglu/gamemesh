@@ -69,7 +69,7 @@ func run() int {
 	}
 	defer func() { _ = bus.Close() }()
 	svc := leaderboard.NewService(leaderboard.NewStore(rdb), bus, m, log)
-	handler := leaderboard.NewHandler(svc)
+	handler := leaderboard.NewHandler(svc, leaderboard.NewGhostTagStore(rdb))
 
 	// NATS is not a readiness dependency: event publishing here is best effort
 	// and never fails a request.
