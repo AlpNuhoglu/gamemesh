@@ -45,6 +45,10 @@ type Transport interface {
 	// room at this moment. It is the truth about presence: Session.Notify
 	// only says that the answer may have changed.
 	Connected(playerID string) bool
+	// Name is the player's display name as their connection in the room
+	// says it, "" if it does not know one. To the game a name is an opaque
+	// string it shows in snap and hands the score layer (Match.Names).
+	Name(playerID string) string
 }
 
 // Match identifies a finished match to the score layer.
@@ -53,6 +57,10 @@ type Match struct {
 	RoomID string
 	// Players are the human players, in no particular order.
 	Players []string
+	// Names are the human players' display names by ID, as the room last
+	// learned them; a player whose name it never learned is absent. The
+	// store keeps them with the player's stats, for the board.
+	Names map[string]string
 	// EndedAt decides the UTC day of the daily board and of the same-pair
 	// rule.
 	EndedAt time.Time

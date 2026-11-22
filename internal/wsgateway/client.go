@@ -21,14 +21,17 @@ const (
 // (writePump) per connection; all sends go through the buffered send channel.
 type Client struct {
 	playerID string
-	jti      string    // session the connection was opened with
-	expires  time.Time // JWT expiry; the connection must not outlive it
-	conn     *websocket.Conn
-	send     chan outbound
-	hub      *Hub
-	rooms    map[string]struct{}
-	log      *zap.Logger
-	relay    relayState // see relay.go; its bucket is set by Hub.register
+	// name is the username claim of the JWT the connection was opened
+	// with. A validated room shows it to the players (GameTransport.Name).
+	name    string
+	jti     string    // session the connection was opened with
+	expires time.Time // JWT expiry; the connection must not outlive it
+	conn    *websocket.Conn
+	send    chan outbound
+	hub     *Hub
+	rooms   map[string]struct{}
+	log     *zap.Logger
+	relay   relayState // see relay.go; its bucket is set by Hub.register
 }
 
 // outbound is one message queued for the writer. A relay frame also carries
@@ -44,9 +47,10 @@ type outbound struct {
 	game     bool
 }
 
-func newClient(playerID, jti string, expires time.Time, conn *websocket.Conn, hub *Hub, log *zap.Logger) *Client {
+func newClient(playerID, name, jti string, expires time.Time, conn *websocket.Conn, hub *Hub, log *zap.Logger) *Client {
 	return &Client{
 		playerID: playerID,
+		name:     name,
 		jti:      jti,
 		expires:  expires,
 		conn:     conn,

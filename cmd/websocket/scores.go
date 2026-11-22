@@ -39,7 +39,7 @@ var _ ghosttag.ScoreStore = gameScores{}
 
 // Settle implements ghosttag.ScoreStore.
 func (g gameScores) Settle(ctx context.Context, m ghosttag.Match, score func(map[string]ghosttag.Standing) map[string]ghosttag.Award) (ghosttag.Settlement, error) {
-	st, err := g.store.Settle(ctx, leaderboard.GhostTagMatch{RoomID: m.RoomID, Players: m.Players, EndedAt: m.EndedAt},
+	st, err := g.store.Settle(ctx, leaderboard.GhostTagMatch{RoomID: m.RoomID, Players: m.Players, Names: m.Names, EndedAt: m.EndedAt},
 		func(prior map[string]int) map[string]leaderboard.GhostTagAward {
 			standings := make(map[string]ghosttag.Standing, len(prior))
 			for id, streak := range prior {

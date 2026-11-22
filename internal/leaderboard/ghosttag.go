@@ -4,7 +4,8 @@ package leaderboard
 //
 //	GhostTagAllTimeKey               sorted set, the all-time board
 //	lb:ghosttag:daily:YYYY-MM-DD     sorted set, one board per UTC day
-//	player:stats:{player_id}         hash: wins, win_streak, fastest_capture_ms
+//	player:stats:{player_id}         hash: name, wins, win_streak,
+//	                                 fastest_capture_ms
 //	ghosttag:settled:{room}          the settlement of a room, so a retry of
 //	                                 the same room writes nothing twice
 //	ghosttag:pair:{day}:{a}:{b}      the two players already settled a match
@@ -39,6 +40,7 @@ const (
 	ghostSettledPrefix = "ghosttag:settled:"
 	ghostPairPrefix    = "ghosttag:pair:"
 
+	statName      = "name"
 	statWins      = "wins"
 	statStreak    = "win_streak"
 	statFastestMs = "fastest_capture_ms"
@@ -53,6 +55,10 @@ const (
 type GhostTagMatch struct {
 	RoomID  string
 	Players []string
+	// Names are the players' display names by ID. A ranked settlement
+	// writes each into the player's stats, for the board; a player absent
+	// here keeps the name stored before.
+	Names   map[string]string
 	EndedAt time.Time
 }
 
@@ -114,8 +120,8 @@ var ErrGhostTagContention = errors.New("ghost tag settlement: too much contentio
 
 // Settle applies the match once and atomically. It reads every player's
 // current win streak, calls score with them, and writes what score returns:
-// the delta to the all-time and the day's board, and the streak, wins and
-// fastest capture to the player's stats.
+// the delta to the all-time and the day's board, and the name, streak,
+// wins and fastest capture to the player's stats.
 //
 // A second Settle of the same room writes nothing and returns the first
 // one's settlement, without calling score. If the same two players already
@@ -177,6 +183,9 @@ func (s *GhostTagStore) Settle(ctx context.Context, m GhostTagMatch, score func(
 				pipe.ZIncrBy(ctx, GhostTagAllTimeKey, float64(a.Delta), id)
 				pipe.ZIncrBy(ctx, day, float64(a.Delta), id)
 				stats := GhostTagStatsKey(id)
+				if name := m.Names[id]; name != "" {
+					pipe.HSet(ctx, stats, statName, name)
+				}
 				pipe.HSet(ctx, stats, statStreak, a.WinStreak)
 				if a.Win {
 					pipe.HIncrBy(ctx, stats, statWins, 1)

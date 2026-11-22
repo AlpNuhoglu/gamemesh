@@ -74,6 +74,9 @@ type player struct {
 	id     string
 	quoted []byte // id as a JSON string, for the outbound pos
 	bot    bool
+	// name is the display name snap shows: BotName for the bot, the one
+	// the session last learned from the transport for a human, "" before.
+	name string
 
 	role      role
 	connected bool // as the session last learned it; a bot always is
@@ -163,6 +166,9 @@ func newRoom(cfg *Config, roomID string, humans []string, botID string, out send
 	}
 	add := func(id string, bot bool) {
 		p := &player{id: id, quoted: quoteID(id), bot: bot, connected: bot, hist: newRing(cfg.RingSize)}
+		if bot {
+			p.name = BotName
+		}
 		p.tally.id = id
 		r.players = append(r.players, p)
 		r.byID[id] = p
@@ -560,6 +566,26 @@ func (r *room) finish(at time.Time, o outcome, leaver string) {
 	}
 }
 
+// setName records a human's display name. An empty name changes nothing:
+// a name once learned stays until another replaces it. The next snap shows
+// it.
+func (r *room) setName(id, name string) {
+	if p := r.byID[id]; p != nil && !p.bot && name != "" {
+		p.name = name
+	}
+}
+
+// names are the humans' names that the room knows, by ID.
+func (r *room) names() map[string]string {
+	out := make(map[string]string, len(r.players))
+	for _, p := range r.players {
+		if !p.bot && p.name != "" {
+			out[p.id] = p.name
+		}
+	}
+	return out
+}
+
 // setPresence applies what the session learned from Transport.Connected
 // about one player. Everyone hears of a change; a player who is connected
 // always gets the state, so a connection that just joined learns it even
@@ -752,7 +778,7 @@ func (r *room) snap(now time.Time) []byte {
 	}
 	for _, p := range r.players {
 		m.Players = append(m.Players, snapPlayer{
-			ID: p.id, Role: p.role.String(),
+			ID: p.id, Name: p.name, Role: p.role.String(),
 			X: round2(p.mot.pos.X), Y: round2(p.mot.pos.Y), Theta: round4(p.mot.theta),
 			Connected: p.connected,
 		})

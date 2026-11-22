@@ -312,9 +312,16 @@ func TestGhostTagMatchOverRealSockets(t *testing.T) {
 	a := dialGame(t, url, ids[0], aliceToken)
 	b := dialGame(t, url, ids[1], bobToken)
 
-	// The first half starts once both have joined.
-	_, aAt := a.waitFor(0, "snap HALF_1_ACTIVE", isSnap("HALF_1_ACTIVE"))
+	// The first half starts once both have joined. Each player is shown by
+	// the username of the token their connection was opened with.
+	half1, aAt := a.waitFor(0, "snap HALF_1_ACTIVE", isSnap("HALF_1_ACTIVE"))
 	b.waitFor(0, "snap HALF_1_ACTIVE", isSnap("HALF_1_ACTIVE"))
+	names := map[any]any{}
+	for _, p := range half1.Data["players"].([]any) {
+		p := p.(map[string]any)
+		names[p["id"]] = p["name"]
+	}
+	assert.Equal(t, map[any]any{ids[0]: "alice", ids[1]: "bob"}, names)
 	a.startSending(1)
 	b.startSending(1)
 
@@ -372,6 +379,8 @@ func TestGhostTagMatchOverRealSockets(t *testing.T) {
 		require.NoError(t, err, "%s is on the Ghost Tag board", id)
 		assert.Equal(t, deltas[id], written, "%s: match_end shows what Redis holds", id)
 	}
+	assert.Equal(t, "alice", mr.HGet(leaderboard.GhostTagStatsKey(ids[0]), "name"), "the name is stored with the result")
+	assert.Equal(t, "bob", mr.HGet(leaderboard.GhostTagStatsKey(ids[1]), "name"))
 	assert.Len(t, announced.payloads(t), 2, "each player's standing was announced")
 	assert.Equal(t, 1, events.get(ghosttag.EventMatchCompleted))
 	assert.Zero(t, events.get(ghosttag.EventRoomPanic))

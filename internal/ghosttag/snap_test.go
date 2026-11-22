@@ -70,12 +70,15 @@ func TestSnapConfigDefaultsAreSection6(t *testing.T) {
 		`"trail_ms":2000,"interp_ms":60,"dr_ms":80}`, string(b))
 }
 
-// TestSnapFitsTheMessageLimit: a snap with real (36-character) player IDs
-// and every number at its widest stays under the gateway's 1024 bytes
-// (section 6). The size is logged.
+// TestSnapFitsTheMessageLimit: a snap with real (36-character) player IDs,
+// two names as long as the player service allows a username (32
+// characters) and every number at its widest stays under the gateway's
+// 1024 bytes (section 6). The size is logged.
 func TestSnapFitsTheMessageLimit(t *testing.T) {
 	a, b := "0b9f8e2c-5a41-4c7d-9e3f-1d2c3b4a5f60", "7e6d5c4b-3a29-4f18-8e07-f6e5d4c3b2a1"
 	h := newHarness(t, DefaultConfig(), "room-1", []string{a, b}, "")
+	h.r.setName(a, "SwiftFox4821SwiftFox4821SwiftFox")
+	h.r.setName(b, "QuietOwl9034QuietOwl9034QuietOwl")
 	h.r.setPresence(at(time.Second), a, true)
 	h.r.setPresence(at(time.Second), b, true)
 	h.r.tick(at(time.Second + h.cfg.TCountdown))
@@ -90,6 +93,7 @@ func TestSnapFitsTheMessageLimit(t *testing.T) {
 	require.Equal(t, stateGrace, h.r.state)
 
 	snap := h.r.snap(drop.Add(ms(3)))
+	require.Contains(t, string(snap), `"name":"QuietOwl9034QuietOwl9034QuietOwl"`)
 	t.Logf("snap: %d bytes: %s", len(snap), snap)
 	assert.Less(t, len(snap), 1024)
 }

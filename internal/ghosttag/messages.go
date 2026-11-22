@@ -138,7 +138,10 @@ type clampMsg struct {
 }
 
 type snapPlayer struct {
-	ID        string  `json:"id"`
+	ID string `json:"id"`
+	// Name is the player's display name, for the top bar and the match
+	// end screen; "" while the room has not learned it.
+	Name      string  `json:"name"`
 	Role      string  `json:"role"`
 	X         float64 `json:"x"`
 	Y         float64 `json:"y"`

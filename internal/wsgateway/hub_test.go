@@ -20,7 +20,7 @@ import (
 // newHubClient builds a client without a real socket: hub operations only
 // touch the send channel, never the conn.
 func newHubClient(hub *Hub, playerID string) *Client {
-	return newClient(playerID, "", time.Time{}, nil, hub, zap.NewNop())
+	return newClient(playerID, "", "", time.Time{}, nil, hub, zap.NewNop())
 }
 
 // fakeRooms is an in-memory RoomChecker: room ID -> its players. err, when

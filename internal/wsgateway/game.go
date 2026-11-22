@@ -76,6 +76,11 @@ type GameTransport interface {
 	SendTo(playerID string, payload []byte)
 	// Connected reports whether playerID has a connection in the room now.
 	Connected(playerID string) bool
+	// Name is the username of the JWT one of playerID's connections in the
+	// room was opened with, or "" if the player has none. A player's
+	// connections normally share it; if they do not (the account was
+	// renamed between two tokens), it is one of them.
+	Name(playerID string) string
 }
 
 // GameSession is one validated room's game. Run is its goroutine; the other
@@ -368,6 +373,19 @@ func (g *gameRoom) Connected(playerID string) bool {
 		}
 	}
 	return false
+}
+
+// Name implements GameTransport.
+func (g *gameRoom) Name(playerID string) string {
+	h := g.hub
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.rooms[g.room] {
+		if c.playerID == playerID && c.name != "" {
+			return c.name
+		}
+	}
+	return ""
 }
 
 // gameState is the hub's validated-room state, embedded in Hub. games is

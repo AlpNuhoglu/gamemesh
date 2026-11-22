@@ -23,6 +23,9 @@ const (
 // DefaultBotID is the bot's player ID when Spec.BotID is empty.
 const DefaultBotID = "bot"
 
+// BotName is the bot's display name in snap (section 6: a fixed name).
+const BotName = "Bot"
+
 // Spec describes one room, from matchmaking's record.
 type Spec struct {
 	RoomID string
@@ -260,7 +263,11 @@ func (s *Session) presenceChanged(id string) {
 		return
 	}
 	now := s.clock(time.Now())
-	s.room.setPresence(now, id, s.t.Connected(id))
+	connected := s.t.Connected(id)
+	if connected {
+		s.room.setName(id, s.t.Name(id))
+	}
+	s.room.setPresence(now, id, connected)
 }
 
 func (s *Session) handle(in inboxItem) {
@@ -301,7 +308,7 @@ func (s *Session) finish(ctx context.Context) {
 	deltas := s.zeroDeltas()
 	if s.ranks() {
 		sctx, cancel := context.WithTimeout(ctx, s.cfg.SettleTimeout)
-		st, err := s.store.Settle(sctx, Match{RoomID: s.spec.RoomID, Players: s.humans, EndedAt: s.room.endedAt}, scorer(&s.cfg, res))
+		st, err := s.store.Settle(sctx, Match{RoomID: s.spec.RoomID, Players: s.humans, Names: s.room.names(), EndedAt: s.room.endedAt}, scorer(&s.cfg, res))
 		cancel()
 		switch {
 		case err != nil && ctx.Err() != nil:
