@@ -12,8 +12,9 @@ import (
 
 // Events the session reports besides those of ports.go and room.go.
 const (
-	// EventRanked: a match was settled and produced points. With
-	// EventMatchStarted it gives ranked_match_ratio of section 5.
+	// EventRanked: a match was settled and produced points. Over the
+	// decided matches (EventMatchCompleted plus EventForfeit: a forfeit is
+	// settled too) it gives ranked_match_ratio of section 5.
 	EventRanked = "ranked"
 	// EventRoomPanic: the room's goroutine panicked. The match was ended as
 	// void and unranked and the store was not called (Session.Run).
