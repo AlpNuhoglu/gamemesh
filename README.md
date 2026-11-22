@@ -379,6 +379,21 @@ identical, spans just become non-recording.
 
 </details>
 
+### Browser client
+
+The Ghost Tag client lives in `web/` (Vite, TypeScript). The gateway embeds its
+build and serves it at `/play/`, only when `GAME_CLIENT_ENABLED` is on; with the
+flag off the path is a 404.
+
+```bash
+make web        # npm ci + npm run build, writes internal/gateway/webui/embedded/app
+make web-test   # type check and unit tests
+cd web && npm run dev   # dev server on :5173, proxies /api and /ws to the gateway on :8080
+```
+
+Run `make web` before `go run ./cmd/gateway`, or `/play/` answers 503. The
+gateway's Docker image builds the client itself.
+
 ## Kubernetes locally (k3d)
 
 The same distribution as production, on your machine:
