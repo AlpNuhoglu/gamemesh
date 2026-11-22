@@ -27,6 +27,10 @@ const (
 	// TypeSessionRevoked is written to the outbox on logout so the WebSocket
 	// service can close the connections opened with that session at once.
 	TypeSessionRevoked = "SessionRevoked"
+	// TypePlayerDeleted is written to the outbox in the transaction that
+	// deletes the player, so whatever else holds data about the player (the
+	// leaderboards) is certain to hear of it.
+	TypePlayerDeleted = "PlayerDeleted"
 	// Presence events. Emitted by the Presence Service on connection-driven
 	// transitions. Published directly to NATS (not via the outbox): presence is
 	// high-churn and self-correcting — a dropped event is re-derived on the next
@@ -114,6 +118,12 @@ type PlayerUpdatedPayload struct {
 	Email    string `json:"email"`
 }
 
+// PlayerDeletedPayload is emitted when an account is deleted, by its owner
+// or by the sweep.
+type PlayerDeletedPayload struct {
+	PlayerID string `json:"player_id"`
+}
+
 // SessionRevokedPayload names the revoked session (JWT ID).
 type SessionRevokedPayload struct {
 	JTI string `json:"jti"`
@@ -166,4 +176,30 @@ type Handler func(ctx context.Context, e Event) error
 // error. It blocks until ctx is cancelled, draining in-flight work on shutdown.
 type AckSubscriber interface {
 	SubscribeAck(ctx context.Context, handler Handler, topics ...string) error
+}
+
+// Consume delivers the events of the topics to handler until ctx is done. On
+// a transport with acknowledgements (NATS JetStream) an event is ACK'd only
+// after handler returns nil, so a failed one is delivered again; on one
+// without (Redis Pub/Sub) delivery is at most once and handler's error is
+// dropped. The handler is the same either way.
+func Consume(ctx context.Context, sub Subscriber, handler Handler, topics ...string) error {
+	if ack, ok := sub.(AckSubscriber); ok {
+		return ack.SubscribeAck(ctx, handler, topics...)
+	}
+	ch, err := sub.Subscribe(ctx, topics...)
+	if err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case e, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			_ = handler(ctx, e)
+		}
+	}
 }

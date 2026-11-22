@@ -41,6 +41,30 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 // (GAME_CLIENT_ENABLED) on.
 func (h *Handler) RegisterGameClientRoutes(r *gin.Engine) {
 	r.POST("/auth/guest", h.createGuest)
+	r.DELETE("/players/:id", h.deleteAccount)
+}
+
+// deleteAccount deletes the caller's own account, registered or guest. The
+// token is the proof: whoever holds a valid session of the account may end
+// it.
+func (h *Handler) deleteAccount(c *gin.Context) {
+	id, ok := resolveID(c)
+	if !ok {
+		return
+	}
+	if caller := c.GetHeader(middleware.HeaderUserID); caller != id.String() {
+		httpx.Error(c, http.StatusForbidden, "cannot delete another player's account")
+		return
+	}
+	if err := h.svc.DeleteAccount(c.Request.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.Error(c, http.StatusNotFound, ErrNotFound.Error())
+			return
+		}
+		httpx.Error(c, http.StatusInternalServerError, "could not delete the account")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 type registerRequest struct {

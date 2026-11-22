@@ -137,12 +137,62 @@ func (s *Service) Logout(ctx context.Context, jti string) error {
 	if err := s.sessions.Delete(ctx, jti); err != nil {
 		return err
 	}
+	s.announceRevoked(ctx, jti)
+	return nil
+}
+
+// announceRevoked tells the WebSocket service to close the connections
+// opened with the session now. Best effort: its periodic session sweep closes
+// them within seconds anyway.
+func (s *Service) announceRevoked(ctx context.Context, jti string) {
 	e, err := events.New(events.TypeSessionRevoked, events.SessionRevokedPayload{JTI: jti})
 	if err == nil {
 		err = s.repo.PublishEvent(ctx, e, events.TopicPlayer)
 	}
 	if err != nil {
 		s.log.Warn("failed to announce session revocation", zap.Error(err))
+	}
+}
+
+// DeleteAccount deletes the player for good: the row with its stats, every
+// session, and (through the PlayerDeleted event, written in the row's own
+// transaction) its entries on the leaderboards.
+//
+// The sessions are revoked even when the row is already gone, and a failure
+// to revoke is returned: an attempt that deleted the row and then lost Redis
+// is finished by repeating it, which answers ErrNotFound once the sessions
+// are gone too.
+func (s *Service) DeleteAccount(ctx context.Context, id uuid.UUID) error {
+	e, err := deletedEvent(id)
+	if err != nil {
+		return err
+	}
+	deleteErr := s.repo.DeleteWithOutbox(ctx, id, e, events.TopicPlayer)
+	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
+		return deleteErr
+	}
+	if err := s.revokeAll(ctx, id); err != nil {
+		return err
+	}
+	if deleteErr != nil {
+		return deleteErr
+	}
+	s.log.Info("account deleted", zap.String("player_id", id.String()))
+	return nil
+}
+
+func deletedEvent(id uuid.UUID) (events.Event, error) {
+	return events.New(events.TypePlayerDeleted, events.PlayerDeletedPayload{PlayerID: id.String()})
+}
+
+// revokeAll ends every session of the player.
+func (s *Service) revokeAll(ctx context.Context, id uuid.UUID) error {
+	jtis, err := s.sessions.DeleteAll(ctx, id.String())
+	if err != nil {
+		return err
+	}
+	for _, jti := range jtis {
+		s.announceRevoked(ctx, jti)
 	}
 	return nil
 }

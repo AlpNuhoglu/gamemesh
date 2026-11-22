@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +27,71 @@ type mockRepository struct {
 	publishErr error
 	touchErr   error
 	createErr  error
+	sweepErr   error
+	// sweeps records each DeleteSwept call; swept, when set, is told too.
+	sweeps []sweepCall
+	swept  chan sweepCall
+}
+
+type sweepCall struct {
+	rule   SweepRule
+	cutoff time.Time
+	limit  int
+}
+
+func (r *mockRepository) DeleteWithOutbox(_ context.Context, id uuid.UUID, e events.Event, _ string) error {
+	if _, ok := r.players[id]; !ok {
+		return ErrNotFound
+	}
+	delete(r.players, id)
+	r.events = append(r.events, e)
+	return nil
+}
+
+// DeleteSwept applies the same rules as the SQL (which the integration tests
+// check against Postgres), oldest first, up to limit.
+func (r *mockRepository) DeleteSwept(_ context.Context, rule SweepRule, cutoff time.Time, limit int, _ string, event func(uuid.UUID) (events.Event, error)) ([]uuid.UUID, error) {
+	call := sweepCall{rule: rule, cutoff: cutoff, limit: limit}
+	r.sweeps = append(r.sweeps, call)
+	if r.swept != nil {
+		r.swept <- call
+	}
+	if r.sweepErr != nil {
+		return nil, r.sweepErr
+	}
+	var matched []*Player
+	for _, p := range r.players {
+		seen := p.CreatedAt
+		if p.LastSeenAt != nil {
+			seen = *p.LastSeenAt
+		}
+		switch rule {
+		case SweepInactiveGuests:
+			if p.IsGuest && seen.Before(cutoff) {
+				matched = append(matched, p)
+			}
+		case SweepBenchAccounts:
+			if !p.IsGuest && strings.HasSuffix(p.Email, "@latencybench.invalid") &&
+				strings.HasPrefix(p.Username, "bench") && p.CreatedAt.Before(cutoff) {
+				matched = append(matched, p)
+			}
+		}
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].CreatedAt.Before(matched[j].CreatedAt) })
+	var ids []uuid.UUID
+	for _, p := range matched {
+		if len(ids) == limit {
+			break
+		}
+		e, err := event(p.ID)
+		if err != nil {
+			return nil, err
+		}
+		r.events = append(r.events, e)
+		delete(r.players, p.ID)
+		ids = append(ids, p.ID)
+	}
+	return ids, nil
 }
 
 func (r *mockRepository) PublishEvent(_ context.Context, e events.Event, _ string) error {
@@ -118,10 +185,11 @@ func (r *mockRepository) UpdateWithOutbox(ctx context.Context, p *Player, e even
 
 // fakeSessions records session operations.
 type fakeSessions struct {
-	saved      map[string]string
-	deleted    []string
-	deletedAll []string
-	ttls       map[string]time.Duration
+	saved        map[string]string
+	deleted      []string
+	deletedAll   []string
+	ttls         map[string]time.Duration
+	deleteAllErr error
 }
 
 func newFakeSessions() *fakeSessions {
@@ -141,6 +209,9 @@ func (s *fakeSessions) Delete(_ context.Context, jti string) error {
 }
 
 func (s *fakeSessions) DeleteAll(_ context.Context, playerID string) ([]string, error) {
+	if s.deleteAllErr != nil {
+		return nil, s.deleteAllErr
+	}
 	var jtis []string
 	for jti, owner := range s.saved {
 		if owner == playerID {
