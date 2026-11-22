@@ -54,6 +54,10 @@ Revokes the current session (deletes the Redis session for the token's JTI).
 **200** → `{ "id", "username", "email", "created_at", "updated_at", "stats": { "rank", "score", "games_played" } }`
 **404** if not found.
 
+`email` is present only in the caller's own profile. Any signed-in player
+may read any profile, and player ids are not secret (a match shows both
+players theirs), so another player's profile leaves the address out.
+
 ### PUT /api/v1/players/:id 🔒
 ```json
 { "username": "trinity", "email": "new@example.com" }

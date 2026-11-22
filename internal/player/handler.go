@@ -131,7 +131,20 @@ func (h *Handler) getProfile(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "failed to fetch profile")
 		return
 	}
+	if c.GetHeader(middleware.HeaderUserID) != p.ID.String() {
+		p = withoutPrivate(p)
+	}
 	httpx.OK(c, p)
+}
+
+// withoutPrivate is the player as someone else may see them: everything but
+// the e-mail address. Any signed-in caller can ask for any player's profile,
+// and player ids are not secret (a match shows both players theirs), so the
+// address used to be readable by whoever a player had been matched with.
+func withoutPrivate(p *Player) *Player {
+	public := *p
+	public.Email = ""
+	return &public
 }
 
 type updateRequest struct {

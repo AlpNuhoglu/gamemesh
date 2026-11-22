@@ -14,8 +14,10 @@ type Player struct {
 	// "unique" (constraint) rather than "uniqueIndex": GORM names these
 	// uni_players_*, which the SQL migrations mirror so AutoMigrate is a
 	// no-op when the schema was applied via schema.sql first.
-	Username     string    `gorm:"size:32;not null;unique" json:"username"`
-	Email        string    `gorm:"size:255;not null;unique" json:"email"`
+	Username string `gorm:"size:32;not null;unique" json:"username"`
+	// Email is serialised only when set: the handler clears it on a copy
+	// before it answers anyone but the player themselves.
+	Email        string    `gorm:"size:255;not null;unique" json:"email,omitempty"`
 	PasswordHash string    `gorm:"size:255;not null" json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
