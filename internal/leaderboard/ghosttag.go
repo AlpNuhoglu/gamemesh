@@ -246,6 +246,58 @@ func (s *GhostTagStore) GhostTagRank(ctx context.Context, playerID string) (Entr
 	return Entry{PlayerID: playerID, Score: score, Rank: rank + 1}, nil
 }
 
+// GhostTagRow is one row of a Ghost Tag board as the public read endpoint
+// shows it: a name, a score and a rank, and nothing else. No player ID, no
+// e-mail, no date (design doc, section 4).
+type GhostTagRow struct {
+	Name  string  `json:"name"`
+	Score float64 `json:"score"`
+	Rank  int64   `json:"rank"`
+}
+
+// GhostTagUnnamed is the name a row shows for a player whose stats hold
+// none: one whose matches were all settled before names were stored.
+const GhostTagUnnamed = "Player"
+
+// GhostTagTop returns the limit best rows of a Ghost Tag board: the
+// all-time board, or the day's when daily is set (the board of the UTC day
+// of day). Ranks are 1-based. A board nobody has scored on is empty.
+func (s *GhostTagStore) GhostTagTop(ctx context.Context, daily bool, day time.Time, limit int64) ([]GhostTagRow, error) {
+	key := GhostTagAllTimeKey
+	if daily {
+		key = GhostTagDailyKey(day)
+	}
+	zs, err := s.rdb.ZRevRangeWithScores(ctx, key, 0, limit-1).Result()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]GhostTagRow, len(zs))
+	if len(zs) == 0 {
+		return rows, nil
+	}
+	// One round trip for the names. A player without one answers
+	// redis.Nil, which is not an error here.
+	names := make([]*redis.StringCmd, len(zs))
+	_, _ = s.rdb.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for i, z := range zs {
+			id, _ := z.Member.(string)
+			names[i] = pipe.HGet(ctx, GhostTagStatsKey(id), statName)
+		}
+		return nil
+	})
+	for i, z := range zs {
+		name, err := names[i].Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if name == "" {
+			name = GhostTagUnnamed
+		}
+		rows[i] = GhostTagRow{Name: name, Score: z.Score, Rank: int64(i) + 1}
+	}
+	return rows, nil
+}
+
 // hashInt reads an integer field of HMGET, 0 for a missing or unreadable one.
 func hashInt(v any) int {
 	str, ok := v.(string)
