@@ -1,4 +1,4 @@
-.PHONY: help build test test-integration lint cover up down k8s-build k8s-secrets k8s-context k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
+.PHONY: help build test test-integration lint cover web web-test up down k8s-build k8s-secrets k8s-context k8s-apply k8s-delete k6-leaderboard k6-matchmaking k6-websocket
 
 # Every directory under cmd/, as CI's image matrix: the hand-written list had
 # lost outbox-relay, so k8s-build skipped an image the cluster needs.
@@ -28,6 +28,12 @@ test-integration: ## Run Testcontainers integration tests (needs Docker)
 
 lint: ## Run golangci-lint
 	golangci-lint run
+
+web: ## Build the browser client into the gateway's embed directory (needs Node)
+	cd web && npm ci && npm run build
+
+web-test: ## Type-check and unit-test the browser client
+	cd web && npm run typecheck && npm test
 
 up: ## Start the full local stack
 	docker compose up --build -d

@@ -48,6 +48,22 @@ updates:
           - "*"
         update-types: [minor, patch]
 
+  # The browser client's npm packages (web/package.json, exact versions). Minor
+  # and patch in one weekly PR, like the Go modules; majors stay separate. The
+  # web job runs the type check, tests and build on it. The Node image of the
+  # Dockerfile is the docker entry below; its major is also in the web job.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    groups:
+      web-packages:
+        patterns:
+          - "*"
+        update-types: [minor, patch]
+
   # The two FROM lines: tag and digest move together. A golang bump must
   # also match go.mod's toolchain line, which CI checks.
   # The services' Dockerfile and the backup image's (phase 2, E2): both on
