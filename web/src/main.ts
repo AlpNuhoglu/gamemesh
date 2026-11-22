@@ -320,6 +320,7 @@ function frame(now: number, dtMs: number): void {
       inPerSec: inRate,
       outPerSec: outRate,
       clamps: g?.pred.clamps ?? 0,
+      lastCorrection: g?.pred.lastCorrection ?? 0,
       interp: g?.interpState(now) ?? "-",
       radius: g !== null && g.cfg !== null ? g.room.radius(now) : null,
       state: `${st ?? "-"} / ${matchmaker.state}`,

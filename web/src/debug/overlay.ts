@@ -31,6 +31,7 @@ export interface DebugStats {
   inPerSec: number;
   outPerSec: number;
   clamps: number;
+  lastCorrection: number;
   interp: string;
   radius: number | null;
   state: string;
@@ -55,7 +56,7 @@ export class Overlay {
       `rtt       ${s.rtt === null ? "-" : `${s.rtt.toFixed(1)} ms`}`,
       `pos in/s  ${s.inPerSec.toFixed(1)}`,
       `pos out/s ${s.outPerSec.toFixed(1)}`,
-      `clamps    ${s.clamps}`,
+      `clamps    ${s.clamps}${s.clamps > 0 ? ` (last moved ${s.lastCorrection.toFixed(2)} u)` : ""}`,
       `interp    ${s.interp}`,
       `R(t)      ${s.radius === null ? "-" : s.radius.toFixed(1)}`,
       `renewals  ${s.renewals}  requeues ${s.requeues}`,

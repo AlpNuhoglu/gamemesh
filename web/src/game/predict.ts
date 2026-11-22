@@ -125,6 +125,8 @@ export class Predictor {
   private offY = 0;
   private blendFrom = 0;
   clamps = 0;
+  /** How far the last clamp moved the state, in arena units. */
+  lastCorrection = 0;
 
   /** reset places the character, as at a spawn: no blending. */
   reset(x: number, y: number, theta: number): void {
@@ -159,6 +161,7 @@ export class Predictor {
    */
   correct(x: number, y: number, theta: number, now: number): void {
     const drawn = this.drawn(now);
+    this.lastCorrection = Math.hypot(x - this.x, y - this.y);
     this.x = x;
     this.y = y;
     this.theta = theta;
