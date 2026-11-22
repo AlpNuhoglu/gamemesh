@@ -101,16 +101,19 @@ func (r *mockRepository) UpdateWithOutbox(ctx context.Context, p *Player, e even
 
 // fakeSessions records session operations.
 type fakeSessions struct {
-	saved   map[string]string
-	deleted []string
+	saved      map[string]string
+	deleted    []string
+	deletedAll []string
+	ttls       map[string]time.Duration
 }
 
 func newFakeSessions() *fakeSessions {
-	return &fakeSessions{saved: make(map[string]string)}
+	return &fakeSessions{saved: make(map[string]string), ttls: make(map[string]time.Duration)}
 }
 
-func (s *fakeSessions) Save(_ context.Context, jti, playerID string, _ time.Duration) error {
+func (s *fakeSessions) Save(_ context.Context, jti, playerID string, ttl time.Duration) error {
 	s.saved[jti] = playerID
+	s.ttls[jti] = ttl
 	return nil
 }
 
@@ -118,6 +121,18 @@ func (s *fakeSessions) Delete(_ context.Context, jti string) error {
 	s.deleted = append(s.deleted, jti)
 	delete(s.saved, jti)
 	return nil
+}
+
+func (s *fakeSessions) DeleteAll(_ context.Context, playerID string) ([]string, error) {
+	var jtis []string
+	for jti, owner := range s.saved {
+		if owner == playerID {
+			jtis = append(jtis, jti)
+			delete(s.saved, jti)
+		}
+	}
+	s.deletedAll = append(s.deletedAll, playerID)
+	return jtis, nil
 }
 
 func (s *fakeSessions) Exists(_ context.Context, jti string) (bool, error) {
