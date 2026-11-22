@@ -83,6 +83,11 @@ updates:
       # Patch releases, which carry the security fixes, still come.
       - dependency-name: golang
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Node builds the browser client in the gateway image's Node stage. Its
+      # major is also written in CI's web job (node-version), so a new major
+      # is one change to both, made by hand; minors and patches still come.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
 
   # The third-party images in the Kubernetes manifests (NATS, Redis, Postgres,
   # Prometheus, Grafana). Majors are their own decision: Redis 8, Postgres 17,
