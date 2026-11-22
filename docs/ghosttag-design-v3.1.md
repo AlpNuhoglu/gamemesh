@@ -420,6 +420,12 @@ işlenir; Go testi dosyanın güncel olduğunu, TypeScript testi aynı girdiden
 aynı çıktıyı ürettiğini doğrular. Slack girdide ve çıktıda yer alır, çünkü
 hattın sonucu ona bağlıdır.
 
+Vektörlerin hepsi önceki paketi olan bir oyuncunun adımıdır. Spawn ya da
+dönüş sonrasındaki ilk paket (sunucuda `Δt_initial`, dönüş sınırı yok) bu
+biçimde ifade edilemez ve dosyada yoktur; istemci orada sunucudan daha
+katı davranır (kendi kare süresiyle ve dönüş sınırıyla hesaplar), bu
+yüzden kırpılmaz.
+
 İstemci tahminde slack bütçesini **harcamaz** (her adımı `slack = 0` ile
 hesaplar): bütçe ağ titreşimi içindir ve sunucu tarafında birikir; istemci
 kendi tarafında harcarsa sunucunun vermediği mesafeyi kullanmış olur.
@@ -567,7 +573,8 @@ seri kayıpsız devreder. Misafirler puan yazar ve tabloda görünür.
 JWT'sindeki `username` iddiasından gelir; oyun paketi adı yalnızca taşır.
 
 **Okuma uç noktası.** `GET /api/v1/leaderboard/ghosttag` (herkese açık),
-`board=daily|alltime` ve `limit` ile. Her satır **yalnızca ad, puan ve
+`board=daily|alltime` (varsayılan `alltime`) ve `limit` (varsayılan 10, en
+fazla 50) ile. Adı hiç yazılmamış oyuncu `Player` olarak görünür. Her satır **yalnızca ad, puan ve
 sıra** taşır: oyuncu kimliği, e-posta ve tarih dönmez. Misafir adlarını
 sunucu ürettiği için kişisel veri değildir; kayıtlı bir oyuncunun kullanıcı
 adı ise tabloya girdiğinde herkese açık olur. Bu bilinçli bir sonuçtur.
@@ -606,7 +613,7 @@ girmez; bot maçındaki insan girer.
 | Oran | Hesap | Sayaçların tanımı |
 |---|---|---|
 | Tur tamamlama | `match_completed / match_started` | Başlangıç: oda `WAITING`'den çıkar. Tamamlanma: maç iki yarısı oynanarak biter. Hükmen biten ve geçersiz sayılan maç tamamlanmış **sayılmaz** |
-| `ranked_match_ratio` | `ranked / match_completed` | `ranked`: puan yazılan maç |
+| `ranked_match_ratio` | `ranked / (match_completed + forfeit)` | `ranked`: puan yazılan maç. Hükmen biten maç da puan yazar, bu yüzden payda sonuçlanan bütün maçlardır |
 | İkinci tur | `second_round / player_finished` | `player_finished`: tamamlanan maçın her insan oyuncusu için +1. `second_round`: o oyuncunun yeni maçı 30 sn içinde başlarsa +1 |
 | D1 dönüş | bugünün `d1_return` artışı / dünün `player_day` artışı | `player_day`: oyuncunun o UTC günündeki ilk maç başlangıcı. `d1_return`: aynı anda bir önceki UTC gününde de maç başlatmışsa |
 
@@ -642,7 +649,7 @@ en fazla **1024 bayt**.
 
 **Zarf.** Tablodaki yükler GameMesh zarfının `data` alanında taşınır; boyut
 sütunu yalnızca yükü sayar, zarf ~40 bayt ekler (en büyük paket sınırın
-%58'inde olduğu için sorun değil).
+%64'ünde olduğu için sorun değil).
 
 - Gelen: `{"action":"relay","room":"<id>","data":<yük>}`. Mevcut relay boyut,
   hız ve üyelik kontrolleri önce çalışır. Validated odada `data` açılır ve
@@ -668,17 +675,19 @@ sabit yoktur (bölüm 3.5).
 | `v_runner`, `v_hunter`, `omega_max`, `alpha`, `slack_max`, `move_eps`, `dt_max_ms` | Yerel tahmin: doğrulama hattının formülü (bölüm 1.2) |
 | `r0`, `r_min`, `t_half_ms`, `t_shrink_ms` | `R(t)`: `snap` olay bazlı olduğu için daralma sırasında yarıçapı istemci hesaplar |
 | `d_capture` | Yakalama yarıçapının çizimi |
-| `send_ms` | Konum gönderim aralığı |
+| `send_ms` | Konum gönderim aralığı. Odanın tick'idir (`Tick`, 40 ms): botun paket aralığı ile insanınki aynı olmalıdır (bölüm 1.5) |
 | `trail_ms`, `interp_ms`, `dr_ms` | Işık izi gecikmesi, enterpolasyon tamponu, dead-reckoning tavanı (bölüm 3) |
 
-`players[].name` oyuncunun adıdır (bot için sabit bir ad); üst şerit ve maç
-sonu ekranı için.
+`players[].name` oyuncunun adıdır; üst şerit ve maç sonu ekranı için. Botun
+adı sabittir (`Bot`). Oda bir oyuncunun adını bağlantısından öğrenir;
+öğrenene kadar alan boş dizedir.
 
-**`snap` boyutu.** Gerçek kimliklerle (36 karakterlik UUID) hesaplanan
-örnek: sabitler ve adlar olmadan 310 B, onlarla 598 B; `cfg` tek başına
-243 B. Uygulamada bir test `snap`'in 1024 baytın altında kaldığını
-doğrular. `snap` olay bazlı olduğu için (maç başına bir düzine civarı) bant
-genişliğine etkisi yoktur.
+**`snap` boyutu (ölçülen).** İki 36 karakterlik kimlikle 571 B; iki adın
+her biri en uzun kullanıcı adı (32 karakter) olduğunda 655 B. Bir test
+`snap`'in 1024 baytın altında kaldığını doğrular ve boyutu yazar. 1024
+bayt gelen mesajların sınırıdır; giden `snap` için bir sınır uygulanmaz,
+test dokümandaki hedefi korur. `snap` olay bazlı olduğu için (maç başına
+bir düzine civarı) bant genişliğine etkisi yoktur.
 
 **`sts` birimi:** oda başlangıcından itibaren milisaniye (monoton). İstemci
 çizim gecikmesini yerel alış zamanından uyguladığı için (bölüm 3.3) `sts`
@@ -697,7 +706,7 @@ Puansız maçta (`ranked: false`) `deltas` tüm oyuncular için 0'dır.
 
 **Sınır sağlaması:** istemci çıkışı 25 + 0,5 = **25,5 msg/sn** (sınırın
 %42,5'i); sunucu yayını en fazla 27,5 msg/sn; en büyük paket `snap`,
-~600 bayt (1024 baytın %58'i).
+en fazla 655 bayt (1024 baytın %64'ü).
 
 ---
 
@@ -1079,6 +1088,18 @@ reddeder.
   kopuk olan istemci bildirimi kaçırır; oda `T_join` sonunda iptal olur ve
   istemci yeniden kuyruğa girer. Oyuncu bunu birkaç saniyelik ek bekleme
   olarak görür.
+- **Silinen hesabın token'ı gateway'den 5 saniyeye kadar geçer.** Gateway
+  "oturum geçerli" kararını `SESSION_CACHE_TTL` kadar önbellekte tutar; bu
+  sürede istek player servisine ulaşır ve `404` alır. Ölçülen: silmenin
+  hemen ardından `404`, 6 saniye sonra `401`. Oturum önbelleğinin mevcut
+  ödünleşimidir.
+- **Puanlı maçın ortasında silinen hesap.** Bağlantısı kapanır, maç hükmen
+  biter ve sonuç yazılırken kimliği Ghost Tag tablolarına geri girer;
+  tablo temizliği ondan önce çalışmıştır. Dar bir durumdur; kayıt adsız bir
+  satır olarak kalır.
+- **Tablo temizliği beş denemeden sonra bırakılır.** `PlayerDeleted`
+  olayını işleyen tüketici beş kez üst üste başarısız olursa (Redis o kadar
+  süre kapalıysa) olay bir daha teslim edilmez.
 - **Hareket formülü iki dilde yazılıdır.** Go ve TypeScript uygulamalarını
   bir arada tutan şey altın vektör dosyasıdır (bölüm 3.5); vektörlerin
   kapsamadığı bir girdide ayrışma, oyunda `clamp` olarak görünür.
