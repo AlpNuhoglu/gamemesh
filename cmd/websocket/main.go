@@ -127,7 +127,11 @@ func run() int {
 
 	// Sessions run until the shutdown signal; hub.CloseAll, the shutdown
 	// hook below, stops them before it closes a connection. A ranked match
-	// is settled in Redis and then announced on the bus.
+	// is settled in Redis and then announced on the bus. Who started and who
+	// completed a match goes to the telemetry markers, through one worker.
+	gameCounts := gameEvents{total: m.WSGameEventsTotal}
+	turnouts := newTurnout(rdb, gameCounts, log)
+	workers.Go(func() { turnouts.Run(ctx) })
 	hub.SetGames(ctx, gameHost{
 		cfg: game,
 		scores: gameScores{
@@ -136,8 +140,9 @@ func run() int {
 			log:   log,
 			later: func(f func()) { go f() },
 		},
-		events: gameEvents{total: m.WSGameEventsTotal},
-		log:    log,
+		events:  gameCounts,
+		turnout: turnouts,
+		log:     log,
 	}, cfg.GameStartWindow)
 	workers.Go(func() {
 		if err := bridge.Run(ctx); err != nil {

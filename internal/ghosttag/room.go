@@ -118,6 +118,7 @@ type room struct {
 	roomID  string
 	out     sender
 	obs     Observer
+	turnout Turnout
 	rng     *rand.Rand // the bot's; the roles do not come from it
 	created time.Time  // sts counts from here; T_join too
 
@@ -157,6 +158,7 @@ func newRoom(cfg *Config, roomID string, humans []string, botID string, out send
 		roomID:  roomID,
 		out:     out,
 		obs:     obs,
+		turnout: nopTurnout{},
 		rng:     rng,
 		created: created,
 		byID:    make(map[string]*player),
@@ -245,6 +247,17 @@ func (r *room) opponent(p *player) *player {
 		}
 	}
 	return nil
+}
+
+// humanIDs are the human players, a new slice each call.
+func (r *room) humanIDs() []string {
+	ids := make([]string, 0, len(r.players))
+	for _, p := range r.players {
+		if !p.bot {
+			ids = append(ids, p.id)
+		}
+	}
+	return ids
 }
 
 func (r *room) allConnected() bool {
@@ -370,6 +383,7 @@ func (r *room) enterCountdown(now time.Time) {
 	r.placeAtSpawn(now, false)
 	r.state, r.since, r.half = stateCountdown, now, 1
 	r.obs.Count(EventMatchStarted)
+	r.turnout.Started(r.humanIDs(), now)
 	r.broadcastSnap(now)
 }
 
@@ -424,6 +438,7 @@ func (r *room) endHalf(at time.Time, reason string, durMs int) {
 	if r.half == 2 {
 		r.played += at.Sub(r.resumed)
 		r.obs.Count(EventMatchCompleted)
+		r.turnout.Completed(r.humanIDs(), at)
 		r.finish(at, outcomeCompleted, "")
 		r.countRoleOrder()
 		return

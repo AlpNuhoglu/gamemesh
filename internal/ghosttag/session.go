@@ -47,6 +47,8 @@ type Spec struct {
 	// failure with the full result, a cancellation, a panic. Never a
 	// packet.
 	Logf func(format string, args ...any)
+	// Turnout, if set, is told who started and who completed the match.
+	Turnout Turnout
 }
 
 // inboxItem is one payload Post handed the session.
@@ -142,12 +144,20 @@ func NewSession(cfg Config, spec Spec, t Transport, s ScoreStore, o Observer) (*
 	}
 	s2.last = s2.created
 	s2.room = newRoom(&s2.cfg, spec.RoomID, s2.humans, spec.BotID, t, o, spec.Rand, s2.created)
+	if spec.Turnout != nil {
+		s2.room.turnout = spec.Turnout
+	}
 	return s2, nil
 }
 
 type nopObserver struct{}
 
 func (nopObserver) Count(string) {}
+
+type nopTurnout struct{}
+
+func (nopTurnout) Started([]string, time.Time)   {}
+func (nopTurnout) Completed([]string, time.Time) {}
 
 // Done is closed when Run has returned.
 func (s *Session) Done() <-chan struct{} { return s.done }

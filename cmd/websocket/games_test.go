@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -287,7 +288,11 @@ func TestGhostTagMatchOverRealSockets(t *testing.T) {
 	hub := wsgateway.NewHub(zap.NewNop(), metrics.New("ws-game-test"), nil, gameRooms{players: ids})
 	hub.SetRelayLimit(5000, 5000) // the test sends faster than a client may
 	ctx, cancel := context.WithCancel(context.Background())
-	hub.SetGames(ctx, gameHost{cfg: fastGame(), scores: store, events: events, log: zap.NewNop()}, time.Minute)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	turnouts := newTurnout(rdb, events, zap.NewNop())
+	go turnouts.Run(ctx)
+	hub.SetGames(ctx, gameHost{cfg: fastGame(), scores: store, events: events, turnout: turnouts, log: zap.NewNop()}, time.Minute)
 
 	tokens := auth.NewTokenManager("ws-game-test-secret", time.Hour, "gamemesh")
 	origins, err := middleware.ParseOrigins([]string{"*"})
@@ -384,6 +389,18 @@ func TestGhostTagMatchOverRealSockets(t *testing.T) {
 	assert.Len(t, announced.payloads(t), 2, "each player's standing was announced")
 	assert.Equal(t, 1, events.get(ghosttag.EventMatchCompleted))
 	assert.Zero(t, events.get(ghosttag.EventRoomPanic))
+	// Both players started their first match of the day and completed it;
+	// the telemetry worker counts that a moment later.
+	deadline := time.After(frameTimeout)
+	for events.get(eventPlayerFinished) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("player_finished: %d of 2", events.get(eventPlayerFinished))
+		case <-time.After(time.Millisecond):
+		}
+	}
+	assert.Equal(t, 2, events.get(eventPlayerDay))
+	assert.True(t, mr.Exists("ghosttag:finished:"+ids[0]))
 	assert.NotEmpty(t, a.all("pong"), "a ping is answered")
 	for _, c := range []*gameClient{a, b, b2} {
 		assert.NotContains(t, c.otherTypes(), "Relay", "nothing a client sent was passed on unread")
