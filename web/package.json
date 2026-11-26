@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "tsc --noEmit && vite build",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "latency": "playwright test -c playwright.latency.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",

@@ -459,6 +459,116 @@ Its cost is about 12 µs per message, against 0.06 ms the server spent on the
 relay and 40 ms end to end in production. Nothing was optimised: the
 measurement is the result.
 
+## In a real browser (Ghost Tag client), measured 2026-11-26
+
+Everything above was measured with `scripts/latencybench`, a Go client. A
+browser is a different client: it applies input once per frame, sends its
+position on a 40 ms timer, and draws the other player through an
+interpolation buffer. The design rule for the client (Ghost Tag design doc,
+section 9, Note B) is that this is measured in a real browser as soon as the
+client runs: from a key going down in one player's page to the frame in which
+the other player's page draws the movement.
+
+Setup: the local stack (`docker compose`, Docker Desktop on an M4 Pro, macOS
+27.0.1), the built client as the gateway serves it under `/play/`, and the
+installed Google Chrome 158, headless, driven by Playwright. Two pages in two
+browser contexts (two guest accounts) play each other. Both pages measured a
+frame interval of 16.67 ms (60 Hz). Everything runs on one machine over
+loopback, so there is no network in these numbers.
+
+Method: the page being watched is at rest. A key is held for 200 ms in it.
+Both pages stamp events with `performance.timeOrigin + performance.now()`,
+the same wall clock on one machine:
+
+| Stamp | Taken |
+|---|---|
+| key | the `keydown` event's own timestamp, in the pressing page |
+| applied | the frame that moved the pressing page's own character |
+| sent | the first position packet that carries the movement |
+| drawn | each frame in which the watching page drew the opponent at a new place |
+
+All but the first come from the client's developer probe (`?debug=1`); nothing
+else in the client depends on it.
+
+### From the key to the first frame that shows it
+
+The runner presses, the hunter watches (the hunter sees the runner live). 71
+presses over the two halves of one match; one more was left out because the
+server corrected the character in the same moment.
+
+| Stage (ms) | min | p50 | p95 | max |
+|---|---|---|---|---|
+| key → applied | 0.2 | 7.8 | 15.8 | 16.3 |
+| applied → sent | 0.1 | 9.3 | 31.9 | 34.7 |
+| sent → first drawn | 0.1 | 30.3 | 37.0 | 37.6 |
+| **key → first drawn** | 14.9 | **49.0** | **70.4** | 77.3 |
+
+The stages are what the client's design predicts: up to one frame before the
+input is applied, up to one send interval (40 ms) before a packet carries it,
+and then the buffer. "First drawn" is the first frame in which the opponent is
+anywhere new, not the frame in which it has arrived: the watching page draws
+60 ms behind and interpolates between packets 40 ms apart, so the picture
+starts to move about 20 ms after the packet lands, plus the wait for a frame.
+
+### How old the picture is while the opponent moves
+
+The first frame says when movement becomes visible. How far behind the
+picture then stays is the interpolation buffer, and that is the number the
+buffer's setting can be checked against. For every frame the watching page
+drew during a press, the position drawn was matched to the moment the
+pressing page had sent that position (its packets are 40 ms apart and the
+character moves in a straight line between two of them).
+
+| View | Frames | p5 | p50 | p95 | Setting |
+|---|---|---|---|---|---|
+| Live: the hunter watching the runner | 935 | 60.1 ms | **60.9 ms** | 65.2 ms | `interp_ms` 60 |
+| Trail: the runner watching the hunter | 387 | 2000.9 ms | **2001.9 ms** | 2002.9 ms | `trail_ms` 2000 |
+
+The trail was measured in a second match, with the hunter pressing: 26
+presses, every frame between 2000.4 and 2017.9 ms behind.
+
+Both views are behind by their setting plus one to two milliseconds, which is
+what the packet takes through the server on loopback. So the interpolation
+buffer and the trail delay do what `snap.cfg` tells them to, and nothing else
+in the path holds a position back.
+
+In the live view 891 of the 935 frames were between 55 and 70 ms behind. The
+other 44 were in 19 of the 71 presses; in two of them a run of frames fell
+steadily further behind (135 to 273 ms in one, 181 to 225 ms in the other).
+That is what a stalled page or a late packet would look like, and also what a
+wrong match of position to packet would; it was not traced.
+
+### Reading it
+
+- On one machine a key press is visible on the other player's screen after
+  about 49 ms (p50) and 70 ms (p95), and the picture of a moving opponent is
+  61 ms old. In production the network comes on top, once: the end-to-end
+  figures of the "Production" section above.
+- For the runner the hunter is 2.0 seconds old by design. The 60 ms of the
+  live view do not appear there on top: the trail is taken from its own
+  buffer.
+- Nothing was tuned. The send interval and the two delays are the server's
+  `Config`; changing one changes these numbers by as much.
+
+Limits of the measurement:
+
+- "Drawn" is the frame's `requestAnimationFrame` callback. The compositor and
+  the display come after it and cannot be measured without a camera; they are
+  not in these numbers.
+- Headless Chrome, one browser, one machine that also runs the server and the
+  second page. A real display, another browser or a phone were not measured.
+- One match for each view. The keyboard only: the mouse and touch paths were
+  not timed.
+
+To repeat it, against a local stack whose gateway serves the built client:
+
+```sh
+cd web && E2E_BASE_URL=http://127.0.0.1:8080 npm run latency
+```
+
+It takes about three and a half minutes and writes every sample to
+`web/bench-out/latency.json`.
+
 ## Not done
 
 - **Cross-replica relay.** The relay fans out from one replica's hub, so two
@@ -469,9 +579,12 @@ measurement is the result.
   replicas, Redis Pub/Sub or core NATS (not JetStream): each replica publishes
   a relay message once and delivers what it receives to its own room members.
   It adds a hop for cross-replica pairs and was left out of this work.
-- **Deleting an account.** There is no endpoint for it, and none is planned
-  (decided 2026-11-13), which is why the bench cleans up through the database
-  and leaves its accounts behind in production.
+- **Deleting an account.** When these measurements were taken there was no
+  endpoint for it (decided 2026-11-13), which is why the bench cleans up
+  through the database and left its accounts behind in production. Since the
+  browser client step there is one, behind the release flag
+  (`DELETE /api/v1/players/me`), and the account sweep removes what the bench
+  left once the flag is on (Ghost Tag design doc, section 9, Note C).
 - **The slow tail.** The 3–8 ms maximum at every load was recorded, not traced.
 - **`WS_RELAY_RATE=0`.** It is accepted and rejects every relay message; the
   setting is not validated.
