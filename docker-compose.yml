@@ -94,21 +94,21 @@ services:
   # created idempotently by the services on boot. Storage is persisted to a
   # volume so events (and consumer cursors) survive container restarts —
   # enabling replay and at-least-once redelivery. :8222 serves the monitoring
-  # endpoint used for the healthcheck.
+  # endpoint.
   nats:
     restart: always
-    image: nats:2.15.3-alpine@sha256:558394a23dd3c36f2d3a64b51865fd09908010e80a542cea5e75c2af543ed62a
+    image: nats:2.15.3-scratch@sha256:cf783105b65fd68ed9c40fdae8f624f97177c1fc1b705b4939eb25f27df22019
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "127.0.0.1:4222:4222" # client
       - "127.0.0.1:8222:8222" # monitoring
     volumes:
       - natsdata:/data
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+    # No healthcheck: the scratch image has no shell and no HTTP client to
+    # run one with. The services that need NATS wait for it themselves (they
+    # retry the first connection for 30 s, as they must in Kubernetes, where
+    # pods start in no order), so they depend on it having started, not on
+    # it being healthy. From the host: curl http://127.0.0.1:8222/healthz
 
   gateway:
     restart: always
@@ -193,7 +193,7 @@ services:
       redis:
         condition: service_healthy
       nats:
-        condition: service_healthy
+        condition: service_started
       otel-collector:
         condition: service_started
     healthcheck:
@@ -215,7 +215,7 @@ services:
       redis:
         condition: service_healthy
       nats:
-        condition: service_healthy
+        condition: service_started
       otel-collector:
         condition: service_started
     healthcheck:
@@ -243,7 +243,7 @@ services:
       redis:
         condition: service_healthy
       nats:
-        condition: service_healthy
+        condition: service_started
       otel-collector:
         condition: service_started
     healthcheck:
@@ -272,7 +272,7 @@ services:
       redis:
         condition: service_healthy
       nats:
-        condition: service_healthy
+        condition: service_started
       otel-collector:
         condition: service_started
     healthcheck:
@@ -307,7 +307,7 @@ services:
       postgres:
         condition: service_healthy
       nats:
-        condition: service_healthy
+        condition: service_started
       otel-collector:
         condition: service_started
     healthcheck:
