@@ -567,7 +567,12 @@ cd web && E2E_BASE_URL=http://127.0.0.1:8080 npm run latency
 ```
 
 It takes about three and a half minutes and writes every sample to
-`web/bench-out/latency.json`.
+`web/bench-out/latency.json`. It stops at the start if the pages are not
+drawing at 60 Hz. That happened once: on the same day, with the laptop at 19 %
+battery, every page of the browser (a blank one included) drew at 33.3 ms a
+frame, and a run taken then put the first frame at 59 ms (p50) instead of 49.
+The two buffers measured the same (60.9 and 2001.8 ms), as they should: they
+do not depend on the frame rate.
 
 ## Not done
 

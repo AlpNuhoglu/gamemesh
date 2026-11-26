@@ -213,6 +213,14 @@ test("browser latency: key press to the opponent's frame", async ({ browser }) =
     if (kind === "live") {
       meta["frameMsA"] = await frameMs(a);
       meta["frameMsB"] = await frameMs(b);
+      // The numbers are only comparable at the display rate the document
+      // states. A browser can run at half of it for reasons that have nothing
+      // to do with the client: on 2026-11-26 every page, a blank one
+      // included, ran at 33.3 ms a frame on a laptop at 19 % battery, and a
+      // run taken then showed the first frame 10 ms later.
+      for (const ms of [meta["frameMsA"], meta["frameMsB"]] as number[]) {
+        expect(ms, "the browser is not drawing at 60 Hz, so this run cannot be compared with the published one (is the machine on low battery?)").toBeLessThan(20);
+      }
       meta["cfg"] = await a.evaluate(() => (window as unknown as { ghosttagProbe: { cfg?: unknown } }).ghosttagProbe.cfg ?? null);
     }
     for (const [half, halfState] of [[1, "HALF_1_ACTIVE"], [2, "HALF_2_ACTIVE"]] as const) {
