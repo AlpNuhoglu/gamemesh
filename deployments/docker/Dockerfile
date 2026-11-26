@@ -15,6 +15,12 @@
 # digest, so the pin holds for every target architecture. Dependabot bumps
 # tag and digest together; the golang tag also has to match go.mod's
 # toolchain line.
+#
+# The browser client (web/) is built by a Node stage and embedded in the
+# gateway's binary, only when SERVICE is gateway: for every other service that
+# stage builds nothing and hands over an empty directory. Node is a build
+# stage like Go's and never reaches the final image. Its tag is the Node
+# major CI's web job runs.
 FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine3.24@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS modules
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -28,8 +34,27 @@ COPY go.mod go.sum ./
 # 200 MiB copy.
 RUN go mod download
 
+# The client. The Vite build writes into internal/gateway/webui/embedded/app
+# (see web/vite.config.ts), and its type check reads one shared test vector
+# file from internal/ghosttag/testdata, so the paths are the repository's.
+FROM --platform=$BUILDPLATFORM node:26.12.1-alpine3.24@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS web
+ARG SERVICE
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN if [ "$SERVICE" = gateway ]; then npm ci; fi
+COPY web/ ./
+COPY internal/ghosttag/testdata/validate_vectors.json /src/internal/ghosttag/testdata/validate_vectors.json
+RUN mkdir -p /out; \
+    if [ "$SERVICE" = gateway ]; then \
+      npm run build && cp -r /src/internal/gateway/webui/embedded/app/. /out/; \
+    fi
+
 FROM modules AS build
-COPY . .
+# web/ is left out: the client enters the Go build only as the built files
+# below, so a change to its source does not rebuild every service.
+COPY --exclude=web . .
+# Empty for every service but the gateway.
+COPY --from=web /out internal/gateway/webui/embedded/app
 ARG SERVICE
 ARG TARGETOS TARGETARCH
 # The commit this image is built from; /health and traces report it.

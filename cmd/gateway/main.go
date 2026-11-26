@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/alpnuhoglu/gamemesh/internal/gateway"
+	"github.com/alpnuhoglu/gamemesh/internal/gateway/webui"
 	"github.com/alpnuhoglu/gamemesh/internal/player"
 	"github.com/alpnuhoglu/gamemesh/pkg/auth"
 	"github.com/alpnuhoglu/gamemesh/pkg/config"
@@ -55,6 +56,19 @@ func run() int {
 		log.Fatal("JWT_SECRET must be set in production")
 	}
 
+	// The browser client is embedded when the image was built with its Node
+	// stage. With the release flag on and no client in the binary, production
+	// would serve a 503 where the page should be: refuse to start instead. Any
+	// other environment runs, and /play/ says how to build the client.
+	app, built := webui.App()
+	if cfg.GameClientEnabled && !built {
+		if cfg.Env == "production" {
+			log.Fatal("GAME_CLIENT_ENABLED is on but the browser client is not built into this gateway; build the image with the web stage (see deployments/docker/Dockerfile)")
+		}
+		log.Warn("GAME_CLIENT_ENABLED is on but the browser client is not built; /play/ will answer 503 (run `make web`)")
+		app = nil
+	}
+
 	m := metrics.New(cfg.ServiceName)
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.JWTExpiry, cfg.JWTIssuer)
 
@@ -84,7 +98,7 @@ func run() int {
 	// readiness dependencies.
 	engine := server.NewEngine(cfg, log, m)
 	engine.Use(middleware.RateLimit(cfg.RateLimitRPS, cfg.RateLimitBurst))
-	gateway.RegisterRoutes(engine, cfg, tokens, sessions, log)
+	gateway.RegisterRoutes(engine, cfg, tokens, sessions, app, log)
 
 	if err := server.Run(engine, cfg.HTTPPort, log); err != nil {
 		log.Error("server exited", zap.Error(err))

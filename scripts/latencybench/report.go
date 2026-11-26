@@ -317,7 +317,7 @@ func (r *report) print(out io.Writer) error {
 	}
 
 	t := r.Teardown
-	w.f("\nTeardown: left queue %d, closed %d socket(s), logged out %d token(s)", t.LeftQueue, t.SocketsClosed, t.LoggedOut)
+	w.f("\nTeardown: left queue %d, closed %d socket(s), deleted %d account(s), logged out %d token(s)", t.LeftQueue, t.SocketsClosed, t.AccountsDeleted, t.LoggedOut)
 	if len(t.Errors) > 0 {
 		w.f(", %d error(s): %s", len(t.Errors), strings.Join(t.Errors, "; "))
 	}

@@ -58,7 +58,7 @@ func newGameClientGateway(t *testing.T, upstreamURL string, enabled bool) (*http
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies([]string{"127.0.0.1"}))
 	r.Use(middleware.RequestID())
-	RegisterRoutes(r, cfg, tokens, nil, zap.NewNop())
+	RegisterRoutes(r, cfg, tokens, nil, nil, zap.NewNop())
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv, tokens

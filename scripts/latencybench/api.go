@@ -226,6 +226,17 @@ func (a *apiClient) logout(ctx context.Context, p *player) error {
 	return err
 }
 
+// deleteAccount deletes the player's own account, which also revokes every
+// session. deleted is false (and err nil) on a 404: the server does not offer
+// the endpoint (its release flag is off) or the account is already gone.
+func (a *apiClient) deleteAccount(ctx context.Context, p *player) (deleted bool, err error) {
+	err = a.do(ctx, http.MethodDelete, "/api/v1/players/me", p.token, nil, nil)
+	if statusOf(err) == http.StatusNotFound {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // jwtID reads the jti claim without verifying the token (we only need it to
 // find this run's SessionRevoked outbox rows during cleanup).
 func jwtID(token string) string {

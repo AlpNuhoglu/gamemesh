@@ -374,6 +374,12 @@ kayması sorununu tamamen ortadan kaldırır.
 
 `HUNTER` rolündeki istemci bu tamponu kullanmaz; kaçağı canlı çizer.
 
+**Yarının ilk 2 saniyesi.** İz tamponu yarı başında avcının başlangıç
+noktasıyla doldurulur. Kaçak böylece ilk 2 saniyede boş bir arena yerine
+avcının 2 saniye önce gerçekten durduğu yeri görür; iz, avcı hareket ettikten
+2 saniye sonra oynamaya başlar. Yarılar dışında (geri sayım, rol değişimi)
+kaçağa avcı hiç gösterilmez.
+
 ### 3.4 Ekran yerleşimi ve kontrol
 
 **Tek tuval.** Arena tam daire olduğu için ekranın merkezine oturan 1:1
@@ -426,6 +432,30 @@ biçimde ifade edilemez ve dosyada yoktur; istemci orada sunucudan daha
 katı davranır (kendi kare süresiyle ve dönüş sınırıyla hesaplar), bu
 yüzden kırpılmaz.
 
+**İstemcide kalan sabitler.** `snap.cfg`'de olmayan ve istemci kodunda duran
+sayılar oyun kuralı değildir; sunum ve bağlantı ayarlarıdır:
+
+| Sabit | Değer | Ne için |
+|---|---|---|
+| `ping` aralığı | 2 sn | RTT ölçümü (bölüm 6'daki 0,5 Hz) |
+| Kuyruk `rank` değeri | 1000 | Misafirin eşleştirme sırası; hepsi aynı |
+| Erken yenileme | 10 dk | Bölüm 3.6 |
+| `1001` sonrası yeniden bağlanma | 0,25–2,25 sn, rastgele | Bölüm 3.6 |
+| `clamp` yumuşatması | 150 ms | Düzeltmenin çizimde yayıldığı süre; durum anında düzelir |
+| İz kuyruğu | 500 ms | İzin sönümlenen kısmı (2,5 sn'lik tamponun fazlası) |
+| Görsel yarıçap | `d_capture` × 0,4 | Karakterin çizim boyutu |
+| Kırpma eşiği | 10⁻⁶ | Sunucudaki kayan nokta eşiğinin aynısı |
+
+**Daralırken ileri bakış.** Arena daralırken istemci karakterini, paketin
+yolda geçireceği süre (`send_ms` + RTT/2) sonraki yarıçapın içinde tutar.
+Aksi halde paket yoldayken küçülen arena onu sınırın dışında bulur ve her
+pakette `clamp` gelirdi.
+
+**Konum tam hassasiyetle gönderilir.** İstemci `x`, `y` değerlerini
+yuvarlamaz: 0,01'e yuvarlanan bir konum, arena sınırındaki oyuncuyu sınırın
+hemen dışına düşürüp kırpılmasına yol açıyordu. Bir `pos` paketi bu yüzden
+bölüm 6'daki ~76 bayt yerine 110–130 bayttır (sınırın %13'ü).
+
 İstemci tahminde slack bütçesini **harcamaz** (her adımı `slack = 0` ile
 hesaplar): bütçe ağ titreşimi içindir ve sunucu tarafında birikir; istemci
 kendi tarafında harcarsa sunucunun vermediği mesafeyi kullanmış olur.
@@ -446,6 +476,10 @@ Token 2 saat yaşar. İstemci onu **sessizce** yeniler:
 | WebSocket `1008` ile kapandı (`token expired`, `session revoked`) | Sırla yeniler, yeniden bağlanır, odadaysa yeniden katılır |
 | Yenileme `401` döndü (hesap silinmiş ya da süpürülmüş) | Saklanan kimliği atar, yeni misafir hesabı alır |
 | WebSocket `1001` ile kapandı (sunucu kapanıyor) | Rastgele gecikmeyle yeniden bağlanır |
+
+**İki sekme, tek kimlik.** Kimlik tarayıcı profilinin deposunda durduğu için
+aynı profilin iki sekmesi aynı misafirdir; her biri kendi maçına girer. İki
+insanın karşılaşması için iki ayrı profil (ya da bir gizli pencere) gerekir.
 
 Oyuncu bunların hiçbirinde bir ekran görmez. Maç ortasında `1008` gelirse
 yenileme `T_grace` (5 sn) içinde bitmek zorundadır; maç dışındaki erken
@@ -916,6 +950,12 @@ yalnızca geliştirici modunda dışarı verilir. Yöntem ve sayı
 `docs/latency.md`'ye yazılır. Bu, enterpolasyon tamponunun doğru
 ayarlandığının tek kanıtıdır.
 
+Ölçüldü (2026-11-26, `docs/latency.md`, "In a real browser"): tuştan
+rakibin ilk çizim karesine p50 49 ms, p95 70 ms; hareket eden rakibin
+görüntüsü p50 60,9 ms geride (`interp_ms` 60), kaçağın gördüğü iz p50
+2001,9 ms geride (`trail_ms` 2000). İki tampon da `snap.cfg`'deki değerini
+uyguluyor.
+
 Ölçümün sınırı: "ekranda görünme", çizimin yapıldığı karedir. Tarayıcının
 birleştiricisinin ve ekranın kendi gecikmesi kamerasız ölçülemez ve sayıya
 dahil değildir. Ölçüm yerelde yapılır; ağ payı içermez.
@@ -1100,6 +1140,11 @@ reddeder.
 - **Tablo temizliği beş denemeden sonra bırakılır.** `PlayerDeleted`
   olayını işleyen tüketici beş kez üst üste başarısız olursa (Redis o kadar
   süre kapalıysa) olay bir daha teslim edilmez.
+- **Kaçak ilk saniyelerde yakalanabiliyor.** Başlangıç noktaları 450 birim
+  uzakta ve avcı 225 birim/sn: yerinden kıpırdamayan kaçağa 2,0 saniyede,
+  yani tam iz gecikmesi kadar sürede varılır. Senaryolu girdiyle oynanan bot
+  maçlarında kaçak 1,6–3,0 saniyede yakalandı. Sabitler oynanış testinde
+  ayarlanacaktır (bölüm 8); istemci yalnızca yarı başında harekete çağırır.
 - **Hareket formülü iki dilde yazılıdır.** Go ve TypeScript uygulamalarını
   bir arada tutan şey altın vektör dosyasıdır (bölüm 3.5); vektörlerin
   kapsamadığı bir girdide ayrışma, oyunda `clamp` olarak görünür.
@@ -1182,6 +1227,11 @@ kararlar:
 | Tur tamamlama | Hükmen biten ve geçersiz maç tamamlanmış sayılmaz | 5 |
 | Tarayıcı ölçümü | Tuştan rakibin çizim karesine; yerelde; ekran gecikmesi dahil değil | 9 Not B |
 | Sıra | Önce uçtan uca oynanabilir, sonra cila; iki sekmeli yerel insan-insan maçında durulur | — |
+| İlk 2 saniyede iz | İz tamponu yarı başında avcının başlangıç noktasıyla dolar (istemci yazılırken verildi) | 3.3 |
+| Konum hassasiyeti | Yuvarlanmaz; `pos` 110–130 bayt | 3.5 |
+| Daralırken ileri bakış | Karakter, paketin varacağı andaki yarıçapın içinde tutulur | 3.5 |
+| İstemcide kalan sabitler | Oyun kuralı olmayan sekiz sunum ve bağlantı ayarı | 3.5 |
+| Gömme dizini | Build çıktısı `internal/gateway/webui/embedded/app`; izlenen bir README derlemeyi ayakta tutar | 9 Not D |
 
 **Kapsam dışı:** ikinci oyun modu, özel oda ve davet bağlantısı, Ghost
 replay arşivi, sohbet, profil düzenleme, kozmetik, başarımlar, ses, CDN'e
