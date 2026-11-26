@@ -46,10 +46,11 @@ type bench struct {
 }
 
 type teardownResult struct {
-	LeftQueue     int      `json:"left_queue"`
-	SocketsClosed int      `json:"sockets_closed"`
-	LoggedOut     int      `json:"logged_out"`
-	Errors        []string `json:"errors,omitempty"`
+	LeftQueue       int      `json:"left_queue"`
+	SocketsClosed   int      `json:"sockets_closed"`
+	LoggedOut       int      `json:"logged_out"`
+	AccountsDeleted int      `json:"accounts_deleted"`
+	Errors          []string `json:"errors,omitempty"`
 }
 
 func newBench(cfg *config) *bench {
@@ -505,7 +506,9 @@ func (b *bench) scrape(ctx context.Context, before bool) {
 }
 
 // doTeardown always runs after setup started, also on error or Ctrl-C:
-// withdraw queue tickets, close sockets, revoke every token.
+// withdraw queue tickets, close sockets, then delete every account through the
+// API (which revokes its sessions); where the server does not offer that (404)
+// or the call fails, revoke the token with a logout instead.
 func (b *bench) doTeardown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -560,6 +563,17 @@ func (b *bench) doTeardown() {
 		}
 	}
 	_ = b.forEach(ctx, withToken, 4, func(ctx context.Context, p *player) error {
+		deleted, err := b.api.deleteAccount(ctx, p)
+		if err != nil {
+			fail(fmt.Errorf("delete account %s: %w", p.username, err))
+		}
+		if deleted {
+			mu.Lock()
+			b.teardown.AccountsDeleted++
+			p.registered = false
+			mu.Unlock()
+			return nil
+		}
 		if err := b.api.logout(ctx, p); err != nil {
 			fail(fmt.Errorf("logout %s: %w", p.username, err))
 			return nil
@@ -570,8 +584,8 @@ func (b *bench) doTeardown() {
 		return nil
 	})
 	if len(b.players) > 0 {
-		log.Printf("teardown: left queue %d, closed %d socket(s), logged out %d token(s), %d error(s)",
-			b.teardown.LeftQueue, b.teardown.SocketsClosed, b.teardown.LoggedOut, len(b.teardown.Errors))
+		log.Printf("teardown: left queue %d, closed %d socket(s), deleted %d account(s), logged out %d token(s), %d error(s)",
+			b.teardown.LeftQueue, b.teardown.SocketsClosed, b.teardown.AccountsDeleted, b.teardown.LoggedOut, len(b.teardown.Errors))
 	}
 }
 

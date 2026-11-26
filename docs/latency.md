@@ -644,8 +644,8 @@ Bench accounts are `bench<run><n>` with the address
 address carries the marker; `.invalid` is a reserved TLD). Every run leaves the
 matchmaking queue and logs its players out.
 
-There is no account-deletion endpoint, so removing the rows needs the
-database, and only happens when `-cleanup-dsn` is given (it has no default). A
+Removing the rows through the database only happens when `-cleanup-dsn` is
+given (it has no default). A
 player is deleted only if both hold: the address matches
 `%@latencybench.invalid` and the username starts with `bench`. The tool counts
 the matching players and prints the number first (`-cleanup-dry-run` stops
@@ -653,8 +653,11 @@ there), deletes at most `-cleanup-limit` players (200) with their outbox rows,
 and reports what it deleted and what remains. `-cleanup-only` does just this,
 for a run that crashed.
 
-Against production the tool is run without `-cleanup-dsn`: the bench accounts
-stay, recognisable by the same two marks.
+Against production the tool is run without `-cleanup-dsn`. At the end of a run
+it deletes its accounts through the API (`DELETE /api/v1/players/me`) when the
+server offers that endpoint. When it does not (a 404), the accounts stay,
+recognisable by the same two marks, and are removed by the server's account
+sweep once that is on.
 
 What a run leaves outside Postgres expires on its own: the matchmaking room in
 Redis (1 h), and the `PlayerRegistered`, `SessionRevoked` and `MatchFound`
