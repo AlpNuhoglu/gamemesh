@@ -54,7 +54,7 @@ x-service-env: &service-env
 services:
   postgres:
     restart: always
-    image: postgres:16.16-alpine@sha256:0adbf25a9e96d38823bb813f3ac0ed41fadb665c88f1df7fe6dbfb060cbdc106
+    image: postgres:16.16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gamemesh}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gamemesh-dev-password}
@@ -74,7 +74,7 @@ services:
 
   redis:
     restart: always
-    image: redis:8.10.3-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
+    image: redis:8.12.0-alpine@sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483
     # The first argument must stay redis-server: the image's entrypoint only
     # drops root for that command.
     command: ["redis-server", "--requirepass", *redis-password]
@@ -361,7 +361,7 @@ services:
 
   grafana:
     restart: always
-    image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e
+    image: grafana/grafana:12.4.16@sha256:982fa6bf18cc38280a30bf08c3b673486067d4805b25a9d4756688a689a993c7
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}

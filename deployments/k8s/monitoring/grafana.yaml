@@ -54,7 +54,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: grafana
-          image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e
+          image: grafana/grafana:12.4.16@sha256:982fa6bf18cc38280a30bf08c3b673486067d4805b25a9d4756688a689a993c7
           ports:
             - containerPort: 3000
           startupProbe:
@@ -111,7 +111,7 @@ spec:
         # Grafana's own image, for its shell and curl: no other image to pull,
         # scan or update.
         - name: publisher
-          image: grafana/grafana:12.4.15@sha256:2894082f6cf7081aefdc1389265c04000812309208c190d75e8c65f7a30e4b7e
+          image: grafana/grafana:12.4.16@sha256:982fa6bf18cc38280a30bf08c3b673486067d4805b25a9d4756688a689a993c7
           command: ["sh", "/scripts/publish.sh"]
           env:
             # The status page's URL (status.yaml); public by design.
